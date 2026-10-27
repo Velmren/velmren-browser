@@ -10,7 +10,9 @@
 #include "brave/browser/misc_metrics/process_misc_metrics.h"
 #include "brave/browser/misc_metrics/uptime_monitor_impl.h"
 #include "brave/components/brave_shields/core/browser/brave_shields_p3a.h"
+#include "brave/components/constants/pref_names.h"
 #include "brave/components/p3a/p3a_service.h"
+#include "brave/components/velmren/product_policy.h"
 #include "components/metrics/metrics_pref_names.h"
 #include "components/prefs/pref_service.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
@@ -61,6 +63,12 @@ BraveBrowserMainExtraParts::BraveBrowserMainExtraParts() = default;
 BraveBrowserMainExtraParts::~BraveBrowserMainExtraParts() = default;
 
 void BraveBrowserMainExtraParts::PreProfileInit() {
+  if (!velmren::kTelemetryEnabled) {
+    // Migrate profiles that previously opted in before starting services.
+    g_browser_process->local_state()->SetBoolean(kStatsReportingEnabled, false);
+    g_browser_process->local_state()->SetBoolean(
+        metrics::prefs::kMetricsReportingEnabled, false);
+  }
   // Early initialize referrals
   g_brave_browser_process->brave_referrals_service();
 

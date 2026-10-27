@@ -100,7 +100,7 @@ const start = (
       assert(process.env.LocalAppData, 'LocalAppData not set')
       userDataDir = path.join(
         process.env.LocalAppData,
-        'BraveSoftware',
+        'Velmren',
         options.user_data_dir_name,
       )
     } else {
@@ -125,7 +125,8 @@ const start = (
 
   let outputPath = options.output_path
   if (!outputPath) {
-    outputPath = path.join(config.outputDir, 'brave')
+    outputPath = path.join(
+      config.outputDir, process.platform === 'win32' ? 'velmren' : 'brave')
     if (process.platform === 'win32') {
       outputPath = outputPath + '.exe'
     } else if (process.platform === 'darwin') {

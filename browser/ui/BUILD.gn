@@ -1046,6 +1046,7 @@ source_set("ui") {
     "//brave/components/tor/buildflags",
     "//brave/components/url_sanitizer/core/browser",
     "//brave/components/vector_icons",
+    "//brave/components/velmren",
     "//brave/components/web_discovery/buildflags",
     "//brave/components/webui",
     "//chrome/app:command_ids",

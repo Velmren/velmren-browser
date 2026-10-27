@@ -35,6 +35,7 @@ source_set("location_bar") {
     "//brave/components/commander/common",
     "//brave/components/resources:strings",
     "//brave/components/vector_icons",
+    "//brave/components/velmren",
     "//chrome/browser/image_fetcher",
     "//chrome/browser/profiles",
     "//chrome/browser/search_engines",

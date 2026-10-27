@@ -28,7 +28,7 @@ typedef enum ProtectionLevel {
 [
   object,
   oleautomation,
-  uuid(5A9A9462-2FA1-4FEB-B7F2-DF3D19134463),
+  uuid(7FC9D551-5EEC-5C1F-B533-D3FA0CB0B44A),
   helpstring("IElevator Interface"),
   pointer_default(unique)
 ]
@@ -105,7 +105,7 @@ interface IElevator : IUnknown
 [
   object,
   oleautomation,
-  uuid(8F7B6792-784D-4047-845D-1782EFBEF205),
+  uuid(8D962E97-B282-535B-96FC-A240979B6A88),
   helpstring("IElevator2 Interface"),
   pointer_default(unique)
 ]
@@ -162,7 +162,7 @@ interface IElevatorChromium : IElevator
 [
   object,
   oleautomation,
-  uuid(F396861E-0C8E-4C71-8256-2FAE6D759CE9),
+  uuid(407578A3-C18B-5138-BB1F-FB3D529F1C0D),
   helpstring("IElevatorChrome Interface"),
   pointer_default(unique)
 ]
@@ -173,7 +173,7 @@ interface IElevatorChrome : IElevator
 [
   object,
   oleautomation,
-  uuid(9EBAD7AC-6E1E-4A1C-AA85-1A70CADA8D82),
+  uuid(25247D6B-B4A2-5ECB-BFBB-D3C32953F349),
   helpstring("IElevatorChromeBeta Interface"),
   pointer_default(unique)
 ]
@@ -184,7 +184,7 @@ interface IElevatorChromeBeta : IElevator
 [
   object,
   oleautomation,
-  uuid(1E43C77B-48E6-4A4C-9DB2-C2971706C255),
+  uuid(3F6AAAF6-F875-5E3C-B054-2A1DEE2F78CA),
   helpstring("IElevatorChromeDev Interface"),
   pointer_default(unique)
 ]
@@ -195,7 +195,7 @@ interface IElevatorChromeDev : IElevator
 [
   object,
   oleautomation,
-  uuid(1DB2116F-71B7-49F0-8970-33B1DACFB072),
+  uuid(D236C5DF-36FF-5066-9CB7-DC69EC21EDD0),
   helpstring("IElevatorChromeCanary Interface"),
   pointer_default(unique)
 ]
@@ -206,7 +206,7 @@ interface IElevatorChromeCanary : IElevator
 [
   object,
   oleautomation,
-  uuid(17239BF1-A1DC-4642-846C-1BAC85F96A10),
+  uuid(D9891B9B-1D2F-5944-B043-31002ADC864E),
   helpstring("IElevatorDevelopment Interface"),
   pointer_default(unique)
 ]
@@ -275,7 +275,7 @@ interface IElevator2ChromeCanary : IElevator2
 };
 
 [
-  uuid(C3B01C4D-FBD4-4E65-88AD-0972D75808C2),
+  uuid(D91A9B0C-B5F9-506C-855C-3AD59CD978AA),
   version(1.0),
   helpstring("Elevator 1.0 Type Library")
 ]

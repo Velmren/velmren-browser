@@ -6,7 +6,7 @@ index 776f544e4630a65d74bc81b50c6e08dad6f43818..86eba23b41e0b63b0ae85d71f71f4f51
  namespace {
  
  constexpr base::FilePath::CharType kChromeExecutable[] =
-+    FILE_PATH_LITERAL("brave.exe");
++    FILE_PATH_LITERAL("velmren.exe");
 +#if 0
      FILE_PATH_LITERAL("chrome.exe");
 +#endif

@@ -11,11 +11,13 @@
 #include "brave/components/brave_origin/brave_origin_policy_info.h"
 #include "brave/components/brave_origin/brave_origin_policy_manager.h"
 #include "brave/components/brave_origin/features.h"
+#include "brave/components/velmren/product_policy.h"
 
 namespace brave_origin {
 
 bool IsBraveOriginFeatureEnabled() {
-  return base::FeatureList::IsEnabled(features::kBraveOrigin);
+  return velmren::kProductPromotionsEnabled &&
+         base::FeatureList::IsEnabled(features::kBraveOrigin);
 }
 
 bool IsBraveOriginPurchased() {

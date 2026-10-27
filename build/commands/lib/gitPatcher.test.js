@@ -17,7 +17,17 @@ const file1Name = 'file1'
 const writeReadFileOptions = { encoding: 'utf8' }
 
 function runGitAsyncWithErrorLog(repoPath, gitArgs) {
-  return util.runGitAsync(repoPath, gitArgs, false, true)
+  // A timed-out setup must never discover and mutate an enclosing repository.
+  return util.runGitAsync(
+    repoPath,
+    [
+      '--git-dir=' + path.join(repoPath, '.git'),
+      '--work-tree=' + repoPath,
+      ...gitArgs,
+    ],
+    false,
+    true,
+  )
 }
 
 function getPatch(gitRepoPath, modifiedFilePath) {
@@ -102,6 +112,30 @@ describe('Apply Patches', function () {
     } catch (err) {
       console.warn(`Test cleanup: could not remove directory at ${patchPath}`)
     }
+  })
+
+  test('resets a path list beyond the Windows command-line limit', async function () {
+    await fs.writeFile(
+      testFile1Path,
+      file1ModifiedContent,
+      writeReadFileOptions,
+    )
+    await gitPatcher.resetRepoFiles(Array(8000).fill(file1Name))
+    expect(await fs.readFile(testFile1Path, writeReadFileOptions)).toBe(
+      file1InitialContent,
+    )
+  })
+
+  test('does not reset files for an empty path list', async function () {
+    await fs.writeFile(
+      testFile1Path,
+      file1ModifiedContent,
+      writeReadFileOptions,
+    )
+    await gitPatcher.resetRepoFiles([])
+    expect(await fs.readFile(testFile1Path, writeReadFileOptions)).toBe(
+      file1ModifiedContent,
+    )
   })
 
   test('applies simple patch to unmodified original', async function () {

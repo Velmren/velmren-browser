@@ -23,22 +23,22 @@ namespace install_static {
 
 // The brand-specific company name to be included as a component of the install
 // and user data directory paths. May be empty if no such dir is to be used.
-inline constexpr wchar_t kCompanyPathName[] = L"BraveSoftware";
+inline constexpr wchar_t kCompanyPathName[] = L"Velmren";
 
 // The brand-specific product name to be included as a component of the install
 // and user data directory paths.
 #if defined(OFFICIAL_BUILD)
 #if BUILDFLAG(IS_BRAVE_ORIGIN_BRANDED)
-// Brave Origin uses "Brave-Origin" instead of "Brave-Browser" to allow
+// Brave Origin uses "Brave-Origin" instead of "Velmren-Browser" to allow
 // side-by-side installation with Brave Browser.
 inline constexpr wchar_t kProductPathName[] = L"Brave-Origin";
 #else
-inline constexpr wchar_t kProductPathName[] = L"Brave-Browser";
+inline constexpr wchar_t kProductPathName[] = L"Velmren-Browser";
 #endif  // BUILDFLAG(IS_BRAVE_ORIGIN_BRANDED)
 #else
 // If you change this, then you also need to change occurrences of this string
 // in mini_installer_constants.cc.
-inline constexpr wchar_t kProductPathName[] = L"Brave-Browser-Development";
+inline constexpr wchar_t kProductPathName[] = L"Velmren-Browser-Development";
 #endif
 
 // The brand-specific safe browsing client name.
@@ -269,32 +269,32 @@ inline constexpr auto kInstallModes = std::to_array<InstallConstants>({
         .install_suffix =
             L"",  // Empty install_suffix for the primary install mode.
         .logo_suffix = L"",  // No logo suffix for the primary install mode.
-        .app_guid = L"{AFE6A462-C574-4B8A-AF43-4CC60DF4563B}",
-        .base_app_name = L"Brave",               // A distinct base_app_name.
-        .base_app_id = L"Brave",                 // A distinct base_app_id.
-        .browser_prog_id_prefix = L"BraveHTML",  // Browser ProgID prefix.
+        .app_guid = L"{75101CDB-9EB9-5758-8C34-28494CE037AD}",
+        .base_app_name = L"Velmren",               // A distinct base_app_name.
+        .base_app_id = L"Velmren",                 // A distinct base_app_id.
+        .browser_prog_id_prefix = L"VelmrenHTML",  // Browser ProgID prefix.
         .browser_prog_id_description =
-            L"Brave HTML Document",  // Browser ProgID description.
-        .direct_launch_url_scheme = "brave-browser",
-        .pdf_prog_id_prefix = L"BravePDF",  // PDF ProgID prefix.
+            L"Velmren HTML Document",  // Browser ProgID description.
+        .direct_launch_url_scheme = "velmren-browser",
+        .pdf_prog_id_prefix = L"VelmrenPDF",  // PDF ProgID prefix.
         .pdf_prog_id_description =
-            L"Brave PDF Document",  // PDF ProgID description.
+            L"Velmren PDF Document",  // PDF ProgID description.
         .active_setup_guid =
-            L"{AFE6A462-C574-4B8A-AF43-4CC60DF4563B}",  // Active Setup GUID.
-        .toast_activator_clsid = {0x6c9646d,
-                                  0x2807,
-                                  0x44c0,
-                                  {0x97, 0xd2, 0x6d, 0xa0, 0xdb, 0x62, 0x3d,
-                                   0xb4}},  // Toast activator CLSID.
-        .elevator_clsid = {0x576b31af,
-                           0x6369,
-                           0x4b6b,
-                           {0x85, 0x60, 0xe4, 0xb2, 0x3, 0xa9, 0x7a,
-                            0x8b}},  // Elevator CLSID.
-        .elevator_iid = {0xf396861e,
-                         0x0c8e,
-                         0x4c71,
-                         {0x82, 0x56, 0x2f, 0xae, 0x6d, 0x75, 0x9c, 0xe9}},
+            L"{75101CDB-9EB9-5758-8C34-28494CE037AD}",  // Active Setup GUID.
+        .toast_activator_clsid = {0x5998eb7e,
+                                  0x6519,
+                                  0x51ae,
+                                  {0xb9, 0x88, 0x80, 0xb1, 0xc7, 0x17, 0x21,
+                                   0x59}},  // Toast activator CLSID.
+        .elevator_clsid = {0xec30dfed,
+                           0xcfbb,
+                           0x5c69,
+                           {0x82, 0xef, 0xe4, 0xd5, 0x1d, 0x0d, 0x86,
+                            0xc6}},  // Elevator CLSID.
+        .elevator_iid = {0x407578a3,
+                         0xc18b,
+                         0x5138,
+                         {0xbb, 0x1f, 0xfb, 0x3d, 0x52, 0x9f, 0x1c, 0x0d}},
         .default_channel_name = L"",  // The empty string means "stable".
         .channel_strategy = ChannelStrategy::FLOATING,
         .supports_system_level = true,  // Supports system-level installs.
@@ -304,8 +304,8 @@ inline constexpr auto kInstallModes = std::to_array<InstallConstants>({
             icon_resources::kApplicationIndex,  // App icon resource index.
         .app_icon_resource_id = IDR_MAINFRAME,  // App icon resource id.
         .sandbox_sid_prefix =
-            L"S-1-15-2-3251537155-1984446955-2931258699-841473695-1938553385-"
-            L"934012149-",  // App container sid prefix for sandbox.
+            L"S-1-15-2-2149060189-2418730926-3966812758-1819624003-2059915740-"
+            L"208470149-",  // App container sid prefix for sandbox.
     },
     // A secondary install mode for Brave Beta
     {
@@ -315,32 +315,32 @@ inline constexpr auto kInstallModes = std::to_array<InstallConstants>({
         .install_suffix = L"-Beta",       // Install suffix.
         .logo_suffix = L"Beta",           // Logo suffix.
         .app_guid =
-            L"{103BD053-949B-43A8-9120-2E424887DE11}",  // A distinct app GUID.
-        .base_app_name = L"Brave Beta",           // A distinct base_app_name.
-        .base_app_id = L"BraveBeta",              // A distinct base_app_id.
-        .browser_prog_id_prefix = L"BraveBHTML",  // Browser ProgID prefix.
+            L"{1BBEEEC2-53AC-59A6-BA89-D0D71570C072}",  // A distinct app GUID.
+        .base_app_name = L"Velmren Beta",        // A distinct base_app_name.
+        .base_app_id = L"VelmrenBeta",           // A distinct base_app_id.
+        .browser_prog_id_prefix = L"VelmBHTML",  // Browser ProgID prefix.
         .browser_prog_id_description =
-            L"Brave Beta HTML Document",  // Browser ProgID description.
-        .direct_launch_url_scheme = "brave-browser-beta",
-        .pdf_prog_id_prefix = L"BraveBPDF",  // PDF ProgID prefix.
+            L"Velmren Beta HTML Document",  // Browser ProgID description.
+        .direct_launch_url_scheme = "velmren-browser-beta",
+        .pdf_prog_id_prefix = L"VelmBPDF",  // PDF ProgID prefix.
         .pdf_prog_id_description =
-            L"Brave Beta PDF Document",  // PDF ProgID description.
+            L"Velmren Beta PDF Document",  // PDF ProgID description.
         .active_setup_guid =
-            L"{103BD053-949B-43A8-9120-2E424887DE11}",  // Active Setup GUID.
-        .toast_activator_clsid = {0x9560028d,
-                                  0xcca,
-                                  0x49f0,
-                                  {0x8d, 0x47, 0xef, 0x22, 0xbb, 0xc4, 0xb,
-                                   0xa7}},  // Toast activator CLSID.
-        .elevator_clsid = {0x2313f1cd,
-                           0x41f3,
-                           0x4347,
-                           {0xbe, 0xc0, 0xd7, 0x22, 0xca, 0x41, 0x2c,
-                            0x75}},  // Elevator CLSID.
-        .elevator_iid = {0x9ebad7ac,
-                         0x6e1e,
-                         0x4a1c,
-                         {0xaa, 0x85, 0x1a, 0x70, 0xca, 0xda, 0x8d, 0x82}},
+            L"{1BBEEEC2-53AC-59A6-BA89-D0D71570C072}",  // Active Setup GUID.
+        .toast_activator_clsid = {0x16f8880e,
+                                  0x874c,
+                                  0x5e78,
+                                  {0xbc, 0x00, 0xc8, 0xcc, 0x28, 0x20, 0x7c,
+                                   0xa2}},  // Toast activator CLSID.
+        .elevator_clsid = {0xd40d77d5,
+                           0x0bc6,
+                           0x55bf,
+                           {0x8a, 0xec, 0x7a, 0xf1, 0x54, 0x4c, 0xb7,
+                            0xf8}},  // Elevator CLSID.
+        .elevator_iid = {0x25247d6b,
+                         0xb4a2,
+                         0x5ecb,
+                         {0xbf, 0xbb, 0xd3, 0xc3, 0x29, 0x53, 0xf3, 0x49}},
         .default_channel_name = L"beta",  // Forced channel name.
         .channel_strategy = ChannelStrategy::FIXED,
         .supports_system_level = true,  // Supports system-level installs.
@@ -350,8 +350,8 @@ inline constexpr auto kInstallModes = std::to_array<InstallConstants>({
             icon_resources::kBetaApplicationIndex,  // App icon resource index.
         .app_icon_resource_id = IDR_X005_BETA,      // App icon resource id.
         .sandbox_sid_prefix =
-            L"S-1-15-2-3251537155-1984446955-2931258699-841473695-1938553385-"
-            L"934012150-",  // App container sid prefix for sandbox.
+            L"S-1-15-2-2149060189-2418730926-3966812758-1819624003-2059915740-"
+            L"208470150-",  // App container sid prefix for sandbox.
     },
     // A secondary install mode for Brave Dev
     {
@@ -361,32 +361,32 @@ inline constexpr auto kInstallModes = std::to_array<InstallConstants>({
         .install_suffix = L"-Dev",       // Install suffix.
         .logo_suffix = L"Dev",           // Logo suffix.
         .app_guid =
-            L"{CB2150F2-595F-4633-891A-E39720CE0531}",  // A distinct app GUID.
-        .base_app_name = L"Brave Dev",            // A distinct base_app_name.
-        .base_app_id = L"BraveDev",               // A distinct base_app_id.
-        .browser_prog_id_prefix = L"BraveDHTML",  // Browser ProgID prefix.
+            L"{74B9E6E2-AD1E-5888-8F4C-8F3D08635EF0}",  // A distinct app GUID.
+        .base_app_name = L"Velmren Dev",         // A distinct base_app_name.
+        .base_app_id = L"VelmrenDev",            // A distinct base_app_id.
+        .browser_prog_id_prefix = L"VelmDHTML",  // Browser ProgID prefix.
         .browser_prog_id_description =
-            L"Brave Dev HTML Document",  // Browser ProgID description.
-        .direct_launch_url_scheme = "brave-browser-dev",
-        .pdf_prog_id_prefix = L"BraveDPDF",  // PDF ProgID prefix.
+            L"Velmren Dev HTML Document",  // Browser ProgID description.
+        .direct_launch_url_scheme = "velmren-browser-dev",
+        .pdf_prog_id_prefix = L"VelmDPDF",  // PDF ProgID prefix.
         .pdf_prog_id_description =
-            L"Brave Dev PDF Document",  // PDF ProgID description.
+            L"Velmren Dev PDF Document",  // PDF ProgID description.
         .active_setup_guid =
-            L"{CB2150F2-595F-4633-891A-E39720CE0531}",  // Active Setup GUID.
-        .toast_activator_clsid = {0x20b22981,
-                                  0xf63a,
-                                  0x47a6,
-                                  {0xa5, 0x47, 0x69, 0x1c, 0xc9, 0x4c, 0xae,
-                                   0xe0}},  // Toast activator CLSID.
-        .elevator_clsid = {0x9129ed6a,
-                           0x11d3,
-                           0x43b7,
-                           {0xb7, 0x18, 0x8f, 0x82, 0x61, 0x45, 0x97,
-                            0xa3}},  // Elevator CLSID.
-        .elevator_iid = {0x1e43c77b,
-                         0x48e6,
-                         0x4a4c,
-                         {0x9d, 0xb2, 0xc2, 0x97, 0x17, 0x06, 0xc2, 0x55}},
+            L"{74B9E6E2-AD1E-5888-8F4C-8F3D08635EF0}",  // Active Setup GUID.
+        .toast_activator_clsid = {0xad98ee36,
+                                  0x34fb,
+                                  0x53a7,
+                                  {0x9c, 0x87, 0x4d, 0x34, 0x00, 0xb2, 0x98,
+                                   0x65}},  // Toast activator CLSID.
+        .elevator_clsid = {0x24fb6607,
+                           0xbac7,
+                           0x5cff,
+                           {0xb7, 0xe2, 0xca, 0x53, 0x1b, 0x2a, 0xb8,
+                            0x40}},  // Elevator CLSID.
+        .elevator_iid = {0x3f6aaaf6,
+                         0xf875,
+                         0x5e3c,
+                         {0xb0, 0x54, 0x2a, 0x1d, 0xee, 0x2f, 0x78, 0xca}},
         .default_channel_name = L"dev",  // Forced channel name.
         .channel_strategy = ChannelStrategy::FIXED,
         .supports_system_level = true,  // Supports system-level installs.
@@ -396,8 +396,8 @@ inline constexpr auto kInstallModes = std::to_array<InstallConstants>({
             icon_resources::kDevApplicationIndex,  // App icon resource index.
         .app_icon_resource_id = IDR_X004_DEV,      // App icon resource id.
         .sandbox_sid_prefix =
-            L"S-1-15-2-3251537155-1984446955-2931258699-841473695-1938553385-"
-            L"934012151-",  // App container sid prefix for sandbox.
+            L"S-1-15-2-2149060189-2418730926-3966812758-1819624003-2059915740-"
+            L"208470151-",  // App container sid prefix for sandbox.
     },
     // A secondary install mode for Brave SxS (canary).
     {
@@ -408,32 +408,32 @@ inline constexpr auto kInstallModes = std::to_array<InstallConstants>({
         .install_suffix = L"-Nightly",   // Install suffix.
         .logo_suffix = L"Canary",        // Logo suffix.
         .app_guid =
-            L"{C6CB981E-DB30-4876-8639-109F8933582C}",  // A distinct app GUID.
-        .base_app_name = L"Brave Nightly",        // A distinct base_app_name.
-        .base_app_id = L"BraveNightly",           // A distinct base_app_id.
-        .browser_prog_id_prefix = L"BraveSSHTM",  // Browser ProgID prefix.
+            L"{83BCFA56-B05F-59E1-9442-A00C02CE251A}",  // A distinct app GUID.
+        .base_app_name = L"Velmren Nightly",     // A distinct base_app_name.
+        .base_app_id = L"VelmrenNightly",        // A distinct base_app_id.
+        .browser_prog_id_prefix = L"VelmSSHTM",  // Browser ProgID prefix.
         .browser_prog_id_description =
-            L"Brave Nightly HTML Document",  // Browser ProgID description.
-        .direct_launch_url_scheme = "brave-browser-nightly",
-        .pdf_prog_id_prefix = L"BraveSSPDF",  // PDF ProgID prefix.
+            L"Velmren Nightly HTML Document",  // Browser ProgID description.
+        .direct_launch_url_scheme = "velmren-browser-nightly",
+        .pdf_prog_id_prefix = L"VelmSSPDF",  // PDF ProgID prefix.
         .pdf_prog_id_description =
-            L"Brave Nightly PDF Document",  // PDF ProgID description.
+            L"Velmren Nightly PDF Document",  // PDF ProgID description.
         .active_setup_guid =
-            L"{C6CB981E-DB30-4876-8639-109F8933582C}",  // Active Setup GUID.
-        .toast_activator_clsid = {0xf2edbc59,
-                                  0x7217,
-                                  0x4da5,
-                                  {0xa2, 0x59, 0x3, 0x2, 0xda, 0x6a, 0x0,
-                                   0xe1}},  // Toast activator CLSID.
-        .elevator_clsid = {0x1ce2f84f,
-                           0x70cb,
-                           0x4389,
-                           {0x87, 0xdb, 0xd0, 0x99, 0x48, 0x30, 0xbb,
-                            0x17}},  // Elevator CLSID.
-        .elevator_iid = {0x1db2116f,
-                         0x71b7,
-                         0x49f0,
-                         {0x89, 0x70, 0x33, 0xb1, 0xda, 0xcf, 0xb0, 0x72}},
+            L"{83BCFA56-B05F-59E1-9442-A00C02CE251A}",  // Active Setup GUID.
+        .toast_activator_clsid = {0xd757d6e5,
+                                  0x657c,
+                                  0x5b6d,
+                                  {0x85, 0xe4, 0xec, 0xc5, 0xd5, 0xba, 0xc7,
+                                   0xd9}},  // Toast activator CLSID.
+        .elevator_clsid = {0x3adbff95,
+                           0xb070,
+                           0x5d4e,
+                           {0x93, 0x18, 0xbc, 0x08, 0xac, 0x04, 0x30,
+                            0xef}},  // Elevator CLSID.
+        .elevator_iid = {0xd236c5df,
+                         0x36ff,
+                         0x5066,
+                         {0x9c, 0xb7, 0xdc, 0x69, 0xec, 0x21, 0xed, 0xd0}},
         .default_channel_name = L"nightly",  // Forced channel name.
         .channel_strategy = ChannelStrategy::FIXED,
         .supports_system_level = true,  // Support system-level installs.
@@ -443,8 +443,8 @@ inline constexpr auto kInstallModes = std::to_array<InstallConstants>({
             icon_resources::kSxSApplicationIndex,  // App icon resource index.
         .app_icon_resource_id = IDR_SXS,           // App icon resource id.
         .sandbox_sid_prefix =
-            L"S-1-15-2-3251537155-1984446955-2931258699-841473695-1938553385-"
-            L"934012152-",  // App container sid prefix for sandbox.
+            L"S-1-15-2-2149060189-2418730926-3966812758-1819624003-2059915740-"
+            L"208470152-",  // App container sid prefix for sandbox.
     },
 });
 #endif  // BUILDFLAG(IS_BRAVE_ORIGIN_BRANDED)
@@ -465,31 +465,32 @@ inline constexpr auto kInstallModes = std::to_array<InstallConstants>({
         .logo_suffix = L"",  // No logo suffix for the primary install mode.
         .app_guid =
             L"",  // Empty app_guid since no integraion with Brave Update.
-        .base_app_name = L"Brave Development",     // A distinct base_app_name.
-        .base_app_id = L"BraveDevelopment",        // A distinct base_app_id.
-        .browser_prog_id_prefix = L"BraveDevHTM",  // Browser ProgID prefix.
+        .base_app_name = L"Velmren Development",  // A distinct base_app_name.
+        .base_app_id = L"VelmrenDevelopment",     // A distinct base_app_id.
+        .browser_prog_id_prefix = L"VelmDevHTM",  // Browser ProgID prefix.
         .browser_prog_id_description =
-            L"Brave Development HTML Document",  // Browser ProgID description.
-        .direct_launch_url_scheme = "brave-browser-development",
-        .pdf_prog_id_prefix = L"BraveDevPDF",  // PDF ProgID prefix.
+            L"Velmren Development HTML Document",  // Browser ProgID
+                                                   // description.
+        .direct_launch_url_scheme = "velmren-browser-development",
+        .pdf_prog_id_prefix = L"VelmDevPDF",  // PDF ProgID prefix.
         .pdf_prog_id_description =
-            L"Brave Development PDF Document",  // PDF ProgID description.
+            L"Velmren Development PDF Document",  // PDF ProgID description.
         .active_setup_guid =
-            L"{D6527C63-5CDD-4EF3-9299-1504E17CBD18}",  // Active Setup GUID.
-        .toast_activator_clsid = {0xeb41c6e8,
-                                  0xba35,
-                                  0x4c06,
-                                  {0x96, 0xe8, 0x6f, 0x30, 0xf1, 0x8c, 0xa5,
-                                   0x5c}},  // Toast activator CLSID.
-        .elevator_clsid = {0x5693e62d,
-                           0xd6,
-                           0x4421,
-                           {0xaf, 0xe8, 0x58, 0xf3, 0xc9, 0x47, 0x43,
-                            0x6a}},  // Elevator CLSID.
-        .elevator_iid = {0x17239bf1,
-                         0xa1dc,
-                         0x4642,
-                         {0x84, 0x6c, 0x1b, 0xac, 0x85, 0xf9, 0x6a, 0x10}},
+            L"{9787A436-68F2-5126-B49F-4C4D54FF3EAE}",  // Active Setup GUID.
+        .toast_activator_clsid = {0x0bc526db,
+                                  0xefdf,
+                                  0x5003,
+                                  {0x8d, 0xb6, 0x1a, 0xc1, 0x69, 0xba, 0x0f,
+                                   0xdf}},  // Toast activator CLSID.
+        .elevator_clsid = {0x68a4fcbc,
+                           0x7a11,
+                           0x5239,
+                           {0x91, 0x11, 0x2f, 0xe0, 0xb8, 0xcf, 0xf1,
+                            0xc9}},  // Elevator CLSID.
+        .elevator_iid = {0xd9891b9b,
+                         0x1d2f,
+                         0x5944,
+                         {0xb0, 0x43, 0x31, 0x00, 0x2a, 0xdc, 0x86, 0x4e}},
         .default_channel_name =
             L"",  // Empty default channel name since no update integration.
         .channel_strategy = ChannelStrategy::UNSUPPORTED,
@@ -500,8 +501,8 @@ inline constexpr auto kInstallModes = std::to_array<InstallConstants>({
             icon_resources::kApplicationIndex,  // App icon resource index.
         .app_icon_resource_id = IDR_MAINFRAME,  // App icon resource id.
         .sandbox_sid_prefix =
-            L"S-1-15-2-3251537155-1984446955-2931258699-841473695-1938553385-"
-            L"934012148-",  // App container sid prefix for sandbox.
+            L"S-1-15-2-2149060189-2418730926-3966812758-1819624003-2059915740-"
+            L"208470148-",  // App container sid prefix for sandbox.
     },
 });
 #endif

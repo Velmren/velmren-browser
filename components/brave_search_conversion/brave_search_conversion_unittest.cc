@@ -6,11 +6,10 @@
 #include <memory>
 
 #include "base/feature_list.h"
-#include "base/metrics/field_trial.h"
-#include "base/metrics/field_trial_param_associator.h"
 #include "base/test/scoped_feature_list.h"
-#include "brave/components/brave_origin/buildflags/buildflags.h"
+#include "base/time/time.h"
 #include "brave/components/brave_search_conversion/features.h"
+#include "brave/components/brave_search_conversion/pref_names.h"
 #include "brave/components/brave_search_conversion/types.h"
 #include "brave/components/brave_search_conversion/utils.h"
 #include "brave/components/search_engines/brave_prepopulated_engines.h"
@@ -73,6 +72,22 @@ class BraveSearchConversionTest : public testing::Test {
   search_engines::SearchEnginesTestEnvironment search_engines_test_environment_;
 };
 
+TEST_F(BraveSearchConversionTest, VelmrenSuppressesForcedPromotions) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitWithFeatures(
+      {features::kOmniboxBanner, features::kOmniboxDDGBanner, features::kNTP},
+      {});
+  ConfigureBingAsDefaultProvider();
+
+  auto* service = search_engines_test_environment_.template_url_service();
+  EXPECT_FALSE(IsBraveSearchConversionFeatureEnabled());
+  EXPECT_FALSE(IsNTPPromotionEnabled(&pref_service_, service));
+  EXPECT_EQ(GetConversionType(&pref_service_, service), ConversionType::kNone);
+
+  ConfigureDDGAsDefaultProvider();
+  EXPECT_EQ(GetConversionType(&pref_service_, service), ConversionType::kNone);
+}
+
 TEST_F(BraveSearchConversionTest, DefaultValueTest) {
   EXPECT_FALSE(base::FeatureList::IsEnabled(features::kOmniboxBanner));
   EXPECT_FALSE(base::FeatureList::IsEnabled(features::kOmniboxDDGBanner));
@@ -85,134 +100,71 @@ TEST_F(BraveSearchConversionTest, DefaultValueTest) {
             GetPromoURL(u"brave"));
 }
 
-// In branded builds, GetConversionType unconditionally returns kNone.
-#if !BUILDFLAG(IS_BRAVE_ORIGIN_BRANDED)
-TEST_F(BraveSearchConversionTest, ConversionTypeTest) {
-  base::test::ScopedFeatureList feature_list;
+TEST_F(BraveSearchConversionTest,
+       ConversionAndNTPPromotionDisabledForEveryProviderAndFeatureCombination) {
+  auto* service = search_engines_test_environment_.template_url_service();
+  for (int feature_mask = 0; feature_mask < 8; ++feature_mask) {
+    SCOPED_TRACE(feature_mask);
+    base::test::ScopedFeatureList feature_list;
+    feature_list.InitWithFeatureStates(
+        {{features::kOmniboxBanner, (feature_mask & 1) != 0},
+         {features::kOmniboxDDGBanner, (feature_mask & 2) != 0},
+         {features::kNTP, (feature_mask & 4) != 0}});
 
-  ConfigureBingAsDefaultProvider();
+    EXPECT_FALSE(IsBraveSearchConversionFeatureEnabled());
+    const auto expect_suppressed = [&]() {
+      EXPECT_EQ(ConversionType::kNone,
+                GetConversionType(&pref_service_, service));
+      EXPECT_FALSE(IsNTPPromotionEnabled(&pref_service_, service));
+    };
 
-  feature_list.InitAndEnableFeatureWithParameters(
-      brave_search_conversion::features::kOmniboxBanner,
-      {{brave_search_conversion::features::kBannerTypeParamName, "type_B"}});
-  EXPECT_EQ(ConversionType::kBannerTypeB,
-            GetConversionType(
-                &pref_service_,
-                search_engines_test_environment_.template_url_service()));
+    ConfigureBingAsDefaultProvider();
+    expect_suppressed();
+    ConfigureDDGAsDefaultProvider();
+    expect_suppressed();
+    ConfigureBraveSearchAsDefaultProvider(false);
+    expect_suppressed();
+    ConfigureBraveSearchAsDefaultProvider(true);
+    expect_suppressed();
 
-  // Check do not conversion when brave search(tor) is set as a default
-  // provider.
-  ConfigureBraveSearchAsDefaultProvider(false);
-  EXPECT_EQ(ConversionType::kNone,
-            GetConversionType(
-                &pref_service_,
-                search_engines_test_environment_.template_url_service()));
-  ConfigureBraveSearchAsDefaultProvider(true);
-  EXPECT_EQ(ConversionType::kNone,
-            GetConversionType(
-                &pref_service_,
-                search_engines_test_environment_.template_url_service()));
-
-  ConfigureBingAsDefaultProvider();
-
-  // Check conversion type is set again after 3days passed.
-  SetMaybeLater(&pref_service_);
-  EXPECT_EQ(ConversionType::kNone,
-            GetConversionType(
-                &pref_service_,
-                search_engines_test_environment_.template_url_service()));
-
-  task_environment_.AdvanceClock(base::Days(2));
-  EXPECT_EQ(ConversionType::kNone,
-            GetConversionType(
-                &pref_service_,
-                search_engines_test_environment_.template_url_service()));
-
-  task_environment_.AdvanceClock(base::Days(1) + base::Milliseconds(1));
-
-  EXPECT_EQ(ConversionType::kBannerTypeB,
-            GetConversionType(
-                &pref_service_,
-                search_engines_test_environment_.template_url_service()));
-
-  // Set DDG as a default provider and check banner type is still Type B
-  // because |kOmniboxDDGBanner| feature is disabled.
-  ConfigureDDGAsDefaultProvider();
-  EXPECT_EQ(ConversionType::kBannerTypeB,
-            GetConversionType(
-                &pref_service_,
-                search_engines_test_environment_.template_url_service()));
-
-  feature_list.Reset();
-
-  feature_list.InitAndEnableFeature(
-      brave_search_conversion::features::kOmniboxDDGBanner);
-
-  ConfigureBingAsDefaultProvider();
-
-  // Check no banner as current provider is bing.
-  EXPECT_EQ(ConversionType::kNone,
-            GetConversionType(
-                &pref_service_,
-                search_engines_test_environment_.template_url_service()));
-
-  // Set DDG as a default provider and check banner type again.
-  ConfigureDDGAsDefaultProvider();
-  EXPECT_EQ(ConversionType::kDDGBannerTypeC,
-            GetConversionType(
-                &pref_service_,
-                search_engines_test_environment_.template_url_service()));
-
-  feature_list.Reset();
-
-  // Set two types of features together as we use different griffin study for
-  // both.
-  feature_list.InitWithFeaturesAndParameters(
-      {{brave_search_conversion::features::kOmniboxBanner,
-        {{brave_search_conversion::features::kBannerTypeParamName, "type_B"}}},
-       {brave_search_conversion::features::kOmniboxDDGBanner, {}}},
-      {});
-
-  // Set Brave and check no banner.
-  ConfigureBraveSearchAsDefaultProvider(false);
-  EXPECT_EQ(ConversionType::kNone,
-            GetConversionType(
-                &pref_service_,
-                search_engines_test_environment_.template_url_service()));
-
-  // Set DDG and check ddg banner.
-  ConfigureDDGAsDefaultProvider();
-  EXPECT_EQ(ConversionType::kDDGBannerTypeC,
-            GetConversionType(
-                &pref_service_,
-                search_engines_test_environment_.template_url_service()));
-
-  task_environment_.AdvanceClock(base::Minutes(1));
-  EXPECT_EQ(ConversionType::kDDGBannerTypeD,
-            GetConversionType(
-                &pref_service_,
-                search_engines_test_environment_.template_url_service()));
-
-  task_environment_.AdvanceClock(base::Minutes(1));
-  EXPECT_EQ(ConversionType::kDDGBannerTypeC,
-            GetConversionType(
-                &pref_service_,
-                search_engines_test_environment_.template_url_service()));
-
-  // Set bing and check non-ddg banner.
-  ConfigureBingAsDefaultProvider();
-  EXPECT_EQ(ConversionType::kBannerTypeB,
-            GetConversionType(
-                &pref_service_,
-                search_engines_test_environment_.template_url_service()));
-
-  // Set dismissed.
-  SetDismissed(&pref_service_);
-  EXPECT_EQ(ConversionType::kNone,
-            GetConversionType(
-                &pref_service_,
-                search_engines_test_environment_.template_url_service()));
+    // Suppressed requests must not advance the DDG banner rotation state.
+    EXPECT_EQ(pref_service_.GetInteger(prefs::kDDGBannerTypeIndex), 0);
+    EXPECT_TRUE(pref_service_.GetTime(prefs::kLatestDDGBannerTypeFirstShownTime)
+                    .is_null());
+  }
 }
-#endif  // !BUILDFLAG(IS_BRAVE_ORIGIN_BRANDED)
+
+TEST_F(BraveSearchConversionTest, DismissalAndDelayNeverReenablePromotions) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitWithFeaturesAndParameters(
+      {{features::kOmniboxBanner, {{features::kBannerTypeParamName, "type_B"}}},
+       {features::kOmniboxDDGBanner, {}},
+       {features::kNTP, {}}},
+      {});
+  ConfigureDDGAsDefaultProvider();
+  auto* service = search_engines_test_environment_.template_url_service();
+
+  EXPECT_FALSE(pref_service_.GetBoolean(prefs::kDismissed));
+  EXPECT_TRUE(pref_service_.GetTime(prefs::kMaybeLaterClickedTime).is_null());
+  const base::Time clicked_time = base::Time::Now();
+  SetMaybeLater(&pref_service_);
+  EXPECT_EQ(pref_service_.GetTime(prefs::kMaybeLaterClickedTime), clicked_time);
+
+  for (const auto delay : {base::Days(2), base::Days(1) + base::Milliseconds(1),
+                           base::Minutes(1), base::Minutes(1)}) {
+    task_environment_.AdvanceClock(delay);
+    EXPECT_EQ(ConversionType::kNone,
+              GetConversionType(&pref_service_, service));
+    EXPECT_FALSE(IsNTPPromotionEnabled(&pref_service_, service));
+  }
+  EXPECT_EQ(pref_service_.GetInteger(prefs::kDDGBannerTypeIndex), 0);
+  EXPECT_TRUE(pref_service_.GetTime(prefs::kLatestDDGBannerTypeFirstShownTime)
+                  .is_null());
+
+  SetDismissed(&pref_service_);
+  EXPECT_TRUE(pref_service_.GetBoolean(prefs::kDismissed));
+  EXPECT_EQ(ConversionType::kNone, GetConversionType(&pref_service_, service));
+  EXPECT_FALSE(IsNTPPromotionEnabled(&pref_service_, service));
+}
 
 }  // namespace brave_search_conversion

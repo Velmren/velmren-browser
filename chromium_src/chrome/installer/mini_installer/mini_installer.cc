@@ -55,9 +55,9 @@
   wchar_t value[MAX_PATH] = {                                               \
       0,                                                                    \
   };                                                                        \
-  const bool result = RegKey::ReadSZValue(                                  \
-      HKEY_CURRENT_USER, L"Software\\BraveSoftware\\Promo",                 \
-      L"StubInstallerPath", value, _countof(value));                        \
+  const bool result =                                                       \
+      RegKey::ReadSZValue(HKEY_CURRENT_USER, L"Software\\Velmren\\Promo",   \
+                          L"StubInstallerPath", value, _countof(value));    \
   if (result && installer_filename.assign(value) &&                         \
       installer_filename.length() != 0) {                                   \
     ReferralCodeString referral_code;                                       \
@@ -122,13 +122,15 @@ constexpr size_t kStandardReferralCodeLen = 6;
 
 // Coverts a string in place to uppercase
 void SafeStrASCIIUpper(wchar_t* str, size_t size) {
-  if (!str || !size)
+  if (!str || !size) {
     return;
+  }
 
   for (size_t i = 0; i < size && UNSAFE_TODO(str[i]) != L'\0'; ++i) {
     wchar_t c = UNSAFE_TODO(str[i]);
-    if (c >= L'a' && c <= L'z')
+    if (c >= L'a' && c <= L'z') {
       UNSAFE_TODO(str[i]) += L'A' - L'a';
+    }
   }
 }
 
@@ -137,15 +139,17 @@ bool ParseStandardReferralCode(const wchar_t* filename,
   // Scan backwards for last dash in filename.
   const wchar_t* anchor = UNSAFE_TODO(filename + lstrlen(filename) - 1);
   const wchar_t* scan = anchor;
-  while (scan != filename && *scan != L'-')
+  while (scan != filename && *scan != L'-') {
     UNSAFE_TODO(--scan);
+  }
 
   if (*UNSAFE_TODO(scan++) != L'-') {
     return false;
   }
 
-  if (anchor - scan + 1 != kStandardReferralCodeLen)
+  if (anchor - scan + 1 != kStandardReferralCodeLen) {
     return false;
+  }
 
   const wchar_t* ref_code = scan;
   wchar_t ref_code_normalized[kStandardReferralCodeLen + 1];
@@ -166,13 +170,16 @@ bool ParseStandardReferralCode(const wchar_t* filename,
     }
   }
 
-  if (!SafeStrCopy(ref_code_normalized, kStandardReferralCodeLen + 1, ref_code))
+  if (!SafeStrCopy(ref_code_normalized, kStandardReferralCodeLen + 1,
+                   ref_code)) {
     return false;
+  }
 
   SafeStrASCIIUpper(ref_code_normalized, kStandardReferralCodeLen);
 
-  if (!referral_code->assign(ref_code_normalized))
+  if (!referral_code->assign(ref_code_normalized)) {
     return false;
+  }
 
   return true;
 }
@@ -182,15 +189,17 @@ bool ParseExtendedReferralCode(const wchar_t* filename,
   // Scan backwards for second-to-last dash in filename, since this
   // type of referral code has an embedded dash.
   const wchar_t* scan = UNSAFE_TODO(filename + lstrlen(filename) - 1);
-  while (scan != filename && *scan != L'-')
+  while (scan != filename && *scan != L'-') {
     UNSAFE_TODO(--scan);
+  }
 
   if (*UNSAFE_TODO(scan--) != L'-') {
     return false;
   }
 
-  while (scan != filename && *scan != L'-')
+  while (scan != filename && *scan != L'-') {
     UNSAFE_TODO(--scan);
+  }
 
   if (*UNSAFE_TODO(scan++) != L'-') {
     return false;
@@ -211,11 +220,13 @@ bool ParseExtendedReferralCode(const wchar_t* filename,
   }
 
   // Ensure that referral code contains exactly one dash.
-  if (dashes != 1)
+  if (dashes != 1) {
     return false;
+  }
 
-  if (!referral_code->assign(ref_code))
+  if (!referral_code->assign(ref_code)) {
     return false;
+  }
 
   return true;
 }
@@ -223,32 +234,38 @@ bool ParseExtendedReferralCode(const wchar_t* filename,
 bool ParseReferralCode(const wchar_t* installer_filename,
                        ReferralCodeString* referral_code) {
   PathString filename;
-  if (!filename.assign(
-          GetNameFromPathExt(installer_filename, lstrlen(installer_filename))))
+  if (!filename.assign(GetNameFromPathExt(installer_filename,
+                                          lstrlen(installer_filename)))) {
     return false;
+  }
 
   // Strip extension from filename.
   const wchar_t* scan = UNSAFE_TODO(filename.get() + filename.length() - 1);
-  while (scan != filename.get() && *scan != L'.')
+  while (scan != filename.get() && *scan != L'.') {
     UNSAFE_TODO(--scan);
+  }
 
-  if (*scan == L'.')
+  if (*scan == L'.') {
     filename.truncate_at(scan - filename.get());
+  }
 
   // Strip any de-duplicating suffix from filename, e.g. "(1)".
   scan = UNSAFE_TODO(filename.get() + filename.length() - 1);
   if (*scan == L')') {
     UNSAFE_TODO(--scan);
-    while (scan != filename.get() && *scan >= '0' && *scan <= '9')
+    while (scan != filename.get() && *scan >= '0' && *scan <= '9') {
       UNSAFE_TODO(--scan);
-    if (*scan == L'(')
+    }
+    if (*scan == L'(') {
       filename.truncate_at(scan - filename.get());
+    }
   }
 
   // Strip trailing spaces from filename.
   scan = UNSAFE_TODO(filename.get() + filename.length() - 1);
-  while (scan != filename.get() && *scan == L' ')
+  while (scan != filename.get() && *scan == L' ') {
     UNSAFE_TODO(--scan);
+  }
 
   if (scan != filename.get() &&
       (scan != UNSAFE_TODO(filename.get() + filename.length()))) {

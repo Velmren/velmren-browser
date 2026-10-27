@@ -23,6 +23,7 @@ static_library("browser") {
     "//brave/brave_domains",
     "//brave/components/brave_stats/browser",
     "//brave/components/constants",
+    "//brave/components/velmren",
     "//brave/components/version_info",
     "//brave/vendor/brave_base",
     "//components/prefs",

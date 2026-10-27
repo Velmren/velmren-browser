@@ -273,7 +273,7 @@ EXTERN_C const IID IID_IElevator;
 
 #if defined(__cplusplus) && !defined(CINTERFACE)
     
-    MIDL_INTERFACE("5A9A9462-2FA1-4FEB-B7F2-DF3D19134463")
+    MIDL_INTERFACE("7FC9D551-5EEC-5C1F-B533-D3FA0CB0B44A")
     IElevator : public IUnknown
     {
     public:
@@ -408,7 +408,7 @@ EXTERN_C const IID IID_IElevator2;
 
 #if defined(__cplusplus) && !defined(CINTERFACE)
     
-    MIDL_INTERFACE("8F7B6792-784D-4047-845D-1782EFBEF205")
+    MIDL_INTERFACE("8D962E97-B282-535B-96FC-A240979B6A88")
     IElevator2 : public IElevator
     {
     public:
@@ -668,7 +668,7 @@ EXTERN_C const IID IID_IElevatorChrome;
 
 #if defined(__cplusplus) && !defined(CINTERFACE)
     
-    MIDL_INTERFACE("F396861E-0C8E-4C71-8256-2FAE6D759CE9")
+    MIDL_INTERFACE("407578A3-C18B-5138-BB1F-FB3D529F1C0D")
     IElevatorChrome : public IElevator
     {
     public:
@@ -783,7 +783,7 @@ EXTERN_C const IID IID_IElevatorChromeBeta;
 
 #if defined(__cplusplus) && !defined(CINTERFACE)
     
-    MIDL_INTERFACE("9EBAD7AC-6E1E-4A1C-AA85-1A70CADA8D82")
+    MIDL_INTERFACE("25247D6B-B4A2-5ECB-BFBB-D3C32953F349")
     IElevatorChromeBeta : public IElevator
     {
     public:
@@ -898,7 +898,7 @@ EXTERN_C const IID IID_IElevatorChromeDev;
 
 #if defined(__cplusplus) && !defined(CINTERFACE)
     
-    MIDL_INTERFACE("1E43C77B-48E6-4A4C-9DB2-C2971706C255")
+    MIDL_INTERFACE("3F6AAAF6-F875-5E3C-B054-2A1DEE2F78CA")
     IElevatorChromeDev : public IElevator
     {
     public:
@@ -1013,7 +1013,7 @@ EXTERN_C const IID IID_IElevatorChromeCanary;
 
 #if defined(__cplusplus) && !defined(CINTERFACE)
     
-    MIDL_INTERFACE("1DB2116F-71B7-49F0-8970-33B1DACFB072")
+    MIDL_INTERFACE("D236C5DF-36FF-5066-9CB7-DC69EC21EDD0")
     IElevatorChromeCanary : public IElevator
     {
     public:
@@ -1128,7 +1128,7 @@ EXTERN_C const IID IID_IElevatorDevelopment;
 
 #if defined(__cplusplus) && !defined(CINTERFACE)
     
-    MIDL_INTERFACE("17239BF1-A1DC-4642-846C-1BAC85F96A10")
+    MIDL_INTERFACE("D9891B9B-1D2F-5944-B043-31002ADC864E")
     IElevatorDevelopment : public IElevator
     {
     public:

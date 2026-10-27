@@ -15,6 +15,7 @@
 #include "brave/components/serp_metrics/pref_names.h"
 #include "brave/components/serp_metrics/serp_metric_type.h"
 #include "brave/components/serp_metrics/serp_metrics_feature.h"
+#include "brave/components/serp_metrics/serp_metrics_service.h"
 #include "brave/components/serp_metrics/test/fake_serp_metrics_time_period_store.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/testing_pref_service.h"
@@ -27,6 +28,15 @@
 // report metrics from yesterday as well as from the stale period.
 
 namespace serp_metrics {
+
+TEST(SerpMetricsServiceTest, VelmrenSuppressesForcedMetricsFeature) {
+  base::test::ScopedFeatureList features;
+  features.InitAndEnableFeature(kSerpMetricsFeature);
+  TestingPrefServiceSimple local_state;
+  test::FakeSerpMetricsTimePeriodStoreFactory store_factory;
+  SerpMetricsService service(local_state, store_factory);
+  EXPECT_EQ(service.Get(), nullptr);
+}
 
 class SerpMetricsTest : public testing::Test {
  public:

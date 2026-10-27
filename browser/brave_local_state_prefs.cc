@@ -44,6 +44,7 @@
 #include "brave/components/skus/browser/skus_utils.h"
 #include "brave/components/speedreader/common/buildflags/buildflags.h"
 #include "brave/components/tor/buildflags/buildflags.h"
+#include "brave/components/velmren/product_policy.h"
 #include "brave/components/web_discovery/buildflags/buildflags.h"
 #include "build/build_config.h"
 #include "chrome/common/pref_names.h"
@@ -176,7 +177,8 @@ void RegisterLocalStatePrefs(PrefRegistrySimple* registry) {
   // map, referrals service, SERP tab helper, Brave Origin service) that
   // remain compiled in even when the stats updater itself is excluded, so
   // it must always be registered.
-  registry->RegisterBooleanPref(kStatsReportingEnabled, true);
+  registry->RegisterBooleanPref(kStatsReportingEnabled,
+                                velmren::kTelemetryEnabled);
 #if BUILDFLAG(ENABLE_BRAVE_STATS_UPDATER)
   brave_stats::RegisterLocalStatePrefs(registry);
 #endif

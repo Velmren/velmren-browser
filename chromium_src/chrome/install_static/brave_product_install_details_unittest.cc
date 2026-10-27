@@ -74,57 +74,57 @@ struct TestData {
 #if BUILDFLAG(IS_BRAVE_ORIGIN_BRANDED)
 constexpr TestData kTestData[] = {
     {
-        L"C:\\Program Files (x86)\\BraveSoftware\\Brave-Origin\\Application"
-        L"\\brave.exe",
+        L"C:\\Program Files (x86)\\Velmren\\Brave-Origin\\Application"
+        L"\\velmren.exe",
         STABLE_INDEX,
         true,
         L"",
     },
     {
-        L"C:\\Users\\user\\AppData\\Local\\BraveSoftware\\Brave-Origin"
-        L"\\Application\\brave.exe",
+        L"C:\\Users\\user\\AppData\\Local\\Velmren\\Brave-Origin"
+        L"\\Application\\velmren.exe",
         STABLE_INDEX,
         false,
         L"",
     },
     {
-        L"C:\\Program Files (x86)\\BraveSoftware\\Brave-Origin-Beta"
-        L"\\Application\\brave.exe",
+        L"C:\\Program Files (x86)\\Velmren\\Brave-Origin-Beta"
+        L"\\Application\\velmren.exe",
         BETA_INDEX,
         true,
         L"beta",
     },
     {
-        L"C:\\Users\\user\\AppData\\Local\\BraveSoftware\\Brave-Origin-Beta"
-        L"\\Application\\brave.exe",
+        L"C:\\Users\\user\\AppData\\Local\\Velmren\\Brave-Origin-Beta"
+        L"\\Application\\velmren.exe",
         BETA_INDEX,
         false,
         L"beta",
     },
     {
-        L"C:\\Program Files (x86)\\BraveSoftware\\Brave-Origin-Dev"
-        L"\\Application\\brave.exe",
+        L"C:\\Program Files (x86)\\Velmren\\Brave-Origin-Dev"
+        L"\\Application\\velmren.exe",
         DEV_INDEX,
         true,
         L"dev",
     },
     {
-        L"C:\\Users\\user\\AppData\\Local\\BraveSoftware\\Brave-Origin-Dev"
-        L"\\Application\\brave.exe",
+        L"C:\\Users\\user\\AppData\\Local\\Velmren\\Brave-Origin-Dev"
+        L"\\Application\\velmren.exe",
         DEV_INDEX,
         false,
         L"dev",
     },
     {
-        L"C:\\Users\\user\\AppData\\Local\\BraveSoftware\\Brave-Origin-Nightly"
-        L"\\Application\\brave.exe",
+        L"C:\\Users\\user\\AppData\\Local\\Velmren\\Brave-Origin-Nightly"
+        L"\\Application\\velmren.exe",
         NIGHTLY_INDEX,
         false,
         L"nightly",
     },
     {
-        L"C:\\Users\\user\\AppData\\Local\\BraveSoftware\\Brave-Origin-Nightly"
-        L"\\Application\\brave.exe",
+        L"C:\\Users\\user\\AppData\\Local\\Velmren\\Brave-Origin-Nightly"
+        L"\\Application\\velmren.exe",
         NIGHTLY_INDEX,
         false,
         L"nightly",
@@ -133,59 +133,75 @@ constexpr TestData kTestData[] = {
 #else   // !IS_BRAVE_ORIGIN_BRANDED
 constexpr TestData kTestData[] = {
     {
-        L"C:\\Program Files (x86)\\BraveSoftware\\Brave-Browser\\Application"
-        L"\\brave.exe",
-        STABLE_INDEX, true, L"",
+        L"C:\\Program Files (x86)\\Velmren\\Velmren-Browser\\Application"
+        L"\\velmren.exe",
+        STABLE_INDEX,
+        true,
+        L"",
     },
     {
-        L"C:\\Users\\user\\AppData\\Local\\BraveSoftware\\Brave-Browser"
-        L"\\Application\\brave.exe",
-        STABLE_INDEX, false, L"",
+        L"C:\\Users\\user\\AppData\\Local\\Velmren\\Velmren-Browser"
+        L"\\Application\\velmren.exe",
+        STABLE_INDEX,
+        false,
+        L"",
     },
     {
-        L"C:\\Program Files (x86)\\BraveSoftware\\Brave-Browser-Beta"
-        L"\\Application\\brave.exe",
-        BETA_INDEX, true, L"beta",
+        L"C:\\Program Files (x86)\\Velmren\\Velmren-Browser-Beta"
+        L"\\Application\\velmren.exe",
+        BETA_INDEX,
+        true,
+        L"beta",
     },
     {
-        L"C:\\Users\\user\\AppData\\Local\\BraveSoftware\\Brave-Browser-Beta"
-        L"\\Application\\brave.exe",
-        BETA_INDEX, false, L"beta",
+        L"C:\\Users\\user\\AppData\\Local\\Velmren\\Velmren-Browser-Beta"
+        L"\\Application\\velmren.exe",
+        BETA_INDEX,
+        false,
+        L"beta",
     },
     {
-        L"C:\\Program Files (x86)\\BraveSoftware\\Brave-Browser-Dev"
-        L"\\Application\\brave.exe",
-        DEV_INDEX, true, L"dev",
+        L"C:\\Program Files (x86)\\Velmren\\Velmren-Browser-Dev"
+        L"\\Application\\velmren.exe",
+        DEV_INDEX,
+        true,
+        L"dev",
     },
     {
-        L"C:\\Users\\user\\AppData\\Local\\BraveSoftware\\Brave-Browser-Dev"
-        L"\\Application\\brave.exe",
-        DEV_INDEX, false, L"dev",
+        L"C:\\Users\\user\\AppData\\Local\\Velmren\\Velmren-Browser-Dev"
+        L"\\Application\\velmren.exe",
+        DEV_INDEX,
+        false,
+        L"dev",
     },
     {
-        L"C:\\Users\\user\\AppData\\Local\\BraveSoftware\\Brave-Browser-Nightly"
-        L"\\Application\\brave.exe",
-        NIGHTLY_INDEX, false, L"nightly",
+        L"C:\\Users\\user\\AppData\\Local\\Velmren\\Velmren-Browser-Nightly"
+        L"\\Application\\velmren.exe",
+        NIGHTLY_INDEX,
+        false,
+        L"nightly",
     },
     {
-        L"C:\\Users\\user\\AppData\\Local\\BraveSoftware\\Brave-Browser-Nightly"
-        L"\\Application\\brave.exe",
-        NIGHTLY_INDEX, false, L"nightly",
+        L"C:\\Users\\user\\AppData\\Local\\Velmren\\Velmren-Browser-Nightly"
+        L"\\Application\\velmren.exe",
+        NIGHTLY_INDEX,
+        false,
+        L"nightly",
     },
 };
 #endif  // BUILDFLAG(IS_BRAVE_ORIGIN_BRANDED)
 #else   // OFFICIAL_BUILD
 constexpr TestData kTestData[] = {
     {
-        L"C:\\Program Files (x86)\\BraveSoftware\\Brave-Browser-Development"
-        L"\\Application\\brave.exe",
+        L"C:\\Program Files (x86)\\Velmren\\Velmren-Browser-Development"
+        L"\\Application\\velmren.exe",
         DEVELOPER_INDEX,
         true,
         L"",
     },
     {
-        L"C:\\Users\\user\\AppData\\Local\\BraveSoftware\\Brave-Browser-"
-        L"Development\\Application\\brave.exe",
+        L"C:\\Users\\user\\AppData\\Local\\Velmren\\Velmren-Browser-"
+        L"Development\\Application\\velmren.exe",
         DEVELOPER_INDEX,
         false,
         L"",
@@ -206,8 +222,7 @@ class MakeProductDetailsTest : public testing::TestWithParam<TestData> {
       : test_data_(GetParam()),
         root_key_(test_data_.system_level ? HKEY_LOCAL_MACHINE
                                           : HKEY_CURRENT_USER),
-        nt_root_key_(test_data_.system_level ? nt::HKLM : nt::HKCU) {
-  }
+        nt_root_key_(test_data_.system_level ? nt::HKLM : nt::HKCU) {}
 
   ~MakeProductDetailsTest() {
     nt::SetTestingOverride(nt_root_key_, std::wstring());
@@ -243,10 +258,10 @@ class MakeProductDetailsTest : public testing::TestWithParam<TestData> {
   std::wstring GetClientStateKeyPath() {
     std::wstring result(L"Software\\");
 #if defined(OFFICIAL_BUILD)
-      result.append(L"BraveSoftware\\Update\\ClientState\\");
-      result.append(UNSAFE_TODO(kInstallModes[test_data().index]).app_guid);
+    result.append(L"Velmren\\Update\\ClientState\\");
+    result.append(UNSAFE_TODO(kInstallModes[test_data().index]).app_guid);
 #else
-      result.append(kProductPathName);
+    result.append(kProductPathName);
 #endif
     return result;
   }

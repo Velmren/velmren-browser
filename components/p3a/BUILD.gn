@@ -69,6 +69,7 @@ static_library("p3a") {
     "//brave/components/brave_component_updater/browser:public",
     "//brave/components/brave_origin/buildflags",
     "//brave/components/brave_stats/browser",
+    "//brave/components/velmren",
     "//brave/components/version_info",
     "//brave/vendor/brave_base",
     "//components/cbor",

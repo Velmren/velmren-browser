@@ -681,7 +681,7 @@ static const USER_MARSHAL_ROUTINE_QUADRUPLE UserMarshalRoutines[ WIRE_MARSHAL_TA
 
 
 /* Object interface: IElevator, ver. 0.0,
-   GUID={0x5A9A9462,0x2FA1,0x4FEB,{0xB7,0xF2,0xDF,0x3D,0x19,0x13,0x44,0x63}} */
+   GUID={0x7FC9D551,0x5EEC,0x5C1F,{0xB5,0x33,0xD3,0xFA,0x0C,0xB0,0xB4,0x4A}} */
 
 #pragma code_seg(".orpc")
 static const unsigned short IElevator_FormatStringOffsetTable[] =
@@ -737,7 +737,7 @@ const CInterfaceStubVtbl _IElevatorStubVtbl =
 
 
 /* Object interface: IElevator2, ver. 0.0,
-   GUID={0x8F7B6792,0x784D,0x4047,{0x84,0x5D,0x17,0x82,0xEF,0xBE,0xF2,0x05}} */
+   GUID={0x8D962E97,0xB282,0x535B,{0x96,0xFC,0xA2,0x40,0x97,0x9B,0x6A,0x88}} */
 
 #pragma code_seg(".orpc")
 static const unsigned short IElevator2_FormatStringOffsetTable[] =
@@ -863,7 +863,7 @@ CInterfaceStubVtbl _IElevatorChromiumStubVtbl =
 
 
 /* Object interface: IElevatorChrome, ver. 0.0,
-   GUID={0xF396861E,0x0C8E,0x4C71,{0x82,0x56,0x2F,0xAE,0x6D,0x75,0x9C,0xE9}} */
+   GUID={0x407578A3,0xC18B,0x5138,{0xBB,0x1F,0xFB,0x3D,0x52,0x9F,0x1C,0x0D}} */
 
 #pragma code_seg(".orpc")
 static const unsigned short IElevatorChrome_FormatStringOffsetTable[] =
@@ -929,7 +929,7 @@ CInterfaceStubVtbl _IElevatorChromeStubVtbl =
 
 
 /* Object interface: IElevatorChromeBeta, ver. 0.0,
-   GUID={0x9EBAD7AC,0x6E1E,0x4A1C,{0xAA,0x85,0x1A,0x70,0xCA,0xDA,0x8D,0x82}} */
+   GUID={0x25247D6B,0xB4A2,0x5ECB,{0xBF,0xBB,0xD3,0xC3,0x29,0x53,0xF3,0x49}} */
 
 #pragma code_seg(".orpc")
 static const unsigned short IElevatorChromeBeta_FormatStringOffsetTable[] =
@@ -995,7 +995,7 @@ CInterfaceStubVtbl _IElevatorChromeBetaStubVtbl =
 
 
 /* Object interface: IElevatorChromeDev, ver. 0.0,
-   GUID={0x1E43C77B,0x48E6,0x4A4C,{0x9D,0xB2,0xC2,0x97,0x17,0x06,0xC2,0x55}} */
+   GUID={0x3F6AAAF6,0xF875,0x5E3C,{0xB0,0x54,0x2A,0x1D,0xEE,0x2F,0x78,0xCA}} */
 
 #pragma code_seg(".orpc")
 static const unsigned short IElevatorChromeDev_FormatStringOffsetTable[] =
@@ -1061,7 +1061,7 @@ CInterfaceStubVtbl _IElevatorChromeDevStubVtbl =
 
 
 /* Object interface: IElevatorChromeCanary, ver. 0.0,
-   GUID={0x1DB2116F,0x71B7,0x49F0,{0x89,0x70,0x33,0xB1,0xDA,0xCF,0xB0,0x72}} */
+   GUID={0xD236C5DF,0x36FF,0x5066,{0x9C,0xB7,0xDC,0x69,0xEC,0x21,0xED,0xD0}} */
 
 #pragma code_seg(".orpc")
 static const unsigned short IElevatorChromeCanary_FormatStringOffsetTable[] =
@@ -1127,7 +1127,7 @@ CInterfaceStubVtbl _IElevatorChromeCanaryStubVtbl =
 
 
 /* Object interface: IElevatorDevelopment, ver. 0.0,
-   GUID={0x17239BF1,0xA1DC,0x4642,{0x84,0x6C,0x1B,0xAC,0x85,0xF9,0x6A,0x10}} */
+   GUID={0xD9891B9B,0x1D2F,0x5944,{0xB0,0x43,0x31,0x00,0x2A,0xDC,0x86,0x4E}} */
 
 #pragma code_seg(".orpc")
 static const unsigned short IElevatorDevelopment_FormatStringOffsetTable[] =
@@ -1584,70 +1584,70 @@ static const MIDL_STUB_DESC Object_StubDesc =
 const CInterfaceProxyVtbl * const _elevation_service_idl_ProxyVtblList[] = 
 {
     ( CInterfaceProxyVtbl *) &_IElevatorChromiumProxyVtbl,
-    ( CInterfaceProxyVtbl *) &_IElevatorChromeProxyVtbl,
     ( CInterfaceProxyVtbl *) &_IElevatorProxyVtbl,
-    ( CInterfaceProxyVtbl *) &_IElevatorChromeCanaryProxyVtbl,
-    ( CInterfaceProxyVtbl *) &_IElevatorChromeDevProxyVtbl,
+    ( CInterfaceProxyVtbl *) &_IElevatorChromeBetaProxyVtbl,
     ( CInterfaceProxyVtbl *) &_IElevator2ChromeProxyVtbl,
     ( CInterfaceProxyVtbl *) &_IElevator2ChromeDevProxyVtbl,
     ( CInterfaceProxyVtbl *) &_IElevator2ProxyVtbl,
-    ( CInterfaceProxyVtbl *) &_IElevator2ChromeCanaryProxyVtbl,
-    ( CInterfaceProxyVtbl *) &_IElevatorChromeBetaProxyVtbl,
-    ( CInterfaceProxyVtbl *) &_IElevator2ChromeBetaProxyVtbl,
-    ( CInterfaceProxyVtbl *) &_IElevator2ChromiumProxyVtbl,
     ( CInterfaceProxyVtbl *) &_IElevatorDevelopmentProxyVtbl,
+    ( CInterfaceProxyVtbl *) &_IElevator2ChromeCanaryProxyVtbl,
+    ( CInterfaceProxyVtbl *) &_IElevatorChromeProxyVtbl,
+    ( CInterfaceProxyVtbl *) &_IElevator2ChromeBetaProxyVtbl,
+    ( CInterfaceProxyVtbl *) &_IElevatorChromeCanaryProxyVtbl,
+    ( CInterfaceProxyVtbl *) &_IElevator2ChromiumProxyVtbl,
+    ( CInterfaceProxyVtbl *) &_IElevatorChromeDevProxyVtbl,
     0
 };
 
 const CInterfaceStubVtbl * const _elevation_service_idl_StubVtblList[] = 
 {
     ( CInterfaceStubVtbl *) &_IElevatorChromiumStubVtbl,
-    ( CInterfaceStubVtbl *) &_IElevatorChromeStubVtbl,
     ( CInterfaceStubVtbl *) &_IElevatorStubVtbl,
-    ( CInterfaceStubVtbl *) &_IElevatorChromeCanaryStubVtbl,
-    ( CInterfaceStubVtbl *) &_IElevatorChromeDevStubVtbl,
+    ( CInterfaceStubVtbl *) &_IElevatorChromeBetaStubVtbl,
     ( CInterfaceStubVtbl *) &_IElevator2ChromeStubVtbl,
     ( CInterfaceStubVtbl *) &_IElevator2ChromeDevStubVtbl,
     ( CInterfaceStubVtbl *) &_IElevator2StubVtbl,
-    ( CInterfaceStubVtbl *) &_IElevator2ChromeCanaryStubVtbl,
-    ( CInterfaceStubVtbl *) &_IElevatorChromeBetaStubVtbl,
-    ( CInterfaceStubVtbl *) &_IElevator2ChromeBetaStubVtbl,
-    ( CInterfaceStubVtbl *) &_IElevator2ChromiumStubVtbl,
     ( CInterfaceStubVtbl *) &_IElevatorDevelopmentStubVtbl,
+    ( CInterfaceStubVtbl *) &_IElevator2ChromeCanaryStubVtbl,
+    ( CInterfaceStubVtbl *) &_IElevatorChromeStubVtbl,
+    ( CInterfaceStubVtbl *) &_IElevator2ChromeBetaStubVtbl,
+    ( CInterfaceStubVtbl *) &_IElevatorChromeCanaryStubVtbl,
+    ( CInterfaceStubVtbl *) &_IElevator2ChromiumStubVtbl,
+    ( CInterfaceStubVtbl *) &_IElevatorChromeDevStubVtbl,
     0
 };
 
 PCInterfaceName const _elevation_service_idl_InterfaceNamesList[] = 
 {
     "IElevatorChromium",
-    "IElevatorChrome",
     "IElevator",
-    "IElevatorChromeCanary",
-    "IElevatorChromeDev",
+    "IElevatorChromeBeta",
     "IElevator2Chrome",
     "IElevator2ChromeDev",
     "IElevator2",
-    "IElevator2ChromeCanary",
-    "IElevatorChromeBeta",
-    "IElevator2ChromeBeta",
-    "IElevator2Chromium",
     "IElevatorDevelopment",
+    "IElevator2ChromeCanary",
+    "IElevatorChrome",
+    "IElevator2ChromeBeta",
+    "IElevatorChromeCanary",
+    "IElevator2Chromium",
+    "IElevatorChromeDev",
     0
 };
 
 const IID *  const _elevation_service_idl_BaseIIDList[] = 
 {
     &IID_IElevator,   /* forced */
-    &IID_IElevator,   /* forced */
     0,
     &IID_IElevator,   /* forced */
-    &IID_IElevator,   /* forced */
     &IID_IElevator2,   /* forced */
     &IID_IElevator2,   /* forced */
     0,
+    &IID_IElevator,   /* forced */
     &IID_IElevator2,   /* forced */
     &IID_IElevator,   /* forced */
     &IID_IElevator2,   /* forced */
+    &IID_IElevator,   /* forced */
     &IID_IElevator2,   /* forced */
     &IID_IElevator,   /* forced */
     0

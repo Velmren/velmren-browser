@@ -37,6 +37,12 @@ class BraveOriginUtilsTest : public testing::Test {
   TestingPrefServiceSimple pref_service_;
 };
 
+TEST_F(BraveOriginUtilsTest, VelmrenSuppressesForcedOriginFeature) {
+  scoped_feature_list_.InitAndEnableFeature(features::kBraveOrigin);
+  EXPECT_FALSE(IsBraveOriginFeatureEnabled());
+  EXPECT_FALSE(IsBraveOriginPurchased());
+}
+
 TEST_F(BraveOriginUtilsTest, IsBraveOriginPurchased_FeatureDisabled) {
   scoped_feature_list_.InitAndDisableFeature(features::kBraveOrigin);
 
@@ -53,7 +59,8 @@ TEST_F(BraveOriginUtilsTest,
   auto* manager = BraveOriginPolicyManager::GetInstance();
   manager->Init(BraveOriginPolicyMap(), BraveOriginPolicyMap(), &pref_service_);
 
-  // Feature enabled but not purchased should return false
+  EXPECT_FALSE(manager->IsPurchased());
+  EXPECT_FALSE(IsBraveOriginFeatureEnabled());
   EXPECT_FALSE(IsBraveOriginPurchased());
 }
 
@@ -67,8 +74,11 @@ TEST_F(BraveOriginUtilsTest, IsBraveOriginPurchased_FeatureEnabled_Purchased) {
   manager->Init(BraveOriginPolicyMap(), BraveOriginPolicyMap(), &pref_service_);
   manager->SetPurchased(true);
 
-  // Feature enabled and purchased should return true
-  EXPECT_TRUE(IsBraveOriginPurchased());
+  // Imported purchase state remains readable without enabling Origin.
+  EXPECT_TRUE(manager->IsPurchased());
+  EXPECT_TRUE(pref_service_.GetBoolean(kOriginPurchaseValidated));
+  EXPECT_FALSE(IsBraveOriginFeatureEnabled());
+  EXPECT_FALSE(IsBraveOriginPurchased());
 }
 
 TEST_F(BraveOriginUtilsTest, GetBraveOriginPrefKey_BrowserPolicy) {

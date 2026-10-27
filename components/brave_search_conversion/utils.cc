@@ -21,6 +21,7 @@
 #include "brave/components/brave_search_conversion/pref_names.h"
 #include "brave/components/brave_search_conversion/types.h"
 #include "brave/components/search_engines/brave_prepopulated_engines.h"
+#include "brave/components/velmren/product_policy.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
 #include "components/search_engines/template_url_data.h"
@@ -103,7 +104,10 @@ void UpdateDDGConversionType(PrefService* prefs) {
   }
 }
 
-bool ShouldSuppressForBraveOrigin() {
+bool ShouldSuppressPromotions() {
+  if (!velmren::kProductPromotionsEnabled) {
+    return true;
+  }
 #if BUILDFLAG(IS_BRAVE_ORIGIN_BRANDED)
   return true;
 #else
@@ -117,7 +121,7 @@ bool IsNTPPromotionEnabled(PrefService* prefs, TemplateURLService* service) {
   DCHECK(prefs);
   DCHECK(service);
 
-  if (ShouldSuppressForBraveOrigin()) {
+  if (ShouldSuppressPromotions()) {
     return false;
   }
 
@@ -146,7 +150,7 @@ ConversionType GetConversionType(PrefService* prefs,
   DCHECK(prefs);
   DCHECK(service);
 
-  if (ShouldSuppressForBraveOrigin()) {
+  if (ShouldSuppressPromotions()) {
     return ConversionType::kNone;
   }
 
@@ -220,6 +224,9 @@ GURL GetPromoURL(const std::string& search_term) {
 }
 
 bool IsBraveSearchConversionFeatureEnabled() {
+  if (ShouldSuppressPromotions()) {
+    return false;
+  }
   return base::FeatureList::IsEnabled(features::kOmniboxBanner) ||
          base::FeatureList::IsEnabled(features::kOmniboxDDGBanner);
 }

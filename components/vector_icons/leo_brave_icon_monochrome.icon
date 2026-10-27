@@ -1,0 +1,10 @@
+// Original Velmren V mark. See app/theme/velmren/logo.svg.
+CANVAS_DIMENSIONS, 24,
+MOVE_TO, 4.78f, 5.16f,
+LINE_TO, 8.72f, 5.16f,
+LINE_TO, 12.00f, 13.85f,
+LINE_TO, 15.28f, 5.16f,
+LINE_TO, 19.22f, 5.16f,
+LINE_TO, 13.50f, 19.78f,
+LINE_TO, 10.59f, 19.78f,
+CLOSE

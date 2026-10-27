@@ -53,6 +53,10 @@ class P3AServiceTest : public testing::Test {
     p3a_service_->OnRemoteConfigLoaded();
   }
 
+  bool IsMessageManagerActive() {
+    return p3a_service_->message_manager_->IsActive();
+  }
+
   content::BrowserTaskEnvironment task_environment_;
   network::TestURLLoaderFactory url_loader_factory_;
   scoped_refptr<network::SharedURLLoaderFactory> shared_url_loader_factory_;
@@ -60,14 +64,30 @@ class P3AServiceTest : public testing::Test {
   TestingPrefServiceSimple local_state_;
 };
 
-TEST_F(P3AServiceTest, MessageManagerStartedWhenP3AEnabled) {
+TEST_F(P3AServiceTest, VelmrenDoesNotUploadWithMigratedOrChangedOptIn) {
+  EXPECT_FALSE(local_state_.GetBoolean(kP3AEnabled));
+  local_state_.SetBoolean(kP3AEnabled, true);
+  CreateP3AService();
+  EXPECT_FALSE(local_state_.GetBoolean(kP3AEnabled));
+
+  TriggerRemoteConfigLoad();
+  local_state_.SetBoolean(kP3AEnabled, true);
+  EXPECT_FALSE(p3a_service_->IsP3AEnabled());
+  EXPECT_FALSE(IsMessageManagerActive());
+
+  task_environment_.FastForwardBy(base::Days(2));
+  EXPECT_EQ(url_loader_factory_.NumPending(), 0);
+}
+
+TEST_F(P3AServiceTest, MessageManagerNotStartedWithImportedOptIn) {
   local_state_.SetBoolean(kP3AEnabled, true);
   CreateP3AService();
 
-  EXPECT_FALSE(p3a_service_->message_manager_->IsActive());
+  EXPECT_FALSE(IsMessageManagerActive());
 
   TriggerRemoteConfigLoad();
-  EXPECT_TRUE(p3a_service_->message_manager_->IsActive());
+  EXPECT_FALSE(p3a_service_->IsP3AEnabled());
+  EXPECT_FALSE(IsMessageManagerActive());
 }
 
 TEST_F(P3AServiceTest, MessageManagerNotStartedWhenP3ADisabled) {
@@ -80,21 +100,22 @@ TEST_F(P3AServiceTest, MessageManagerNotStartedWhenP3ADisabled) {
   EXPECT_FALSE(p3a_service_->message_manager_->IsActive());
 }
 
-TEST_F(P3AServiceTest, MessageManagerStartsAndStopsOnPrefChange) {
+TEST_F(P3AServiceTest, MessageManagerRemainsStoppedOnPrefChange) {
   local_state_.SetBoolean(kP3AEnabled, false);
   CreateP3AService();
 
-  EXPECT_FALSE(p3a_service_->message_manager_->IsActive());
+  EXPECT_FALSE(IsMessageManagerActive());
 
   TriggerRemoteConfigLoad();
 
-  EXPECT_FALSE(p3a_service_->message_manager_->IsActive());
+  EXPECT_FALSE(IsMessageManagerActive());
 
   local_state_.SetBoolean(kP3AEnabled, true);
-  EXPECT_TRUE(p3a_service_->message_manager_->IsActive());
+  EXPECT_FALSE(p3a_service_->IsP3AEnabled());
+  EXPECT_FALSE(IsMessageManagerActive());
 
   local_state_.SetBoolean(kP3AEnabled, false);
-  EXPECT_FALSE(p3a_service_->message_manager_->IsActive());
+  EXPECT_FALSE(IsMessageManagerActive());
 }
 
 TEST_F(P3AServiceTest, MetricValueStored) {
@@ -138,6 +159,11 @@ TEST_F(P3AServiceTest, MetricValueStored) {
   stored_log = local_state_.GetDict(kSlowConstellationPrepPrefName)
                    .FindDict(kTestSlowHistogramName);
   EXPECT_TRUE(stored_log != nullptr);
+
+  // Local metric storage does not authorize scheduling or uploads.
+  EXPECT_FALSE(p3a_service_->IsP3AEnabled());
+  EXPECT_FALSE(IsMessageManagerActive());
+  EXPECT_EQ(url_loader_factory_.NumPending(), 0);
 }
 
 TEST_F(P3AServiceTest, CustomAttributeStored) {

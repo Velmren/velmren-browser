@@ -21,6 +21,7 @@
 #include "brave/components/p3a/pref_names.h"
 #include "brave/components/psst/buildflags/buildflags.h"
 #include "brave/components/request_otr/common/buildflags/buildflags.h"
+#include "brave/components/velmren/product_policy.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile.h"
 #include "components/gcm_driver/gcm_buildflags.h"
@@ -172,9 +173,12 @@ void BravePrivacyHandler::AddLoadTimeData(content::WebUIDataSource* data_source,
   auto* local_state = g_browser_process->local_state();
   data_source->AddBoolean(
       "isStatsReportingEnabledManaged",
-      local_state->IsManagedPreference(kStatsReportingEnabled));
-  data_source->AddBoolean("isP3AEnabledManaged",
-                          local_state->IsManagedPreference(p3a::kP3AEnabled));
+      !velmren::kTelemetryEnabled ||
+          local_state->IsManagedPreference(kStatsReportingEnabled));
+  data_source->AddBoolean(
+      "isP3AEnabledManaged",
+      !velmren::kTelemetryEnabled ||
+          local_state->IsManagedPreference(p3a::kP3AEnabled));
 #endif
 
 #if BUILDFLAG(IS_WIN)
@@ -199,6 +203,10 @@ void BravePrivacyHandler::SetLocalStateBooleanEnabled(
   }
 
   bool enabled = args[0].GetBool();
+  if (!velmren::kTelemetryEnabled &&
+      (path == kStatsReportingEnabled || path == p3a::kP3AEnabled)) {
+    enabled = false;
+  }
   PrefService* local_state = g_browser_process->local_state();
   local_state->SetBoolean(path, enabled);
 }
@@ -210,6 +218,10 @@ void BravePrivacyHandler::GetLocalStateBooleanEnabled(
 
   PrefService* local_state = g_browser_process->local_state();
   bool enabled = local_state->GetBoolean(path);
+  if (!velmren::kTelemetryEnabled &&
+      (path == kStatsReportingEnabled || path == p3a::kP3AEnabled)) {
+    enabled = false;
+  }
 
   AllowJavascript();
   ResolveJavascriptCallback(args[0], base::Value(enabled));
@@ -228,8 +240,10 @@ void BravePrivacyHandler::GetStatsUsagePingEnabled(
 void BravePrivacyHandler::OnStatsUsagePingEnabledChanged() {
   if (IsJavascriptAllowed()) {
     PrefService* local_state = g_browser_process->local_state();
-    bool user_enabled = local_state->GetBoolean(kStatsReportingEnabled);
-    bool is_managed = local_state->IsManagedPreference(kStatsReportingEnabled);
+    bool user_enabled = velmren::kTelemetryEnabled &&
+                        local_state->GetBoolean(kStatsReportingEnabled);
+    bool is_managed = !velmren::kTelemetryEnabled ||
+                      local_state->IsManagedPreference(kStatsReportingEnabled);
 
     FireWebUIListener("stats-usage-ping-enabled-changed", user_enabled,
                       is_managed);
@@ -247,8 +261,10 @@ void BravePrivacyHandler::GetP3AEnabled(const base::ListValue& args) {
 void BravePrivacyHandler::OnP3AEnabledChanged() {
   if (IsJavascriptAllowed()) {
     PrefService* local_state = g_browser_process->local_state();
-    bool user_enabled = local_state->GetBoolean(p3a::kP3AEnabled);
-    bool is_managed = local_state->IsManagedPreference(p3a::kP3AEnabled);
+    bool user_enabled =
+        velmren::kTelemetryEnabled && local_state->GetBoolean(p3a::kP3AEnabled);
+    bool is_managed = !velmren::kTelemetryEnabled ||
+                      local_state->IsManagedPreference(p3a::kP3AEnabled);
 
     FireWebUIListener("p3a-enabled-changed", user_enabled, is_managed);
   }

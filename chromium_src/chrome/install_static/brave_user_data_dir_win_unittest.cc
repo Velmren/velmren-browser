@@ -16,24 +16,23 @@ namespace install_static {
 namespace {
 
 inline bool EndsWith(const std::wstring& value, const std::wstring& ending) {
-  if (ending.size() > value.size())
+  if (ending.size() > value.size()) {
     return false;
+  }
   return std::equal(ending.rbegin(), ending.rend(), value.rbegin());
 }
 
-const wchar_t kPolicyRegistryKey[] =
-    L"SOFTWARE\\Policies\\BraveSoftware\\Brave";
+const wchar_t kPolicyRegistryKey[] = L"SOFTWARE\\Policies\\Velmren\\Velmren";
 #if defined(OFFICIAL_BUILD)
 #if BUILDFLAG(IS_BRAVE_ORIGIN_BRANDED)
-const wchar_t kUserDataDirNameSuffix[] =
-    L"\\BraveSoftware\\Brave-Origin\\User Data";
+const wchar_t kUserDataDirNameSuffix[] = L"\\Velmren\\Brave-Origin\\User Data";
 #else
 const wchar_t kUserDataDirNameSuffix[] =
-    L"\\BraveSoftware\\Brave-Browser\\User Data";
+    L"\\Velmren\\Velmren-Browser\\User Data";
 #endif
 #else
 const wchar_t kUserDataDirNameSuffix[] =
-    L"\\BraveSoftware\\Brave-Browser-Development\\User Data";
+    L"\\Velmren\\Velmren-Browser-Development\\User Data";
 #endif
 
 const wchar_t kUserDataDirRegistryKey[] = L"UserDataDir";
@@ -58,14 +57,15 @@ class ScopedNTRegistryTestingOverride {
 TEST(UserDataDir, EmptyResultsInDefault) {
   std::wstring result, invalid;
 
-  install_static::GetUserDataDirectoryImpl(L"brave.exe", kFakeInstallConstants,
-                                           &result, &invalid);
+  install_static::GetUserDataDirectoryImpl(
+      L"velmren.exe", kFakeInstallConstants, &result, &invalid);
   EXPECT_TRUE(EndsWith(result, kUserDataDirNameSuffix));
   EXPECT_EQ(std::wstring(), invalid);
 
   result = L"";
-  install_static::GetUserDataDirectoryImpl(
-      L"brave.exe --user-data-dir=", kFakeInstallConstants, &result, &invalid);
+  install_static::GetUserDataDirectoryImpl(L"velmren.exe --user-data-dir=",
+                                           kFakeInstallConstants, &result,
+                                           &invalid);
   EXPECT_TRUE(EndsWith(result, kUserDataDirNameSuffix));
   EXPECT_EQ(std::wstring(), invalid);
 }
@@ -73,7 +73,7 @@ TEST(UserDataDir, EmptyResultsInDefault) {
 TEST(UserDataDir, InvalidResultsInDefault) {
   std::wstring result, invalid;
 
-  install_static::GetUserDataDirectoryImpl(L"brave.exe --user-data-dir=<>|:",
+  install_static::GetUserDataDirectoryImpl(L"velmren.exe --user-data-dir=<>|:",
                                            kFakeInstallConstants, &result,
                                            &invalid);
   EXPECT_TRUE(EndsWith(result, kUserDataDirNameSuffix));
@@ -95,7 +95,7 @@ TEST(UserDataDir, RegistrySettingsInHKLMOverrides) {
   LONG rv = key.WriteValue(kUserDataDirRegistryKey, L"yyy");
   ASSERT_EQ(rv, ERROR_SUCCESS);
 
-  install_static::GetUserDataDirectoryImpl(L"brave.exe --user-data-dir=xxx",
+  install_static::GetUserDataDirectoryImpl(L"velmren.exe --user-data-dir=xxx",
                                            kFakeInstallConstants, &result,
                                            &invalid);
 
@@ -118,7 +118,7 @@ TEST(UserDataDir, RegistrySettingsInHKCUOverrides) {
   LONG rv = key.WriteValue(kUserDataDirRegistryKey, L"yyy");
   ASSERT_EQ(rv, ERROR_SUCCESS);
 
-  install_static::GetUserDataDirectoryImpl(L"brave.exe --user-data-dir=xxx",
+  install_static::GetUserDataDirectoryImpl(L"velmren.exe --user-data-dir=xxx",
                                            kFakeInstallConstants, &result,
                                            &invalid);
 
@@ -148,7 +148,7 @@ TEST(UserDataDir, RegistrySettingsInHKLMTakesPrecedenceOverHKCU) {
   rv = key2.WriteValue(kUserDataDirRegistryKey, L"222");
   ASSERT_EQ(rv, ERROR_SUCCESS);
 
-  install_static::GetUserDataDirectoryImpl(L"brave.exe --user-data-dir=xxx",
+  install_static::GetUserDataDirectoryImpl(L"velmren.exe --user-data-dir=xxx",
                                            kFakeInstallConstants, &result,
                                            &invalid);
 
@@ -168,7 +168,7 @@ TEST(UserDataDir, RegistrySettingWithPathExpansionHKCU) {
   LONG rv = key.WriteValue(kUserDataDirRegistryKey, L"${windows}");
   ASSERT_EQ(rv, ERROR_SUCCESS);
 
-  install_static::GetUserDataDirectoryImpl(L"brave.exe --user-data-dir=xxx",
+  install_static::GetUserDataDirectoryImpl(L"velmren.exe --user-data-dir=xxx",
                                            kFakeInstallConstants, &result,
                                            &invalid);
 

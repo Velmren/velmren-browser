@@ -256,6 +256,7 @@ brave_chrome_browser_deps = [
   "//brave/components/tor/buildflags",
   "//brave/components/traffic_control/buildflags",
   "//brave/components/v8/buildflags",
+  "//brave/components/velmren",
   "//brave/components/version_info",
   "//brave/components/web_discovery/buildflags",
   "//brave/components/webcompat/content/browser",

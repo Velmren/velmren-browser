@@ -5,40 +5,22 @@
 
 #include "brave/browser/metrics/metrics_reporting_util.h"
 
-#include <utility>
-
-#include "base/notreached.h"
 #include "brave/browser/metrics/brave_metrics_service_accessor.h"
 #include "brave/browser/metrics/buildflags/buildflags.h"
-#include "brave/components/brave_origin/buildflags/buildflags.h"
 #include "brave/components/constants/pref_names.h"
+#include "brave/components/velmren/product_policy.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/metrics/metrics_reporting_state.h"
-#include "chrome/common/channel_info.h"
 #include "components/prefs/pref_service.h"
-#include "components/version_info/channel.h"
 
 bool GetDefaultPrefValueForMetricsReporting() {
-#if BUILDFLAG(IS_BRAVE_ORIGIN_BRANDED)
-  return false;
-#else
-  auto channel = chrome::GetChannel();
-  switch (channel) {
-    case version_info::Channel::STABLE:
-      return false;
-    case version_info::Channel::BETA:    // fall through
-    case version_info::Channel::DEV:     // fall through
-    case version_info::Channel::CANARY:
-      return true;
-    case version_info::Channel::UNKNOWN:
-      return false;
-  }
-  NOTREACHED() << "Unexpected value for channel: "
-               << std::to_underlying(channel);
-#endif  // BUILDFLAG(IS_BRAVE_ORIGIN_BRANDED)
+  return velmren::kTelemetryEnabled;
 }
 
 bool ShouldShowCrashReportPermissionAskDialog() {
+  if (!velmren::kTelemetryEnabled) {
+    return false;
+  }
 #if BUILDFLAG(ENABLE_CRASH_DIALOG)
   PrefService* local_prefs = g_browser_process->local_state();
   if (local_prefs->GetBoolean(kDontAskForCrashReporting)) {

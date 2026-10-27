@@ -51,28 +51,31 @@ TEST(InstallModes, VerifyModes) {
     ASSERT_THAT(mode.index, Eq(i));
 
     // The first mode must have no install switch; the rest must have one.
-    if (i == 0)
+    if (i == 0) {
       ASSERT_THAT(mode.install_switch, StrEq(""));
-    else
+    } else {
       ASSERT_THAT(mode.install_switch, StrNe(""));
+    }
 
     // The first mode must have no suffix; the rest must have one.
-    if (i == 0)
+    if (i == 0) {
       ASSERT_THAT(mode.install_suffix, StrEq(L""));
-    else
+    } else {
       ASSERT_THAT(mode.install_suffix, StrNe(L""));
+    }
 
     // The first mode must have no logo suffix; the rest must have one.
-    if (i == 0)
+    if (i == 0) {
       ASSERT_THAT(mode.logo_suffix, StrEq(L""));
-    else
+    } else {
       ASSERT_THAT(mode.logo_suffix, StrNe(L""));
+    }
 
     // The modes must have an appguid if Google Update integration is supported.
 #if defined(OFFICIAL_BUILD)
-      ASSERT_THAT(mode.app_guid, StrNe(L""));
+    ASSERT_THAT(mode.app_guid, StrNe(L""));
 #else
-      ASSERT_THAT(mode.app_guid, StrEq(L""));
+    ASSERT_THAT(mode.app_guid, StrEq(L""));
 #endif
 
     // Every mode must have a base app name.
@@ -113,11 +116,11 @@ TEST(InstallModes, GetClientsKeyPath) {
   constexpr wchar_t kAppGuid[] = L"test";
 
 #if defined(OFFICIAL_BUILD)
-    ASSERT_THAT(GetClientsKeyPath(kAppGuid),
-                StrEq(L"Software\\BraveSoftware\\Update\\Clients\\test"));
+  ASSERT_THAT(GetClientsKeyPath(kAppGuid),
+              StrEq(L"Software\\Velmren\\Update\\Clients\\test"));
 #else
-    ASSERT_THAT(GetClientsKeyPath(kAppGuid),
-                StrEq(std::wstring(L"Software\\").append(kProductPathName)));
+  ASSERT_THAT(GetClientsKeyPath(kAppGuid),
+              StrEq(std::wstring(L"Software\\").append(kProductPathName)));
 #endif
 }
 
@@ -125,11 +128,11 @@ TEST(InstallModes, GetClientStateKeyPath) {
   constexpr wchar_t kAppGuid[] = L"test";
 
 #if defined(OFFICIAL_BUILD)
-    ASSERT_THAT(GetClientStateKeyPath(kAppGuid),
-                StrEq(L"Software\\BraveSoftware\\Update\\ClientState\\test"));
+  ASSERT_THAT(GetClientStateKeyPath(kAppGuid),
+              StrEq(L"Software\\Velmren\\Update\\ClientState\\test"));
 #else
-    ASSERT_THAT(GetClientStateKeyPath(kAppGuid),
-                StrEq(std::wstring(L"Software\\").append(kProductPathName)));
+  ASSERT_THAT(GetClientStateKeyPath(kAppGuid),
+              StrEq(std::wstring(L"Software\\").append(kProductPathName)));
 #endif
 }
 
@@ -137,12 +140,11 @@ TEST(InstallModes, GetClientStateMediumKeyPath) {
   constexpr wchar_t kAppGuid[] = L"test";
 
 #if defined(OFFICIAL_BUILD)
-    ASSERT_THAT(
-        GetClientStateMediumKeyPath(kAppGuid),
-        StrEq(L"Software\\BraveSoftware\\Update\\ClientStateMedium\\test"));
+  ASSERT_THAT(GetClientStateMediumKeyPath(kAppGuid),
+              StrEq(L"Software\\Velmren\\Update\\ClientStateMedium\\test"));
 #else
-    ASSERT_THAT(GetClientStateMediumKeyPath(kAppGuid),
-                StrEq(std::wstring(L"Software\\").append(kProductPathName)));
+  ASSERT_THAT(GetClientStateMediumKeyPath(kAppGuid),
+              StrEq(std::wstring(L"Software\\").append(kProductPathName)));
 #endif
 }
 

@@ -1,0 +1,8 @@
+{
+  "manifest_version": 3,
+  "name": "Velmren local group checks",
+  "version": "1.0.0",
+  "description": "Synthetic tab-group checks for the isolated Velmren QA profile.",
+  "permissions": ["tabs", "tabGroups"],
+  "background": {"service_worker": "worker.js"}
+}

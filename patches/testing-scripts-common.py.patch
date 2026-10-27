@@ -1,0 +1,13 @@
+diff --git a/testing/scripts/common.py b/testing/scripts/common.py
+index 8bf51c22f61ac99fcba04976189bba1808cf1ae6..155fd3ab781a7a40f7bbd049f188bd4984661395 100644
+--- a/testing/scripts/common.py
++++ b/testing/scripts/common.py
+@@ -84,7 +84,7 @@ def set_lpac_acls(acl_dir, is_test_script=False):
+     return
+   try:
+     existing_acls = subprocess.check_output(
+-      ['icacls', acl_dir], stderr=subprocess.STDOUT, universal_newlines=True
++      ['icacls', acl_dir], stderr=subprocess.STDOUT, encoding='oem'
+     )
+   except subprocess.CalledProcessError as e:
+     logging.error('Failed to retrieve existing ACLs for directory %s', acl_dir)

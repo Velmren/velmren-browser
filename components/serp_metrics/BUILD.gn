@@ -32,6 +32,7 @@ static_library("serp_metrics") {
     ":features",
     ":prefs",
     "//brave/components/constants",
+    "//brave/components/velmren",
     "//components/prefs",
     "//components/regional_capabilities",
     "//components/search_engines",

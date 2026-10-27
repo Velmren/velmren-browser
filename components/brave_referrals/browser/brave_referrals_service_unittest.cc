@@ -13,7 +13,6 @@
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/test/bind.h"
-#include "base/test/values_test_util.h"
 #include "base/time/time.h"
 #include "brave/components/brave_referrals/common/pref_names.h"
 #include "brave/components/constants/network_constants.h"
@@ -153,24 +152,38 @@ class BraveReferralsServiceTest : public testing::Test {
       referral_initialized_callback_;
 };
 
-TEST_F(BraveReferralsServiceTest, InitAndActivity) {
+TEST_F(BraveReferralsServiceTest, VelmrenDoesNotStartWithMigratedOptIn) {
+  pref_service_.SetBoolean(kStatsReportingEnabled, true);
+  pref_service_.SetString(kReferralDownloadID, kTestDownloadId);
+  CreateReferralsService();
+  referrals_service_->Start();
+  task_environment_.FastForwardBy(base::Days(35));
+
+  EXPECT_EQ(request_count_, 0u);
+  EXPECT_FALSE(init_callback_called_);
+  EXPECT_FALSE(pref_service_.HasPrefPath(kReferralAttemptTimestamp));
+}
+
+TEST_F(BraveReferralsServiceTest, PromoCodeDoesNotInitializeOrReportActivity) {
   CreateReferralsService();
   referrals_service_->Start();
 
   task_environment_.FastForwardBy(base::Minutes(1));
 
-  EXPECT_TRUE(init_callback_called_);
-  EXPECT_EQ(received_download_id_, kTestDownloadId);
+  EXPECT_FALSE(init_callback_called_);
+  EXPECT_TRUE(received_download_id_.empty());
 
-  EXPECT_EQ(pref_service_.GetString(kReferralDownloadID), kTestDownloadId);
-  EXPECT_TRUE(pref_service_.GetBoolean(kReferralInitialization));
-  EXPECT_EQ(request_count_, 1u);
+  EXPECT_TRUE(pref_service_.GetString(kReferralDownloadID).empty());
+  EXPECT_FALSE(pref_service_.GetBoolean(kReferralInitialization));
+  EXPECT_FALSE(pref_service_.GetBoolean(kReferralCheckedForPromoCodeFile));
+  EXPECT_EQ(request_count_, 0u);
 
   task_environment_.FastForwardBy(base::Days(35));
 
   EXPECT_FALSE(pref_service_.HasPrefPath(kReferralAttemptTimestamp));
   EXPECT_FALSE(pref_service_.HasPrefPath(kReferralAttemptCount));
-  EXPECT_GE(request_count_, 2u);
+  EXPECT_EQ(request_count_, 0u);
+  EXPECT_TRUE(base::PathExists(temp_dir_.GetPath().AppendASCII("promoCode")));
 }
 
 TEST_F(BraveReferralsServiceTest, StatsDisabledAtInit) {
@@ -181,7 +194,7 @@ TEST_F(BraveReferralsServiceTest, StatsDisabledAtInit) {
 
   task_environment_.FastForwardBy(base::Minutes(1));
 
-  EXPECT_TRUE(init_callback_called_);
+  EXPECT_FALSE(init_callback_called_);
   EXPECT_EQ(received_download_id_, std::string());
 
   task_environment_.FastForwardBy(base::Days(35));
@@ -189,24 +202,31 @@ TEST_F(BraveReferralsServiceTest, StatsDisabledAtInit) {
   EXPECT_EQ(request_count_, 0u);
 }
 
-TEST_F(BraveReferralsServiceTest, StatsDisabledAfterInit) {
+TEST_F(BraveReferralsServiceTest, StatsPreferenceChangesDoNotStartReferrals) {
   CreateReferralsService();
   referrals_service_->Start();
 
   task_environment_.FastForwardBy(base::Minutes(1));
 
-  EXPECT_TRUE(init_callback_called_);
-  EXPECT_EQ(received_download_id_, kTestDownloadId);
+  EXPECT_FALSE(init_callback_called_);
+  EXPECT_TRUE(received_download_id_.empty());
 
-  EXPECT_EQ(pref_service_.GetString(kReferralDownloadID), kTestDownloadId);
-  EXPECT_TRUE(pref_service_.GetBoolean(kReferralInitialization));
-  EXPECT_EQ(request_count_, 1u);
+  EXPECT_TRUE(pref_service_.GetString(kReferralDownloadID).empty());
+  EXPECT_FALSE(pref_service_.GetBoolean(kReferralInitialization));
+  EXPECT_EQ(request_count_, 0u);
 
   pref_service_.SetBoolean(kStatsReportingEnabled, false);
 
   task_environment_.FastForwardBy(base::Days(35));
 
-  EXPECT_GE(request_count_, 1u);
+  EXPECT_EQ(request_count_, 0u);
+
+  pref_service_.SetBoolean(kStatsReportingEnabled, true);
+  referrals_service_->Start();
+  task_environment_.FastForwardBy(base::Days(35));
+
+  EXPECT_FALSE(init_callback_called_);
+  EXPECT_EQ(request_count_, 0u);
 }
 
 #if BUILDFLAG(IS_ANDROID)
@@ -224,13 +244,12 @@ TEST_F(BraveReferralsServiceTest, AndroidConversionNotSentWithoutGbraid) {
   EXPECT_EQ(conversion_request_count_, 0u);
 }
 
-// The run that captures the gbraid must not report: Start() reads the pref
-// before the referrer fetch it kicks off can possibly have written it.
+// A pref written after startup must not activate attribution either.
 TEST_F(BraveReferralsServiceTest, AndroidConversionNotSentOnCaptureRun) {
   CreateReferralsService();
   referrals_service_->Start();
 
-  // Stands in for the async referrer arriving later in the same run.
+  // Simulate an imported attribution preference arriving after startup.
   pref_service_.SetString(kReferralAndroidGbraid, kTestGbraid);
 
   task_environment_.FastForwardBy(base::Minutes(1));
@@ -239,7 +258,7 @@ TEST_F(BraveReferralsServiceTest, AndroidConversionNotSentOnCaptureRun) {
   EXPECT_EQ(pref_service_.GetString(kReferralAndroidGbraid), kTestGbraid);
 }
 
-TEST_F(BraveReferralsServiceTest, AndroidConversionSentOnFollowingRun) {
+TEST_F(BraveReferralsServiceTest, AndroidConversionNotSentWithImportedGbraid) {
   pref_service_.SetString(kReferralAndroidGbraid, kTestGbraid);
 
   CreateReferralsService();
@@ -247,35 +266,32 @@ TEST_F(BraveReferralsServiceTest, AndroidConversionSentOnFollowingRun) {
 
   task_environment_.FastForwardBy(base::Minutes(1));
 
-  EXPECT_EQ(conversion_request_count_, 1u);
-  EXPECT_TRUE(pref_service_.GetString(kReferralAndroidGbraid).empty());
-
-  base::DictValue body = base::test::ParseJsonDict(conversion_request_body_);
-  EXPECT_EQ(*body.FindString("app_event_name"), "brave_second_open");
-  EXPECT_EQ(*body.FindString("gbraid"), kTestGbraid);
-  EXPECT_FALSE(body.FindString("app_version")->empty());
-  EXPECT_FALSE(body.FindString("os_version")->empty());
-  EXPECT_FALSE(body.FindString("sdk_version")->empty());
+  EXPECT_EQ(request_count_, 0u);
+  EXPECT_EQ(conversion_request_count_, 0u);
+  EXPECT_TRUE(conversion_request_body_.empty());
+  EXPECT_EQ(pref_service_.GetString(kReferralAndroidGbraid), kTestGbraid);
 }
 
-TEST_F(BraveReferralsServiceTest, AndroidConversionSentOnlyOnce) {
+TEST_F(BraveReferralsServiceTest, AndroidConversionNotSentAcrossRestarts) {
   pref_service_.SetString(kReferralAndroidGbraid, kTestGbraid);
 
   CreateReferralsService();
   referrals_service_->Start();
   task_environment_.FastForwardBy(base::Minutes(1));
-  ASSERT_EQ(conversion_request_count_, 1u);
+  ASSERT_EQ(conversion_request_count_, 0u);
 
-  // A subsequent run finds nothing left to report.
+  // A subsequent run still ignores the imported attribution value.
   referrals_service_.reset();
   CreateReferralsService();
   referrals_service_->Start();
   task_environment_.FastForwardBy(base::Minutes(1));
 
-  EXPECT_EQ(conversion_request_count_, 1u);
+  EXPECT_EQ(request_count_, 0u);
+  EXPECT_EQ(conversion_request_count_, 0u);
+  EXPECT_EQ(pref_service_.GetString(kReferralAndroidGbraid), kTestGbraid);
 }
 
-TEST_F(BraveReferralsServiceTest, AndroidConversionDroppedWhenStatsDisabled) {
+TEST_F(BraveReferralsServiceTest, AndroidConversionIgnoredWhenStatsDisabled) {
   pref_service_.SetString(kReferralAndroidGbraid, kTestGbraid);
   pref_service_.SetBoolean(kStatsReportingEnabled, false);
 
@@ -285,10 +301,11 @@ TEST_F(BraveReferralsServiceTest, AndroidConversionDroppedWhenStatsDisabled) {
   task_environment_.FastForwardBy(base::Minutes(1));
 
   EXPECT_EQ(conversion_request_count_, 0u);
-  EXPECT_TRUE(pref_service_.GetString(kReferralAndroidGbraid).empty());
+  EXPECT_EQ(pref_service_.GetString(kReferralAndroidGbraid), kTestGbraid);
 }
 
-TEST_F(BraveReferralsServiceTest, AndroidConversionDroppedOnRequestFailure) {
+TEST_F(BraveReferralsServiceTest,
+       AndroidConversionDoesNotContactFailingServer) {
   pref_service_.SetString(kReferralAndroidGbraid, kTestGbraid);
   url_loader_factory_.SetInterceptor(
       base::BindLambdaForTesting([&](const network::ResourceRequest& request) {
@@ -304,8 +321,8 @@ TEST_F(BraveReferralsServiceTest, AndroidConversionDroppedOnRequestFailure) {
 
   task_environment_.FastForwardBy(base::Minutes(1));
 
-  EXPECT_EQ(conversion_request_count_, 1u);
-  EXPECT_TRUE(pref_service_.GetString(kReferralAndroidGbraid).empty());
+  EXPECT_EQ(conversion_request_count_, 0u);
+  EXPECT_EQ(pref_service_.GetString(kReferralAndroidGbraid), kTestGbraid);
 }
 
 #endif  // BUILDFLAG(IS_ANDROID)

@@ -15,6 +15,7 @@
 #include "base/functional/bind.h"
 #include "brave/components/brave_component_updater/browser/brave_on_demand_updater.h"
 #include "brave/components/ntp_background_images/browser/ntp_background_images_update_util.h"
+#include "brave/components/velmren/product_policy.h"
 #include "components/component_updater/component_updater_service.h"
 
 using brave_component_updater::BraveOnDemandUpdater;
@@ -111,7 +112,7 @@ void RegisterNTPSponsoredImagesComponent(
     const std::string& component_id,
     const std::string& component_name,
     ComponentReadyCallback callback) {
-  if (!component_update_service ||
+  if (!velmren::kSponsoredContentEnabled || !component_update_service ||
       BraveOnDemandUpdater::GetInstance()->is_component_update_disabled()) {
     // In test, `component_update_service` could be nullptr.
     return;

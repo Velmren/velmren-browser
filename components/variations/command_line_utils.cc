@@ -11,6 +11,7 @@
 #include "base/strings/string_util.h"
 #include "brave/components/variations/buildflags.h"
 #include "brave/components/variations/switches.h"
+#include "brave/components/velmren/product_policy.h"
 #include "components/variations/variations_switches.h"
 
 namespace variations {
@@ -26,6 +27,11 @@ constexpr char kVariationsPrTestSeedUrlTemplate[] =
 }  // namespace
 
 void AppendBraveCommandLineOptions(base::CommandLine& command_line) {
+  // Unbranded Chromium does not fetch seeds unless a server URL is supplied.
+  // Keep explicit developer overrides, but do not opt users into Brave trials.
+  if (!velmren::kRemoteExperimentsEnabled) {
+    return;
+  }
   std::string variations_server_url = BUILDFLAG(BRAVE_VARIATIONS_SERVER_URL);
 
   if (command_line.HasSwitch(switches::kVariationsPR)) {

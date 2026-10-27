@@ -3,10 +3,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-#include "chrome/install_static/install_details.h"
-
 #include <string>
 
+#include "chrome/install_static/install_details.h"
 #include "chrome/install_static/install_modes.h"
 #include "components/version_info/version_info_values.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -26,11 +25,11 @@ class FakeInstallDetails : public InstallDetails {
     constants.install_suffix = L"";
     constants.default_channel_name = L"";
 #if defined(OFFICIAL_BUILD)
-      constants.app_guid = L"testguid";
-      constants.channel_strategy = ChannelStrategy::FIXED;
+    constants.app_guid = L"testguid";
+    constants.channel_strategy = ChannelStrategy::FIXED;
 #else
-      constants.app_guid = L"";
-      constants.channel_strategy = ChannelStrategy::UNSUPPORTED;
+    constants.app_guid = L"";
+    constants.channel_strategy = ChannelStrategy::UNSUPPORTED;
 #endif
     payload.size = sizeof(payload);
     payload.product_version = product_version.c_str();
@@ -58,22 +57,21 @@ TEST(InstallDetailsTest, GetClientStateKeyPath) {
   FakeInstallDetails details;
 #if defined(OFFICIAL_BUILD)
   EXPECT_THAT(details.GetClientStateKeyPath(),
-              StrEq(L"Software\\BraveSoftware\\Update\\ClientState\\testguid"));
+              StrEq(L"Software\\Velmren\\Update\\ClientState\\testguid"));
 #else
-    EXPECT_THAT(details.GetClientStateKeyPath(),
-                StrEq(std::wstring(L"Software\\").append(kProductPathName)));
+  EXPECT_THAT(details.GetClientStateKeyPath(),
+              StrEq(std::wstring(L"Software\\").append(kProductPathName)));
 #endif
 }
 
 TEST(InstallDetailsTest, GetClientStateMediumKeyPath) {
   FakeInstallDetails details;
 #if defined(OFFICIAL_BUILD)
-    EXPECT_THAT(
-        details.GetClientStateMediumKeyPath(),
-        StrEq(L"Software\\BraveSoftware\\Update\\ClientStateMedium\\testguid"));
+  EXPECT_THAT(details.GetClientStateMediumKeyPath(),
+              StrEq(L"Software\\Velmren\\Update\\ClientStateMedium\\testguid"));
 #else
-    EXPECT_THAT(details.GetClientStateKeyPath(),
-                StrEq(std::wstring(L"Software\\").append(kProductPathName)));
+  EXPECT_THAT(details.GetClientStateKeyPath(),
+              StrEq(std::wstring(L"Software\\").append(kProductPathName)));
 #endif
 }
 

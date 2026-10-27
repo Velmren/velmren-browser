@@ -31,6 +31,7 @@
 #include "brave/components/ntp_background_images/browser/sponsored_content/site/ntp_sponsored_sites_data.h"
 #include "brave/components/ntp_background_images/browser/switches.h"
 #include "brave/components/ntp_background_images/browser/url_constants.h"
+#include "brave/components/velmren/product_policy.h"
 #include "components/component_updater/component_updater_service.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
@@ -145,7 +146,8 @@ void NTPBackgroundImagesService::Init() {
   base::FilePath override_sponsored_images_component_path(
       base::CommandLine::ForCurrentProcess()->GetSwitchValuePath(
           switches::kOverrideSponsoredImagesComponentPath));
-  if (!override_sponsored_images_component_path.empty()) {
+  if (velmren::kSponsoredContentEnabled &&
+      !override_sponsored_images_component_path.empty()) {
     DVLOG(6)
         << "NTP Sponsored Images test data will be loaded from local path at: "
         << override_sponsored_images_component_path.LossyDisplayName();
@@ -209,6 +211,9 @@ void NTPBackgroundImagesService::ScheduleNextSponsoredImagesComponentUpdate() {
 
 void NTPBackgroundImagesService::CheckSponsoredContentComponentUpdate(
     const std::string& component_id) {
+  if (!velmren::kSponsoredContentEnabled) {
+    return;
+  }
   last_updated_at_ = base::Time::Now();
 
   CheckAndUpdateSponsoredImagesComponent(component_id);
@@ -238,6 +243,9 @@ std::string NTPBackgroundImagesService::GetCountryCode() const {
 }
 
 void NTPBackgroundImagesService::RegisterSponsoredImagesComponent() {
+  if (!velmren::kSponsoredContentEnabled) {
+    return;
+  }
   const std::string variations_country_code = GetCountryCode();
   std::optional<SponsoredImagesComponentInfo> sponsored_images_component =
       GetSponsoredImagesComponent(variations_country_code);
@@ -363,6 +371,9 @@ NTPBackgroundImagesData* NTPBackgroundImagesService::GetBackgroundImagesData()
 
 NTPSponsoredContentData* NTPBackgroundImagesService::GetNewTabTakeover(
     bool supports_dynamic_new_tab_takeover) const {
+  if (!velmren::kSponsoredContentEnabled) {
+    return nullptr;
+  }
   NTPSponsoredContentData* const sponsored_content_data =
       supports_dynamic_new_tab_takeover
           ? sponsored_content_data_.get()
@@ -376,6 +387,9 @@ NTPSponsoredContentData* NTPBackgroundImagesService::GetNewTabTakeover(
 
 NTPSponsoredSitesData* NTPBackgroundImagesService::GetSponsoredSitesData()
     const {
+  if (!velmren::kSponsoredContentEnabled) {
+    return nullptr;
+  }
   if (!sponsored_sites_data_ || !sponsored_sites_data_->IsValid()) {
     return nullptr;
   }
@@ -487,6 +501,9 @@ NTPBackgroundImagesService::HandleSponsoredComponentData(
 
 void NTPBackgroundImagesService::OnSponsoredComponentReady(
     const base::FilePath& installed_dir) {
+  if (!velmren::kSponsoredContentEnabled) {
+    return;
+  }
   sponsored_content_installed_dir_ = installed_dir;
 
   base::ThreadPool::PostTaskAndReplyWithResult(

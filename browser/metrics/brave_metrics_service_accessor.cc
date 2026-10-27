@@ -4,8 +4,11 @@
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "brave/browser/metrics/brave_metrics_service_accessor.h"
+
+#include "brave/components/velmren/product_policy.h"
 #include "chrome/browser/browser_process.h"
 
 bool BraveMetricsServiceAccessor::IsMetricsAndCrashReportingEnabled() {
-  return IsMetricsReportingEnabled(g_browser_process->local_state());
+  return velmren::kTelemetryEnabled &&
+         IsMetricsReportingEnabled(g_browser_process->local_state());
 }

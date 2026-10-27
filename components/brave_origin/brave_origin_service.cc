@@ -21,6 +21,7 @@
 #include "brave/components/brave_origin/features.h"
 #include "brave/components/brave_origin/pref_names.h"
 #include "brave/components/skus/browser/pref_names.h"
+#include "brave/components/velmren/product_policy.h"
 #include "components/policy/core/common/policy_map.h"
 #include "components/policy/core/common/policy_namespace.h"
 #include "components/policy/core/common/policy_service.h"
@@ -184,6 +185,10 @@ std::optional<bool> BraveOriginService::GetPolicyValue(
 
 void BraveOriginService::CheckPurchaseState(
     base::OnceCallback<void(bool)> callback) {
+  if (!velmren::kProductPromotionsEnabled) {
+    std::move(callback).Run(false);
+    return;
+  }
   if (!EnsureSkusConnected()) {
     std::move(callback).Run(IsPurchased());
     return;

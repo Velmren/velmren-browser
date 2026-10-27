@@ -5,7 +5,6 @@
 
 import * as React from 'react'
 import styled from 'styled-components'
-import { LoaderIcon } from 'brave-ui/components/icons'
 
 const Loading = styled('div')`
   width: 100%;
@@ -26,7 +25,12 @@ export default function LoadingComponent () {
   return (
     <Loading aria-busy='true'>
       <Graphic aria-label='Loading'>
-        <LoaderIcon />
+        <img
+          src="chrome://theme/current-channel-logo@2x"
+          width="50"
+          height="50"
+          alt="Velmren"
+        />
       </Graphic>
     </Loading>
   )

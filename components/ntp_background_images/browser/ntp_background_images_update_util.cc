@@ -8,6 +8,7 @@
 #include "base/functional/bind.h"
 #include "base/logging.h"
 #include "brave/components/brave_component_updater/browser/brave_on_demand_updater.h"
+#include "brave/components/velmren/product_policy.h"
 #include "components/component_updater/component_updater_service.h"
 
 namespace ntp_background_images {
@@ -67,6 +68,9 @@ void CheckAndUpdateSponsoredImagesComponentCallback(
 }  // namespace
 
 void CheckAndUpdateSponsoredImagesComponent(const std::string& component_id) {
+  if (!velmren::kSponsoredContentEnabled) {
+    return;
+  }
   VLOG(6) << "Checking for updates to NTP Sponsored Images component with ID "
           << component_id;
 

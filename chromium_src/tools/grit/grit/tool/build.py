@@ -9,6 +9,7 @@ import json
 from override_utils import override_function, override_method
 
 from grit.node import message
+from velmren_branding import brand_ui_text
 
 # Length of the 'IDS_' prefix in message names
 _IDS_PREFIX_LEN = 4
@@ -205,3 +206,11 @@ def _EncodingForOutputType(_, original_method, output_type):
         return 'utf_8'
 
     return original_method(output_type)
+
+# Apply browser branding after translation, leaving source messages and their
+# translation fingerprints untouched. This covers PAKs and Windows resources.
+
+@override_method(message.MessageNode)
+def Translate(self, original_method, *args, **kwargs):
+    return brand_ui_text(self.attrs.get('name', ''),
+                         original_method(self, *args, **kwargs))

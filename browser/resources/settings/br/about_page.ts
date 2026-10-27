@@ -24,13 +24,10 @@ const extractVersions = (versionElement: Element) => {
   return { braveVersion, build, chromiumVersion }
 }
 
-const buildBraveVersionLink = (braveVersion: string, build: string) => {
-  const wrapper = document.createElement('a')
+const buildBrowserVersionElement = (braveVersion: string, build: string) => {
+  const wrapper = document.createElement('div')
   wrapper.setAttribute('id', 'release-notes')
-  wrapper.setAttribute('target', '_blank')
-  wrapper.setAttribute('rel', 'noopener noreferrer')
-  wrapper.setAttribute('href', 'https://brave.com/latest/')
-  wrapper.textContent = `Brave ${braveVersion} ${build}`
+  wrapper.textContent = `Velmren Browser ${braveVersion} ${build}`
 
   return wrapper
 }
@@ -44,7 +41,7 @@ const buildChromiumVersionElement = (chromiumVersion: string) => {
 }
 
 const modifyAboutPage = (root: ShadowRoot) => {
-  if (!root.querySelector('a#release-notes')) {
+  if (!root.querySelector('#release-notes')) {
     const version =
       root.querySelector('#updateStatusMessage ~ .secondary')
     if (!version) {
@@ -52,25 +49,12 @@ const modifyAboutPage = (root: ShadowRoot) => {
       return
     }
 
-    // Remove the class from the version, so we take the link styling.
-    version.removeAttribute('class')
-
-    const wrapper = document.createElement('a')
-    wrapper.setAttribute('id', 'release-notes')
-    wrapper.setAttribute('target', '_blank')
-    wrapper.setAttribute('rel', 'noopener noreferrer')
-    wrapper.setAttribute('href', 'https://brave.com/latest/')
-
-    const parent = version.parentNode
-    parent?.replaceChild(wrapper, version)
-    wrapper.appendChild(version)
-
     const { braveVersion, build, chromiumVersion } = extractVersions(version)
-    const braveVersionLink = buildBraveVersionLink(braveVersion, build)
-    version.parentNode?.replaceChild(braveVersionLink, version)
+    const browserVersionElement = buildBrowserVersionElement(braveVersion, build)
+    version.replaceWith(browserVersionElement)
 
     const chromiumVersionElement = buildChromiumVersionElement(chromiumVersion)
-    braveVersionLink.after(chromiumVersionElement)
+    browserVersionElement.after(chromiumVersionElement)
   }
 
   // Help link shown if update fails

@@ -21,6 +21,7 @@ static_library("variations") {
   deps = [
     ":buildflags",
     "//base",
+    "//brave/components/velmren",
     "//components/variations",
   ]
 }

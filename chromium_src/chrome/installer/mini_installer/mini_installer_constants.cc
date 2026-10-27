@@ -61,11 +61,11 @@ const wchar_t kUninstallRegistryValue[] = L"UninstallString";
 #if defined(OFFICIAL_BUILD)
 // The path to the key containing each app's Clients registry key. The trailing
 // slash is required.
-const wchar_t kClientsKeyBase[] = L"Software\\BraveSoftware\\Update\\Clients\\";
+const wchar_t kClientsKeyBase[] = L"Software\\Velmren\\Update\\Clients\\";
 // The path to the key containing each app's Client State registry key. The
 // trailing slash is required.
 const wchar_t kClientStateKeyBase[] =
-    L"Software\\BraveSoftware\\Update\\ClientState\\";
+    L"Software\\Velmren\\Update\\ClientState\\";
 // The path to the key in which kCleanupRegistryValue is found.
 const wchar_t kCleanupRegistryKey[] =
     L"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Brave";
@@ -75,12 +75,12 @@ const wchar_t kCleanupRegistryKey[] =
 
 // The path to the key containing each app's Clients registry key.
 // No trailing slash on this one because the app's GUID is not appended.
-const wchar_t kClientsKeyBase[] = L"Software\\Brave-Browser-Development";
+const wchar_t kClientsKeyBase[] = L"Software\\Velmren-Browser-Development";
 // The path to the key containing each app's Client State registry key.
 // No trailing slash on this one because the app's GUID is not appended.
-const wchar_t kClientStateKeyBase[] = L"Software\\Brave-Browser-Development";
+const wchar_t kClientStateKeyBase[] = L"Software\\Velmren-Browser-Development";
 // The path to the key in which kCleanupRegistryValue is found.
-const wchar_t kCleanupRegistryKey[] = L"Software\\Brave-Browser-Development";
+const wchar_t kCleanupRegistryKey[] = L"Software\\Velmren-Browser-Development";
 
 #endif
 

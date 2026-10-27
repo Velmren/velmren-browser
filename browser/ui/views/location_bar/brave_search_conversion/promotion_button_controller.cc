@@ -14,6 +14,7 @@
 #include "brave/components/brave_search_conversion/utils.h"
 #include "brave/components/omnibox/browser/promotion_utils.h"
 #include "brave/components/search_engines/brave_prepopulated_engines.h"
+#include "brave/components/velmren/product_policy.h"
 #include "chrome/browser/image_fetcher/image_fetcher_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_key.h"
@@ -64,6 +65,9 @@ constexpr net::NetworkTrafficAnnotationTag
 
 // static
 bool PromotionButtonController::PromotionEnabled(PrefService* prefs) {
+  if (!velmren::kProductPromotionsEnabled) {
+    return false;
+  }
   if (!base::FeatureList::IsEnabled(
           brave_search_conversion::features::kOmniboxPromotionButton)) {
     return false;

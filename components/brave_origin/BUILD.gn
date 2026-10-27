@@ -65,6 +65,7 @@ static_library("brave_origin") {
     "//brave/components/skus/browser",
     "//brave/components/skus/common",
     "//brave/components/skus/common:mojom",
+    "//brave/components/velmren",
     "//components/keyed_service/core",
     "//components/policy/core/common",
     "//components/prefs",

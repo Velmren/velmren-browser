@@ -247,8 +247,8 @@ export class GitPatcher {
       await this.resetRepoFiles(allRepoPaths)
     } catch (error) {
       console.warn(
-        'There were some failures during git reset of specific repo paths: ',
-        allRepoPaths.join(' '),
+        `Could not reset ${allRepoPaths.length} patch target paths:`,
+        error.stderr || error.message,
       )
     }
     this.logProgressLine('done.')
@@ -335,7 +335,21 @@ export class GitPatcher {
   }
 
   resetRepoFiles(filePaths) {
-    return util.runGitAsync(this.repoPath, ['checkout', ...filePaths])
+    if (filePaths.length === 0) {
+      return Promise.resolve()
+    }
+    // A full Chromium patch set exceeds Windows' command-line length limit.
+    return util.runAsync(
+      'git',
+      ['checkout', '--pathspec-from-file=-', '--pathspec-file-nul'],
+      {
+        cwd: this.repoPath,
+        verbose: false,
+        continueOnFail: true,
+        stdio: ['pipe', 'pipe', 'pipe'],
+        onSpawn: (process) => process.stdin.end(filePaths.join('\0') + '\0'),
+      },
+    )
   }
 
   async handleObsoletePatchInfos(patchInfosObsolete) {

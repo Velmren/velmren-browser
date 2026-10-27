@@ -40,8 +40,7 @@ DWORD BraveGetEnvironmentVariableW(const wchar_t* var,
                                    wchar_t* value,
                                    DWORD bufSize) {
   assert(::lstrcmp(var, L"GoogleUpdateIsMachine") == 0);
-  return ::GetEnvironmentVariableW(L"BraveSoftwareUpdateIsMachine", value,
-                                   bufSize);
+  return ::GetEnvironmentVariableW(L"VelmrenUpdateIsMachine", value, bufSize);
 }
 }  // namespace
 #define GetEnvironmentVariableW BraveGetEnvironmentVariableW

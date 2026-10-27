@@ -23,6 +23,7 @@
 #include "brave/components/p3a/p3a_config.h"
 #include "brave/components/p3a/pref_names.h"
 #include "brave/components/p3a_utils/event_relay.h"
+#include "brave/components/velmren/product_policy.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
 #include "components/prefs/scoped_user_pref_update.h"
@@ -77,6 +78,9 @@ P3AService::P3AService(PrefService& local_state,
                        base::Time first_run_time,
                        P3AConfig config)
     : local_state_(local_state), config_(std::move(config)) {
+  if (!velmren::kTelemetryEnabled) {
+    local_state_->SetBoolean(kP3AEnabled, false);
+  }
   LoadDynamicMetrics();
   if (first_run_time.is_null()) {
     first_run_time = base::Time::Now();
@@ -93,8 +97,9 @@ P3AService::~P3AService() = default;
 
 void P3AService::RegisterPrefs(PrefRegistrySimple* registry, bool first_run) {
   MessageManager::RegisterPrefs(registry);
-  registry->RegisterBooleanPref(kP3AEnabled,
-                                !BUILDFLAG(IS_BRAVE_ORIGIN_BRANDED));
+  registry->RegisterBooleanPref(
+      kP3AEnabled,
+      velmren::kTelemetryEnabled && !BUILDFLAG(IS_BRAVE_ORIGIN_BRANDED));
   // New users are shown the P3A notice via the welcome page.
   registry->RegisterBooleanPref(kP3ANoticeAcknowledged, first_run);
 
@@ -178,7 +183,7 @@ base::CallbackListSubscription P3AService::RegisterMetricCycledCallback(
 }
 
 bool P3AService::IsP3AEnabled() const {
-  return local_state_->GetBoolean(kP3AEnabled);
+  return velmren::kTelemetryEnabled && local_state_->GetBoolean(kP3AEnabled);
 }
 
 void P3AService::Init(

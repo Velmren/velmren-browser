@@ -27,6 +27,7 @@
 #include "brave/components/brave_referrals/common/pref_names.h"
 #include "brave/components/constants/network_constants.h"
 #include "brave/components/constants/pref_names.h"
+#include "brave/components/velmren/product_policy.h"
 #include "brave/components/version_info/version_info.h"
 #include "brave/vendor/brave_base/random.h"
 #include "build/build_config.h"
@@ -190,7 +191,7 @@ BraveReferralsService::BraveReferralsService(PrefService* pref_service,
 BraveReferralsService::~BraveReferralsService() = default;
 
 void BraveReferralsService::Start() {
-  if (initialized_) {
+  if (!velmren::kTelemetryEnabled || initialized_) {
     return;
   }
 
@@ -533,6 +534,9 @@ std::string BraveReferralsService::BuildReferralFinalizationCheckPayload()
 }
 
 void BraveReferralsService::InitReferral() {
+  if (!velmren::kTelemetryEnabled) {
+    return;
+  }
   if (!pref_service_->GetBoolean(kStatsReportingEnabled)) {
     pref_service_->SetBoolean(kReferralInitialization, true);
     if (g_testing_referral_initialized_callback) {
@@ -587,6 +591,9 @@ void BraveReferralsService::InitReferral() {
 }
 
 void BraveReferralsService::CheckForReferralFinalization() {
+  if (!velmren::kTelemetryEnabled) {
+    return;
+  }
   net::NetworkTrafficAnnotationTag traffic_annotation =
       net::DefineNetworkTrafficAnnotation("brave_referral_finalization_checker",
                                           R"(
@@ -657,6 +664,9 @@ void BraveReferralsService::OnAndroidBraveReferrerReady(
 }
 
 void BraveReferralsService::MaybeReportAndroidConversion() {
+  if (!velmren::kTelemetryEnabled) {
+    return;
+  }
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
   const std::string gbraid = pref_service_->GetString(kReferralAndroidGbraid);
