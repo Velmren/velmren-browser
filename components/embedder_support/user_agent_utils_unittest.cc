@@ -4,6 +4,7 @@
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "components/embedder_support/user_agent_utils.h"
+
 #include "base/command_line.h"
 #include "base/feature_list.h"
 #include "base/test/scoped_command_line.h"
@@ -20,8 +21,9 @@ namespace {
 bool ContainsBrandVersion(const blink::UserAgentBrandList& brand_list,
                           const blink::UserAgentBrandVersion brand_version) {
   for (const auto& brand_list_entry : brand_list) {
-    if (brand_list_entry == brand_version)
+    if (brand_list_entry == brand_version) {
       return true;
+    }
   }
   return false;
 }
@@ -32,10 +34,12 @@ TEST(UserAgentUtilsTest, UserAgentMetadata) {
   auto metadata = GetUserAgentMetadata();
 
   const std::string major_version = version_info::GetMajorVersionNumber();
-  const blink::UserAgentBrandVersion product_brand_version = {"Brave",
+  const blink::UserAgentBrandVersion product_brand_version = {"Velmren",
                                                               major_version};
   EXPECT_TRUE(
       ContainsBrandVersion(metadata.brand_version_list, product_brand_version));
+  EXPECT_FALSE(ContainsBrandVersion(metadata.brand_version_list,
+                                    {"Brave", major_version}));
 }
 
 TEST(UserAgentUtilsTest, UserAgentFromCommandLine) {

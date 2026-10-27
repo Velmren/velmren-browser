@@ -10,7 +10,7 @@
 
 namespace {
 
-constexpr char kBraveBrandNameForCHUA[] = "Brave";
+constexpr char kVelmrenBrandNameForCHUA[] = "Velmren";
 
 }  // namespace
 
@@ -29,7 +29,7 @@ std::string BuildModelInfo() {
 // IDS_PRODUCT_NAME from app/chromium_strings.grd (brave_strings.grd) in
 // constructing the UA in brave/browser/brave_content_browser_client.cc, but we
 // can't use it here in the //components.
-#define BRAVE_GET_USER_AGENT_BRAND_LIST brand = kBraveBrandNameForCHUA;
+#define BRAVE_GET_USER_AGENT_BRAND_LIST brand = kVelmrenBrandNameForCHUA;
 
 #define BRAVE_BRAND_VERSION_OVERRIDE_FOR_FULL_BRAND_VERSION_TYPE \
   base::StrCat({major_version, ".0.0.0"})
