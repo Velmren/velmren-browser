@@ -138,6 +138,10 @@ group("all") {
     "//brave",
   ]
 
+  if (is_win) {
+    deps += [ "//brave/test/velmren:velmren_password_unittests" ]
+  }
+
   if (!is_android && !is_ios) {
     deps += [
       "//brave/test:brave_interactive_ui_tests",

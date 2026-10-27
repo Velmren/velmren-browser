@@ -1,0 +1,28 @@
+# Copyright (c) 2026 The Velmren Authors. All rights reserved.
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this file,
+# You can obtain one at https://mozilla.org/MPL/2.0/.
+
+import("//testing/test.gni")
+
+if (is_win) {
+  # Reuse Chromium's unchanged password tests and complete component test
+  # initialization without building unrelated component test suites.
+  test("velmren_password_unittests") {
+    testonly = true
+
+    deps = [
+      "//base",
+      "//components/password_manager/core/browser:unit_tests",
+      "//components/test:run_all_unittests",
+    ]
+
+    data = [ "//components/test/data/password_manager/" ]
+
+    data_deps = [
+      "//components:components_tests_pak",
+      "//third_party/angle:includes",
+      "//ui/resources:ui_test_pak_data",
+    ]
+  }
+}
