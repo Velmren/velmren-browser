@@ -11,9 +11,14 @@
 
 using BraveLocationBarModelDelegateTest = testing::Test;
 
-TEST_F(BraveLocationBarModelDelegateTest, ResolvesChromeSchemeToBrave) {
-  GURL url("chrome://sync/");
-  std::u16string formatted_url = base::UTF8ToUTF16(url.spec());
-  BraveLocationBarModelDelegate::FormattedStringFromURL(url, &formatted_url);
-  ASSERT_STREQ(base::UTF16ToASCII(formatted_url).c_str(), "brave://sync/");
+TEST_F(BraveLocationBarModelDelegateTest, ResolvesInternalSchemeToVelmren) {
+  constexpr const char* kURLs[] = {"chrome://sync/", "brave://sync/",
+                                   "velmren://sync/"};
+  for (const char* url_string : kURLs) {
+    SCOPED_TRACE(url_string);
+    GURL url(url_string);
+    std::u16string formatted_url = base::UTF8ToUTF16(url.spec());
+    BraveLocationBarModelDelegate::FormattedStringFromURL(url, &formatted_url);
+    EXPECT_EQ(formatted_url, u"velmren://sync/");
+  }
 }

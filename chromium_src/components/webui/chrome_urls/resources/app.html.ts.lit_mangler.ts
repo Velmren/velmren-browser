@@ -11,10 +11,10 @@ mangle((element) => {
   if (!h2) {
     throw new Error('[chrome_urls override] Missing H2 element')
   }
-  h2.textContent = 'List of Brave URLs'
+  h2.textContent = 'List of Velmren URLs'
 })
 
-// Rewrite chrome://chrome-urls -> brave://chrome-urls
+// Display the canonical browser scheme while retaining internal Chrome links.
 mangle((element) => {
   const anchor = element.querySelector('a')
   if (!anchor) {
@@ -23,12 +23,12 @@ mangle((element) => {
   if (anchor.textContent !== 'chrome://chrome-urls') {
     throw new Error('[chrome_urls override] Unexpected anchor textContent')
   }
-  anchor.textContent = 'brave://chrome-urls'
+  anchor.textContent = 'velmren://chrome-urls'
 }, x => x.text.includes('href="#"'))
 
-// Rewrite standard chrome URLs to use brave: scheme (these appear under the
-// "List of Brave URLs" header) and rewrite internal debugging page URLs to use
-// brave: scheme (these appear under the "Internal Debugging Page URLs" header
+// Rewrite standard chrome URLs to use velmren: scheme (these appear under the
+// "List of Velmren URLs" header) and rewrite internal debugging page URLs to use
+// velmren: scheme (these appear under the "Internal Debugging Page URLs" header
 // when the debugging pages are enabled)
 mangleAll((element) => {
   const anchor = element.querySelector('a')
@@ -38,12 +38,12 @@ mangleAll((element) => {
   if (anchor.textContent !== '\${info.url}') {
     throw new Error('[chrome_urls override] Unexpected anchor textContent')
   }
-  anchor.textContent = '\${info.url.replace(/chrome:/, "brave:")}'
+  anchor.textContent = '\${info.url.replace(/chrome:/, "velmren:")}'
 }, x => x.text.includes('href="${info.url}"'))
 
-// Rewrite inactive chrome URLs to use brave: scheme (these also appear under
-// the "List of Brave URLs" header) and rewrite internal debugging page URLs to
-// use brave: scheme (these appear under the "Internal Debugging Page URLs"
+// Rewrite inactive chrome URLs to use velmren: scheme (these also appear under
+// the "List of Velmren URLs" header) and rewrite internal debugging page URLs to
+// use velmren: scheme (these appear under the "Internal Debugging Page URLs"
 // header when the debugging pages are disabled)
 mangleAll((element) => {
   const listItem = element.querySelector('li')
@@ -53,10 +53,10 @@ mangleAll((element) => {
   if (listItem.textContent !== '\${info.url}') {
     throw new Error('[chrome_urls override] Unexpected list item textContent')
   }
-  listItem.textContent = '\${info.url.replace(/chrome:/, "brave:")}'
+  listItem.textContent = '\${info.url.replace(/chrome:/, "velmren:")}'
 }, x => x.text.includes('<li>${info.url}</li>'))
 
-// Rewrite command URLs to use brave: scheme (these appear under the
+// Rewrite command URLs to use velmren: scheme (these appear under the
 // "Command URLs for Debug" header)
 mangle((element) => {
   const listItem = element.querySelector('li')
@@ -66,5 +66,5 @@ mangle((element) => {
   if (listItem.textContent !== '\${url}') {
     throw new Error('[chrome_urls override] Unexpected list item textContent')
   }
-  listItem.textContent = '\${url.replace(/chrome:/, "brave:")}'
+  listItem.textContent = '\${url.replace(/chrome:/, "velmren:")}'
 }, x => x.text.includes('<li>${url}</li>'))

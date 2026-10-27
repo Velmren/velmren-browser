@@ -45,8 +45,9 @@ void CreateDefaultWidevineCdmHintFile() {
   base::FilePath hint_file_path;
   CHECK(base::PathService::Get(chrome::FILE_COMPONENT_WIDEVINE_CDM_HINT,
                                &hint_file_path));
-  if (base::PathExists(hint_file_path))
+  if (base::PathExists(hint_file_path)) {
     return;
+  }
 
   base::FilePath widevine_root_dir_path;
   CHECK(base::PathService::Get(chrome::DIR_COMPONENT_UPDATED_WIDEVINE_CDM,
@@ -90,6 +91,10 @@ void BraveContentClient::AddAdditionalSchemes(Schemes* schemes) {
   schemes->secure_schemes.push_back(content::kBraveUIScheme);
   schemes->cors_enabled_schemes.push_back(content::kBraveUIScheme);
   schemes->savable_schemes.push_back(content::kBraveUIScheme);
+  schemes->standard_schemes.push_back(content::kVelmrenUIScheme);
+  schemes->secure_schemes.push_back(content::kVelmrenUIScheme);
+  schemes->cors_enabled_schemes.push_back(content::kVelmrenUIScheme);
+  schemes->savable_schemes.push_back(content::kVelmrenUIScheme);
 }
 
 void BraveContentClient::AddContentDecryptionModules(

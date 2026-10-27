@@ -66,9 +66,10 @@ void ContentSerializedNavigationDriver::Sanitize(
     SerializedNavigationEntry* navigation) const {
   Sanitize_ChromiumImpl(navigation);
 
-  // Restore previous saved urls with brave:// scheme as chrome://
+  // Restore saved UI aliases using their internal chrome:// origin.
   const auto& virtual_url = navigation->virtual_url();
-  if (virtual_url.SchemeIs(content::kBraveUIScheme)) {
+  if (virtual_url.SchemeIs(content::kBraveUIScheme) ||
+      virtual_url.SchemeIs(content::kVelmrenUIScheme)) {
     GURL::Replacements replacements;
     replacements.SetSchemeStr(content::kChromeUIScheme);
     navigation->set_virtual_url(virtual_url.ReplaceComponents(replacements));

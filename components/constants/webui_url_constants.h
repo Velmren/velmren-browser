@@ -38,7 +38,7 @@ inline constexpr char kBraveUIWebcompatReporterURL[] = "chrome://webcompat/";
 inline constexpr char kVPNPanelURL[] =
     "chrome-untrusted://vpn-panel.top-chrome/";
 inline constexpr char kVPNPanelHost[] = "vpn-panel.top-chrome";
-inline constexpr char kExtensionSettingsURL[] = "brave://settings/extensions";
+inline constexpr char kExtensionSettingsURL[] = "velmren://settings/extensions";
 inline constexpr char kBraveSyncPath[] = "braveSync";
 inline constexpr char kBraveSyncSetupPath[] = "braveSync/setup";
 inline constexpr char kTorInternalsHost[] = "tor-internals";
@@ -59,7 +59,7 @@ inline constexpr char kSpeedreaderPanelHost[] = "brave-speedreader.top-chrome";
 inline constexpr char kShortcutsURL[] = "chrome://settings/system/shortcuts";
 inline constexpr char kAIChatUIURL[] = "chrome://leo-ai/";
 inline constexpr char kAIChatUIHost[] = "leo-ai";
-inline constexpr char kAIChatSettingsURL[] = "brave://settings/leo-ai/";
+inline constexpr char kAIChatSettingsURL[] = "velmren://settings/leo-ai/";
 inline constexpr char kAIChatUntrustedConversationUIURL[] =
     "chrome-untrusted://leo-ai-conversation-entries/";
 inline constexpr char kAIChatUntrustedConversationUIHost[] =

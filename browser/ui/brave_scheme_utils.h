@@ -9,7 +9,8 @@
 #include <string>
 
 namespace brave_utils {
-// Replaces the chrome:// scheme with brave:// scheme in the given |url_string|.
+// Formats chrome:// and legacy brave:// URLs with the canonical velmren://
+// scheme.
 bool ReplaceChromeToBraveScheme(std::u16string& url_string);
 }  // namespace brave_utils
 

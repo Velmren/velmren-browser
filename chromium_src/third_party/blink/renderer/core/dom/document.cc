@@ -10,9 +10,9 @@
 
 namespace {
 
-// Convert brave to chrome as early as possible for renderer side url checks
+// Normalize UI aliases before renderer-side URL security checks.
 blink::KURL RewriteBraveToChrome(const blink::KURL& brave_url) {
-  if (!brave_url.ProtocolIs("brave")) {
+  if (!brave_url.ProtocolIs("brave") && !brave_url.ProtocolIs("velmren")) {
     return brave_url;
   }
   blink::KURL chrome_url(brave_url);

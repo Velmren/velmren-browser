@@ -32,20 +32,53 @@ class BraveContentBrowserClientTest : public testing::Test {
 };
 
 TEST_F(BraveContentBrowserClientTest, ResolvesSync) {
-  GURL url("chrome://sync/");
-  ASSERT_TRUE(
-      BraveContentBrowserClient::HandleURLOverrideRewrite(&url, nullptr));
-  ASSERT_STREQ(url.spec().c_str(), "chrome://settings/braveSync");
-
-  GURL url2("chrome://sync/");
-  ASSERT_TRUE(
-      BraveContentBrowserClient::HandleURLOverrideRewrite(&url2, nullptr));
+  constexpr const char* kURLs[] = {"chrome://sync/", "brave://sync/",
+                                   "velmren://sync/"};
+  for (const char* url_string : kURLs) {
+    SCOPED_TRACE(url_string);
+    GURL url(url_string);
+    ASSERT_TRUE(
+        BraveContentBrowserClient::HandleURLOverrideRewrite(&url, nullptr));
+    EXPECT_EQ(url, GURL("chrome://settings/braveSync"));
+  }
 }
 
 TEST_F(BraveContentBrowserClientTest, ResolvesWelcomePage) {
-  GURL url("chrome://welcome/");
-  ASSERT_TRUE(
-      BraveContentBrowserClient::HandleURLOverrideRewrite(&url, nullptr));
+  constexpr const char* kURLs[] = {"chrome://welcome/", "brave://welcome/",
+                                   "velmren://welcome/"};
+  for (const char* url_string : kURLs) {
+    SCOPED_TRACE(url_string);
+    GURL url(url_string);
+    ASSERT_TRUE(
+        BraveContentBrowserClient::HandleURLOverrideRewrite(&url, nullptr));
+    EXPECT_EQ(url, GURL("chrome://welcome/"));
+  }
+}
+
+#if !BUILDFLAG(IS_ANDROID)
+TEST_F(BraveContentBrowserClientTest, ResolvesAdblockAliases) {
+  constexpr const char* kURLs[] = {"chrome://adblock/", "brave://adblock/",
+                                   "velmren://adblock/"};
+  for (const char* url_string : kURLs) {
+    SCOPED_TRACE(url_string);
+    GURL url(url_string);
+    EXPECT_FALSE(
+        BraveContentBrowserClient::HandleURLOverrideRewrite(&url, nullptr));
+    EXPECT_EQ(url, GURL("chrome://settings/shields/filters"));
+  }
+}
+#endif
+
+TEST_F(BraveContentBrowserClientTest, DoesNotRewriteNonUISchemes) {
+  constexpr const char* kURLs[] = {"https://sync/", "chrome-untrusted://sync/",
+                                   "chrome-extension://sync/"};
+  for (const char* url_string : kURLs) {
+    SCOPED_TRACE(url_string);
+    GURL url(url_string);
+    EXPECT_FALSE(
+        BraveContentBrowserClient::HandleURLOverrideRewrite(&url, nullptr));
+    EXPECT_EQ(url, GURL(url_string));
+  }
 }
 
 TEST_F(BraveContentBrowserClientTest, IsolatedWebAppsAreDisabled) {

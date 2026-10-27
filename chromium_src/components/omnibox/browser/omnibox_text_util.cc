@@ -14,9 +14,10 @@
 namespace {
 void BraveAdjustTextForCopy(GURL* url) {
 #if !BUILDFLAG(IS_IOS)
-  if (url->scheme() == content::kChromeUIScheme) {
+  if (url->SchemeIs(content::kChromeUIScheme) ||
+      url->SchemeIs(content::kBraveUIScheme)) {
     GURL::Replacements replacements;
-    replacements.SetSchemeStr(content::kBraveUIScheme);
+    replacements.SetSchemeStr(content::kVelmrenUIScheme);
     *url = url->ReplaceComponents(replacements);
   }
 #endif

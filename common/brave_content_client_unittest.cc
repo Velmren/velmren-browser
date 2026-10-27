@@ -17,13 +17,13 @@ TEST(BraveContentClientTest, AdditionalSchemesTest) {
   content::SetContentClient(&content_client);
   content::ReRegisterContentSchemesForTests();
 
-  const GURL sync_url("brave://sync");
-  EXPECT_TRUE(sync_url.is_valid());
-  EXPECT_TRUE(sync_url.has_host());
-  EXPECT_EQ("sync", sync_url.host());
-
-  const GURL chrome_sync_url("chrome://sync");
-  EXPECT_TRUE(chrome_sync_url.is_valid());
-  EXPECT_TRUE(chrome_sync_url.has_host());
-  EXPECT_EQ("sync", chrome_sync_url.host());
+  constexpr const char* kSyncURLs[] = {"chrome://sync", "brave://sync",
+                                       "velmren://sync", "VELMREN://sync"};
+  for (const char* url : kSyncURLs) {
+    SCOPED_TRACE(url);
+    const GURL sync_url(url);
+    EXPECT_TRUE(sync_url.is_valid());
+    EXPECT_TRUE(sync_url.has_host());
+    EXPECT_EQ("sync", sync_url.host());
+  }
 }

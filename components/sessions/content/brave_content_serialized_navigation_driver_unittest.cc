@@ -4,10 +4,10 @@
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "components/sessions/content/content_serialized_navigation_driver.h"
-
 #include "components/sessions/core/serialized_navigation_entry.h"
 #include "components/sessions/core/serialized_navigation_entry_test_helper.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "url/gurl.h"
 
 namespace sessions {
 
@@ -53,19 +53,42 @@ TEST(BraveContentSerializedNavigationDriverTest,
   EXPECT_EQ(std::string(), driver->GetSanitizedPageStateForPickle(&navigation));
 }
 
-// Tests that restored brave:// pages are converted to chrome://
+// Restored UI aliases retain the same internal origin and URL suffix.
 TEST(BraveContentSerializedNavigationDriverTest,
-     SanitizeConvertsBraveVirtualUrlToChrome) {
+     SanitizeConvertsUIAliasesToChrome) {
   ContentSerializedNavigationDriver* driver =
       ContentSerializedNavigationDriver::GetInstance();
   SerializedNavigationEntry navigation =
       SerializedNavigationEntryTestHelper::CreateNavigationForTest();
 
-  // Check encoded data is not empty but clean state only with url info for
-  // chrome overridable url by extension.
-  navigation.set_virtual_url(GURL("brave://flags"));
-  driver->Sanitize(&navigation);
-  EXPECT_EQ(GURL("chrome://flags"), navigation.virtual_url());
+  constexpr const char* kURLs[] = {"chrome://flags/?foo=bar#feature",
+                                   "brave://flags/?foo=bar#feature",
+                                   "velmren://flags/?foo=bar#feature"};
+  for (const char* url : kURLs) {
+    SCOPED_TRACE(url);
+    navigation.set_virtual_url(GURL(url));
+    driver->Sanitize(&navigation);
+    EXPECT_EQ(GURL("chrome://flags/?foo=bar#feature"),
+              navigation.virtual_url());
+    EXPECT_EQ(std::string(),
+              driver->GetSanitizedPageStateForPickle(&navigation));
+  }
+}
+
+TEST(BraveContentSerializedNavigationDriverTest,
+     SanitizePreservesOtherSchemes) {
+  auto* driver = ContentSerializedNavigationDriver::GetInstance();
+  auto navigation =
+      SerializedNavigationEntryTestHelper::CreateNavigationForTest();
+  constexpr const char* kURLs[] = {"https://example.com/?url=brave://flags",
+                                   "chrome-untrusted://new-tab-page/",
+                                   "chrome-extension://id/page.html"};
+  for (const char* url : kURLs) {
+    SCOPED_TRACE(url);
+    navigation.set_virtual_url(GURL(url));
+    driver->Sanitize(&navigation);
+    EXPECT_EQ(GURL(url), navigation.virtual_url());
+  }
 }
 
 }  // namespace sessions

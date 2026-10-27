@@ -76,9 +76,10 @@ void BraveBrowserWebContentsDelegate::UpdateTargetURL(
     content::WebContents* source,
     const GURL& url) {
   GURL target_url = url;
-  if (url.SchemeIs(content::kChromeUIScheme)) {
+  if (url.SchemeIs(content::kChromeUIScheme) ||
+      url.SchemeIs(content::kBraveUIScheme)) {
     GURL::Replacements replacements;
-    replacements.SetSchemeStr(content::kBraveUIScheme);
+    replacements.SetSchemeStr(content::kVelmrenUIScheme);
     target_url = target_url.ReplaceComponents(replacements);
   }
   BrowserWebContentsDelegate::UpdateTargetURL(source, target_url);

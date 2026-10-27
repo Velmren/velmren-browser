@@ -13,6 +13,7 @@
 namespace {
 constexpr char16_t kChromeSchema16[] = u"chrome";
 constexpr char16_t kBraveSchema16[] = u"brave";
+constexpr char16_t kVelmrenSchema16[] = u"velmren";
 }  // namespace
 
 namespace brave_utils {
@@ -21,8 +22,9 @@ bool ReplaceChromeToBraveScheme(std::u16string& url_string) {
   url::Component scheme;
   if (url::ExtractScheme(url_string, &scheme) && scheme.is_valid()) {
     std::u16string_view scheme_view = scheme.AsViewOn(url_string);
-    if (base::EqualsCaseInsensitiveASCII(scheme_view, kChromeSchema16)) {
-      url_string.replace(scheme.begin, scheme.len, kBraveSchema16);
+    if (base::EqualsCaseInsensitiveASCII(scheme_view, kChromeSchema16) ||
+        base::EqualsCaseInsensitiveASCII(scheme_view, kBraveSchema16)) {
+      url_string.replace(scheme.begin, scheme.len, kVelmrenSchema16);
       return true;
     }
   }

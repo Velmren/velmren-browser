@@ -25,14 +25,14 @@
 namespace {
 
 constexpr char kChromeSchema[] = "chrome://";
-constexpr char kBraveSchema[] = "brave://";
+constexpr char kVelmrenSchema[] = "velmren://";
 
 }  // namespace
 
 namespace template_url_starter_pack_data {
 
 // Update this whenever a change is made to any Brave-defined starter pack data.
-const int kCurrentBraveDataVersion = 1;
+const int kCurrentBraveDataVersion = 2;
 
 const StarterPackEngine ask_brave_search = {
     .name_message_id = IDS_SEARCH_ENGINES_STARTER_PACK_ASK_BRAVE_SEARCH_NAME,
@@ -62,7 +62,7 @@ std::vector<std::unique_ptr<TemplateURLData>> GetStarterPackEngines() {
     if (base::StartsWith(url, kChromeSchema,
                          base::CompareCase::INSENSITIVE_ASCII)) {
       t_url->SetURL(base::StrCat(
-          {kBraveSchema, url.substr(std::size(kChromeSchema) - 1)}));
+          {kVelmrenSchema, url.substr(std::size(kChromeSchema) - 1)}));
     }
 
     t_urls.push_back(std::move(t_url));

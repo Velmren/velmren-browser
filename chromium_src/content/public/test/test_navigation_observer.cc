@@ -10,7 +10,8 @@
 namespace {
 
 GURL* RewriteExpectedURLBraveToChrome(GURL* url) {
-  if (url && url->SchemeIs(content::kBraveUIScheme)) {
+  if (url && (url->SchemeIs(content::kBraveUIScheme) ||
+              url->SchemeIs(content::kVelmrenUIScheme))) {
     GURL::Replacements replacements;
     replacements.SetSchemeStr(content::kChromeUIScheme);
     *url = url->ReplaceComponents(replacements);
@@ -20,12 +21,7 @@ GURL* RewriteExpectedURLBraveToChrome(GURL* url) {
 
 }  // namespace
 
-// brave:// is a display-only scheme that maps to chrome:// internally.
-// When tests navigate to brave:// URLs using
-// NavigateToURLBlockUntilNavigationsComplete or similar, the actual committed
-// URL will chrome://. We need to fix up the expected URL before comparing so
-// that navigation observers correctly match brave:// URLs with their chrome://
-// equivalents.
+// UI aliases commit as chrome://, so normalize expected navigation URLs too.
 #define RewriteURLIfNecessary(URL, BROWSER_CONTEXT) \
   RewriteURLIfNecessary(RewriteExpectedURLBraveToChrome(URL), BROWSER_CONTEXT)
 

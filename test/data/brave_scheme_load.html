@@ -1,7 +1,8 @@
 <!DOCTYPE html>
 
 <script>
-  const url = "brave://settings"
+  const scheme = new URLSearchParams(window.location.search).get("scheme") || "brave";
+  const url = `${scheme}://settings`;
   function openBraveSettings() {
     window.open(url);
   }
@@ -31,5 +32,10 @@
 
 <body>
   <a href="brave://settings" id="gotoSettings">goto brave://settings</a>
+  <script>
+    const link = document.getElementById("gotoSettings");
+    link.href = url;
+    link.textContent = `goto ${url}`;
+  </script>
 </body>
 </html>

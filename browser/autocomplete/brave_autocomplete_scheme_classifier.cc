@@ -20,7 +20,7 @@ BraveAutocompleteSchemeClassifier::BraveAutocompleteSchemeClassifier(
 BraveAutocompleteSchemeClassifier::~BraveAutocompleteSchemeClassifier() =
     default;
 
-// Without this override, typing in brave:// URLs will search Google
+// Recognize both the canonical UI scheme and its legacy alias as URLs.
 metrics::OmniboxInputType
 BraveAutocompleteSchemeClassifier::GetInputTypeForScheme(
     const std::string& scheme) const {
@@ -28,7 +28,8 @@ BraveAutocompleteSchemeClassifier::GetInputTypeForScheme(
     return metrics::OmniboxInputType::EMPTY;
   }
   if (base::IsStringASCII(scheme) &&
-      base::EqualsCaseInsensitiveASCII(scheme, kBraveUIScheme)) {
+      (base::EqualsCaseInsensitiveASCII(scheme, kBraveUIScheme) ||
+       base::EqualsCaseInsensitiveASCII(scheme, kVelmrenUIScheme))) {
     return metrics::OmniboxInputType::URL;
   }
 

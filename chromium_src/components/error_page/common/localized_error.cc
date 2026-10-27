@@ -20,13 +20,13 @@ std::u16string GetFailedUrlString(GURL failed_url);
 
 namespace error_page {
 namespace {
-constexpr char kBraveUIScheme[] = "brave";
+constexpr char kVelmrenUIScheme[] = "velmren";
 }
 
 std::u16string GetFailedUrlString(GURL failed_url) {
-  if (failed_url.scheme() == kChromeUIScheme) {
+  if (failed_url.scheme() == kChromeUIScheme || failed_url.SchemeIs("brave")) {
     GURL::Replacements replacements;
-    replacements.SetSchemeStr(kBraveUIScheme);
+    replacements.SetSchemeStr(kVelmrenUIScheme);
 
     failed_url = failed_url.ReplaceComponents(replacements);
   }

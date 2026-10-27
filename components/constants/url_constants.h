@@ -8,6 +8,7 @@
 
 inline constexpr char kChromeExtensionScheme[] = "chrome-extension";
 inline constexpr char kBraveUIScheme[] = "brave";
+inline constexpr char kVelmrenUIScheme[] = "velmren";
 inline constexpr char kMagnetScheme[] = "magnet";
 inline constexpr char kWidevineTOS[] = "https://policies.google.com/terms";
 inline constexpr char kRewardsUpholdSupport[] =

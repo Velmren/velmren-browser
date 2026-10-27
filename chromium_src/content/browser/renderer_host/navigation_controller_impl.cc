@@ -8,10 +8,10 @@
 
 namespace {
 
-// We want to rewrite brave -> chrome, but without setting the virtual url to
-// brave
+// Keep both committed and virtual URLs on the internal chrome:// origin.
 void MaybeRewriteVirtualURL(GURL* virtual_url) {
-  if (virtual_url && virtual_url->SchemeIs(content::kBraveUIScheme)) {
+  if (virtual_url && (virtual_url->SchemeIs(content::kBraveUIScheme) ||
+                      virtual_url->SchemeIs(content::kVelmrenUIScheme))) {
     GURL::Replacements replacements;
     replacements.SetSchemeStr(content::kChromeUIScheme);
     *virtual_url = virtual_url->ReplaceComponents(replacements);

@@ -18,7 +18,7 @@
 
 namespace {
 
-constexpr char16_t kTabDomain[] = u"brave://settings";
+constexpr char16_t kTabDomain[] = u"velmren://settings";
 constexpr char16_t kTabTitle[] = u"Settings - Addresses and more";
 constexpr char kTabUrl[] = "chrome://settings/addresses";
 
@@ -62,8 +62,9 @@ class TabHoverCardBubbleViewBrowserTest : public DialogBrowserTest,
   bool ShouldWaitForDialogBeforeVerify() override { return false; }
 
   bool VerifyUi() override {
-    if (!DialogBrowserTest::VerifyUi())
+    if (!DialogBrowserTest::VerifyUi()) {
       return false;
+    }
 
     TabStrip* const tab_strip = GetTabStrip(browser());
     Tab* const tab = tab_strip->tab_at(1);

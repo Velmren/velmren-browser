@@ -22,8 +22,10 @@ resource paths and IDs remain stable to preserve build integration and icon orde
 `script/velmren_branding.py` changes browser display names after GRIT translates a
 message, preserving source IDs, translation fingerprints and placeholders. Legal
 notices, upstream authors, actual external services and import-source labels keep
-their attribution. `brave://` compatibility URLs and internal source names remain
-internal implementation details. About shows the local browser and Chromium
+their attribution. Internal pages display and copy `velmren://` URLs while
+`brave://` and `chrome://` remain compatible inputs. Committed and stored WebUI
+origins stay `chrome://`; internal source names remain implementation details.
+About shows the local browser and Chromium
 versions without sending its release link to Brave's website.
 
 ## Windows identity and validation

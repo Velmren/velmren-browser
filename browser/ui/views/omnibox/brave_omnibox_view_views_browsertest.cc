@@ -205,27 +205,49 @@ IN_PROC_BROWSER_TEST_F(BraveOmniboxViewViewsTest, PasteAndSearchTest) {
             GURL(private_service->GetDefaultSearchProvider()->url()).host());
 }
 
-// Load brave url and check copied url also has brave scheme.
+// Every accepted UI alias copies the canonical browser URL.
 IN_PROC_BROWSER_TEST_F(BraveOmniboxViewViewsTest,
                        CopyInternalURLToClipboardTest) {
-  const std::string test_url("brave://version/");
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), GURL(test_url)));
+  constexpr const char* kURLs[] = {"chrome://version/", "brave://version/",
+                                   "velmren://version/"};
+  for (const char* url : kURLs) {
+    SCOPED_TRACE(url);
+    ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), GURL(url)));
+    auto* contents = browser()->tab_strip_model()->GetActiveWebContents();
+    EXPECT_EQ(GURL("chrome://version/"), contents->GetLastCommittedURL());
+    EXPECT_EQ(GURL("chrome://version/"), contents->GetVisibleURL());
 
-  omnibox_view()->SelectAll(true);
-  omnibox_view()->ExecuteCommand(
-      std::to_underlying(ui::TouchEditable::MenuCommands::kCopy), 0);
-  ui::Clipboard* clipboard = ui::Clipboard::GetForCurrentThread();
-  std::string text_from_clipboard = ui::clipboard_test_util::ReadAsciiText(
-      clipboard, ui::ClipboardBuffer::kCopyPaste,
-      /* data_dst = */ nullptr);
-  EXPECT_EQ(test_url, text_from_clipboard);
+    omnibox_view()->SelectAll(true);
+    omnibox_view()->ExecuteCommand(
+        std::to_underlying(ui::TouchEditable::MenuCommands::kCopy), 0);
+    ui::Clipboard* clipboard = ui::Clipboard::GetForCurrentThread();
+    std::string text_from_clipboard = ui::clipboard_test_util::ReadAsciiText(
+        clipboard, ui::ClipboardBuffer::kCopyPaste,
+        /* data_dst = */ nullptr);
+    EXPECT_EQ("velmren://version/", text_from_clipboard);
 
 #if BUILDFLAG(IS_LINUX)
-  text_from_clipboard = ui::clipboard_test_util::ReadAsciiText(
-      clipboard, ui::ClipboardBuffer::kSelection,
-      /* data_dst = */ nullptr);
-  EXPECT_EQ(test_url, text_from_clipboard);
+    text_from_clipboard = ui::clipboard_test_util::ReadAsciiText(
+        clipboard, ui::ClipboardBuffer::kSelection,
+        /* data_dst = */ nullptr);
+    EXPECT_EQ("velmren://version/", text_from_clipboard);
 #endif
+  }
+}
+
+IN_PROC_BROWSER_TEST_F(BraveOmniboxViewViewsTest, PasteInternalURLNavigates) {
+  constexpr const char16_t* kURLs[] = {
+      u"chrome://version/", u"brave://version/", u"VELMREN://version/"};
+  for (const char16_t* url : kURLs) {
+    ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), GURL("about:blank")));
+    SetClipboardText(ui::ClipboardBuffer::kCopyPaste, url);
+    auto* contents = browser()->tab_strip_model()->GetActiveWebContents();
+    content::TestNavigationObserver observer(contents);
+    omnibox_view()->ExecuteCommand(IDC_PASTE_AND_GO, ui::EF_NONE);
+    observer.Wait();
+    EXPECT_EQ(GURL("chrome://version/"), contents->GetLastCommittedURL());
+    EXPECT_EQ(GURL("chrome://version/"), contents->GetVisibleURL());
+  }
 }
 
 IN_PROC_BROWSER_TEST_F(BraveOmniboxViewViewsTest, CopyCleanURLToClipboardTest) {

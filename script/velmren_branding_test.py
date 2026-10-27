@@ -20,6 +20,27 @@ class VelmrenBrandingTest(unittest.TestCase):
         self.assertEqual(brand_ui_text('IDS_SEARCH', text), 'Use Brave Search in Velmren. https://brave.com/ $1')
         self.assertEqual(brand_ui_text('IDS_IMPORT', 'Bravery and brave'), 'Bravery and brave')
 
+    def test_internal_url_labels_use_canonical_scheme(self):
+        self.assertEqual(
+            brand_ui_text('IDS_PERMISSIONS_BUBBLE_SETTINGS_EXTENSIONS_LINK',
+                          'brave://settings/extensions'),
+            'velmren://settings/extensions')
+        self.assertEqual(
+            brand_ui_text('IDS_SETTINGS_LEO_ASSISTANT_PRIVATE_IP_NOT_ALLOWED_INSTRUCTIONS',
+                          'Откройте BRAVE://flags/#brave-ai-chat-allow-private-ips. $1'),
+            'Откройте velmren://flags/#brave-ai-chat-allow-private-ips. $1')
+        self.assertEqual(brand_ui_text('IDS_SETTINGS_LINK', 'Brave://settings/'),
+                         'velmren://settings/')
+        self.assertEqual(
+            brand_ui_text('IDS_HELP', 'Brave Search: https://search.brave.com/; chrome-extension://id'),
+            'Brave Search: https://search.brave.com/; chrome-extension://id')
+
+    def test_attribution_exemptions_preserve_internal_url_text(self):
+        for name in ['IDS_LICENSE', 'IDS_IMPORT_BRAVE', 'IDS_P3A_NOTICE']:
+            with self.subTest(name=name):
+                text = 'Brave: brave://settings/'
+                self.assertEqual(brand_ui_text(name, text), text)
+
 
 if __name__ == '__main__':
     unittest.main()

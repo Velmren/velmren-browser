@@ -3,8 +3,12 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include <string_view>
+
 #include "base/path_service.h"
 #include "base/strings/pattern.h"
+#include "base/strings/strcat.h"
+#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "brave/components/brave_wallet/common/buildflags/buildflags.h"
 #include "brave/components/constants/brave_paths.h"
@@ -20,20 +24,31 @@
 #include "components/omnibox/browser/location_bar_model.h"
 #include "components/prefs/pref_service.h"
 #include "components/user_prefs/user_prefs.h"
+#include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
+#include "content/public/browser/render_frame_host.h"
 #include "content/public/common/url_constants.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/no_renderer_crashes_assertion.h"
+#include "content/public/test/test_navigation_observer.h"
 #include "net/dns/mock_host_resolver.h"
+#include "testing/gtest/include/gtest/gtest.h"
+#include "url/origin.h"
 
 #if BUILDFLAG(ENABLE_BRAVE_WALLET)
 #include "brave/components/brave_wallet/browser/pref_names.h"
 #endif
 
-class BraveSchemeLoadBrowserTest : public InProcessBrowserTest,
-                                   public TabStripModelObserver {
+class BraveSchemeLoadBrowserTest
+    : public InProcessBrowserTest,
+      public TabStripModelObserver,
+      public testing::WithParamInterface<const char*> {
  public:
+  std::string UIURL(std::string_view host_and_path) const {
+    return base::StrCat({GetParam(), "://", host_and_path});
+  }
+
   void SetUpOnMainThread() override {
     embedded_test_server()->ServeFilesFromDirectory(
         base::PathService::CheckedGet(brave::DIR_TEST_DATA));
@@ -73,7 +88,8 @@ class BraveSchemeLoadBrowserTest : public InProcessBrowserTest,
 
   bool NavigateToURLUntilLoadStop(const std::string& origin,
                                   const std::string& path) {
-    GURL url = embedded_test_server()->GetURL(origin, path);
+    GURL url = embedded_test_server()->GetURL(
+        origin, base::StrCat({path, "?scheme=", GetParam()}));
     return NavigateToURLUntilLoadStop(url);
   }
 
@@ -120,16 +136,17 @@ class BraveSchemeLoadBrowserTest : public InProcessBrowserTest,
     quit_closure_ = run_loop.QuitClosure();
 
     // Load url to private window.
-    NavigateParams params(
-        private_browser, GURL(url), ui::PAGE_TRANSITION_TYPED);
+    NavigateParams params(private_browser, GURL(url),
+                          ui::PAGE_TRANSITION_TYPED);
     Navigate(&params);
 
     run_loop.Run();
 
     browser()->tab_strip_model()->RemoveObserver(this);
 
-    EXPECT_EQ(url, base::UTF16ToUTF8(
-                       LocationBarModel::From(browser())->GetURLForDisplay()));
+    EXPECT_EQ(base::StrCat({"velmren", url.substr(url.find(':'))}),
+              base::UTF16ToUTF8(
+                  LocationBarModel::From(browser())->GetURLForDisplay()));
     EXPECT_EQ(2, browser()->tab_strip_model()->count());
     // Private window stays as initial state.
     EXPECT_EQ("about:blank",
@@ -181,7 +198,7 @@ class BraveSchemeLoadBrowserTest : public InProcessBrowserTest,
 };
 
 // Test whether brave page is not loaded from different host by window.open().
-IN_PROC_BROWSER_TEST_F(BraveSchemeLoadBrowserTest, NotAllowedToLoadTest) {
+IN_PROC_BROWSER_TEST_P(BraveSchemeLoadBrowserTest, NotAllowedToLoadTest) {
   EXPECT_TRUE(
       NavigateToURLUntilLoadStop("example.com", "/brave_scheme_load.html"));
   content::WebContentsConsoleObserver console_observer(active_contents());
@@ -195,7 +212,7 @@ IN_PROC_BROWSER_TEST_F(BraveSchemeLoadBrowserTest, NotAllowedToLoadTest) {
 }
 
 // Test whether brave page is not loaded from different host by window.open().
-IN_PROC_BROWSER_TEST_F(BraveSchemeLoadBrowserTest,
+IN_PROC_BROWSER_TEST_P(BraveSchemeLoadBrowserTest,
                        NotAllowedToLoadTestByWindowOpenWithNoOpener) {
   EXPECT_TRUE(
       NavigateToURLUntilLoadStop("example.com", "/brave_scheme_load.html"));
@@ -211,7 +228,7 @@ IN_PROC_BROWSER_TEST_F(BraveSchemeLoadBrowserTest,
 
 // Test whether brave page is not loaded from different host directly by
 // location.replace().
-IN_PROC_BROWSER_TEST_F(BraveSchemeLoadBrowserTest,
+IN_PROC_BROWSER_TEST_P(BraveSchemeLoadBrowserTest,
                        NotAllowedToDirectReplaceTest) {
   EXPECT_TRUE(
       NavigateToURLUntilLoadStop("example.com", "/brave_scheme_load.html"));
@@ -227,7 +244,7 @@ IN_PROC_BROWSER_TEST_F(BraveSchemeLoadBrowserTest,
 
 // Test whether brave page is not loaded from different host indirectly by
 // location.replace().
-IN_PROC_BROWSER_TEST_F(BraveSchemeLoadBrowserTest,
+IN_PROC_BROWSER_TEST_P(BraveSchemeLoadBrowserTest,
                        NotAllowedToIndirectReplaceTest) {
   EXPECT_TRUE(
       NavigateToURLUntilLoadStop("example.com", "/brave_scheme_load.html"));
@@ -243,7 +260,7 @@ IN_PROC_BROWSER_TEST_F(BraveSchemeLoadBrowserTest,
 }
 
 // Test whether brave page is not loaded by click.
-IN_PROC_BROWSER_TEST_F(BraveSchemeLoadBrowserTest, NotAllowedToBraveByClick) {
+IN_PROC_BROWSER_TEST_P(BraveSchemeLoadBrowserTest, NotAllowedToBraveByClick) {
   EXPECT_TRUE(
       NavigateToURLUntilLoadStop("example.com", "/brave_scheme_load.html"));
   content::WebContentsConsoleObserver console_observer(active_contents());
@@ -257,7 +274,7 @@ IN_PROC_BROWSER_TEST_F(BraveSchemeLoadBrowserTest, NotAllowedToBraveByClick) {
 }
 
 // Test whether brave page is not loaded by middle click.
-IN_PROC_BROWSER_TEST_F(BraveSchemeLoadBrowserTest,
+IN_PROC_BROWSER_TEST_P(BraveSchemeLoadBrowserTest,
                        NotAllowedToBraveByMiddleClick) {
   EXPECT_TRUE(
       NavigateToURLUntilLoadStop("example.com", "/brave_scheme_load.html"));
@@ -283,13 +300,13 @@ IN_PROC_BROWSER_TEST_F(BraveSchemeLoadBrowserTest,
 // chrome/browser/crash_recovery_browsertest.cc
 // This test is for the brave:// scheme. This is a regression test added with:
 // https://github.com/brave/brave-core/pull/2229)
-IN_PROC_BROWSER_TEST_F(BraveSchemeLoadBrowserTest, MAYBE_CrashURLTest) {
+IN_PROC_BROWSER_TEST_P(BraveSchemeLoadBrowserTest, MAYBE_CrashURLTest) {
   content::RenderProcessHostWatcher crash_observer(
       browser()->tab_strip_model()->GetActiveWebContents(),
       content::RenderProcessHostWatcher::WATCH_FOR_PROCESS_EXIT);
   content::ScopedAllowRendererCrashes allow_renderer_crashes(active_contents());
   browser()->OpenURL(
-      content::OpenURLParams(GURL("brave://crash"), content::Referrer(),
+      content::OpenURLParams(GURL(UIURL("crash")), content::Referrer(),
                              WindowOpenDisposition::CURRENT_TAB,
                              ui::PAGE_TRANSITION_TYPED, false),
       /*navigation_handle_callback=*/{});
@@ -303,12 +320,12 @@ IN_PROC_BROWSER_TEST_F(BraveSchemeLoadBrowserTest, MAYBE_CrashURLTest) {
 // chrome://settings is not allowed. When tyring to loading brave://settings in
 // private window, it should be loaded in normal window instead of private
 // window.
-IN_PROC_BROWSER_TEST_F(BraveSchemeLoadBrowserTest,
+IN_PROC_BROWSER_TEST_P(BraveSchemeLoadBrowserTest,
                        SettingsPageIsNotAllowedInPrivateWindow) {
-  TestURLIsNotLoadedInPrivateWindow("brave://settings");
+  TestURLIsNotLoadedInPrivateWindow(UIURL("settings"));
 }
 
-IN_PROC_BROWSER_TEST_F(BraveSchemeLoadBrowserTest,
+IN_PROC_BROWSER_TEST_P(BraveSchemeLoadBrowserTest,
                        RewardsPageIsNotAllowedInPrivateWindow) {
   // Check webui host with non chrome scheme is allowed to load in private
   // window. chrome scheme is used because brave scheme is already replaced with
@@ -316,39 +333,80 @@ IN_PROC_BROWSER_TEST_F(BraveSchemeLoadBrowserTest,
   // with TestURLIsNotLoadedInPrivateWindow().
   EXPECT_FALSE(IsURLAllowedInIncognito(GURL("chrome://rewards")));
   EXPECT_TRUE(IsURLAllowedInIncognito(GURL("http://rewards")));
-  TestURLIsNotLoadedInPrivateWindow("brave://rewards");
+  TestURLIsNotLoadedInPrivateWindow(UIURL("rewards"));
 }
 
 #if BUILDFLAG(ENABLE_BRAVE_WALLET)
-IN_PROC_BROWSER_TEST_F(BraveSchemeLoadBrowserTest,
+IN_PROC_BROWSER_TEST_P(BraveSchemeLoadBrowserTest,
                        WalletPageIsNotAllowedInPrivateWindow) {
   EXPECT_TRUE(IsURLAllowedInIncognito(GURL("http://wallet")));
-  TestURLIsNotLoadedInPrivateWindowOrRedirected("brave://wallet");
+  TestURLIsNotLoadedInPrivateWindowOrRedirected(UIURL("wallet"));
   prefs()->SetBoolean(brave_wallet::kBraveWalletPrivateWindowsEnabled, true);
   TestURLIsLoadedInPrivateWindow("chrome://wallet/crypto/onboarding/welcome");
 }
 
-IN_PROC_BROWSER_TEST_F(BraveSchemeLoadBrowserTest,
+IN_PROC_BROWSER_TEST_P(BraveSchemeLoadBrowserTest,
                        WalletPageIsNotAllowedInGuestWindow) {
-  TestURLIsNotLoadedInGuestWindow(GURL("brave://wallet"));
+  TestURLIsNotLoadedInGuestWindow(GURL(UIURL("wallet")));
 }
 #endif  // BUILDFLAG(ENABLE_BRAVE_WALLET)
 
-IN_PROC_BROWSER_TEST_F(BraveSchemeLoadBrowserTest,
+IN_PROC_BROWSER_TEST_P(BraveSchemeLoadBrowserTest,
                        BraveSyncPageIsNotAllowedInPrivateWindow) {
   EXPECT_FALSE(IsURLAllowedInIncognito(GURL("chrome://sync")));
   EXPECT_TRUE(IsURLAllowedInIncognito(GURL("http://sync")));
-  TestURLIsNotLoadedInPrivateWindow("brave://sync");
+  TestURLIsNotLoadedInPrivateWindow(UIURL("sync"));
 }
 
-IN_PROC_BROWSER_TEST_F(BraveSchemeLoadBrowserTest,
+IN_PROC_BROWSER_TEST_P(BraveSchemeLoadBrowserTest,
                        BraveWelcomePageIsNotAllowedInPrivateWindow) {
   EXPECT_FALSE(IsURLAllowedInIncognito(GURL("chrome://welcome")));
   EXPECT_TRUE(IsURLAllowedInIncognito(GURL("http://welcome")));
-  TestURLIsNotLoadedInPrivateWindow("brave://welcome");
+  TestURLIsNotLoadedInPrivateWindow(UIURL("welcome"));
 }
 
-IN_PROC_BROWSER_TEST_F(BraveSchemeLoadBrowserTest,
+IN_PROC_BROWSER_TEST_P(BraveSchemeLoadBrowserTest,
                        BraveWelcomePageIsNotAllowedInGuestWindow) {
-  TestURLIsNotLoadedInGuestWindow(GURL("brave://welcome"));
+  TestURLIsNotLoadedInGuestWindow(GURL(UIURL("welcome")));
 }
+
+IN_PROC_BROWSER_TEST_P(BraveSchemeLoadBrowserTest,
+                       NavigationReloadAndBackKeepChromeOrigin) {
+  const GURL expected_url("chrome://version/?identity=1#fragment");
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(
+      browser(), GURL(UIURL("version/?identity=1#fragment"))));
+  auto* contents = active_contents();
+  auto& controller = contents->GetController();
+  const auto expect_internal_origin = [&]() {
+    EXPECT_EQ(expected_url, contents->GetLastCommittedURL());
+    auto* entry = controller.GetLastCommittedEntry();
+    ASSERT_TRUE(entry);
+    EXPECT_EQ(expected_url, entry->GetVirtualURL());
+    EXPECT_EQ(
+        GURL("chrome://version/"),
+        contents->GetPrimaryMainFrame()->GetLastCommittedOrigin().GetURL());
+    EXPECT_TRUE(base::StartsWith(
+        LocationBarModel::From(browser())->GetURLForDisplay(), u"velmren://"));
+  };
+  expect_internal_origin();
+
+  {
+    content::TestNavigationObserver observer(contents);
+    controller.Reload(content::ReloadType::NORMAL, false);
+    observer.Wait();
+  }
+  expect_internal_origin();
+
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), GURL("about:blank")));
+  ASSERT_TRUE(controller.CanGoBack());
+  {
+    content::TestNavigationObserver observer(contents);
+    controller.GoBack();
+    observer.Wait();
+  }
+  expect_internal_origin();
+}
+
+INSTANTIATE_TEST_SUITE_P(AllUISchemes,
+                         BraveSchemeLoadBrowserTest,
+                         testing::Values("chrome", "brave", "velmren"));

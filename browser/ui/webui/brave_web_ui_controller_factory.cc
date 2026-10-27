@@ -31,6 +31,7 @@
 #include "components/optimization_guide/core/optimization_guide_features.h"
 #include "components/optimization_guide/optimization_guide_internals/webui/url_constants.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/common/url_constants.h"
 #include "content/public/common/url_utils.h"
 #include "url/gurl.h"
 
@@ -170,7 +171,8 @@ WebUIFactoryFunction GetWebUIFactoryFunction(WebUI* web_ui,
   //
   // This has a narrow scoper scope than content::HasWebUIScheme(url) which also
   // allows both `chrome-untrusted` and `chrome-devtools`.
-  DCHECK(!url.SchemeIs("brave"));
+  DCHECK(!url.SchemeIs(content::kBraveUIScheme) &&
+         !url.SchemeIs(content::kVelmrenUIScheme));
   if (!url.SchemeIs(content::kChromeUIScheme)) {
     return nullptr;
   }
