@@ -17,6 +17,7 @@
 #include "brave/components/brave_education/buildflags.h"
 #include "brave/components/constants/pref_names.h"
 #include "brave/components/p3a/pref_names.h"
+#include "brave/components/velmren/product_policy.h"
 #include "brave/components/web_discovery/buildflags/buildflags.h"
 #include "chrome/browser/metrics/metrics_reporting_state.h"
 #include "chrome/browser/themes/theme_service.h"
@@ -190,15 +191,19 @@ void WelcomePageHandler::SetWebDiscoveryEnabled(
 
 void WelcomePageHandler::SetP3AEnabled(bool enabled,
                                        SetP3AEnabledCallback callback) {
-  local_state_->SetBoolean(p3a::kP3AEnabled, enabled);
+  if (velmren::kTelemetryEnabled) {
+    local_state_->SetBoolean(p3a::kP3AEnabled, enabled);
+  }
   std::move(callback).Run();
 }
 
 void WelcomePageHandler::SetCrashReportsEnabled(
     bool enabled,
     SetCrashReportsEnabledCallback callback) {
-  ChangeMetricsReportingState(
-      enabled, metrics::ChangeMetricsReportingStateCalledFrom::kUiSettings);
+  if (velmren::kTelemetryEnabled) {
+    ChangeMetricsReportingState(
+        enabled, metrics::ChangeMetricsReportingStateCalledFrom::kUiSettings);
+  }
   std::move(callback).Run();
 }
 

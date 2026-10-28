@@ -24,6 +24,7 @@
 #include "brave/components/constants/pref_names.h"
 #include "brave/components/constants/webui_url_constants.h"
 #include "brave/components/p3a/pref_names.h"
+#include "brave/components/velmren/product_policy.h"
 #include "brave/components/web_discovery/buildflags/buildflags.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile.h"
@@ -147,7 +148,7 @@ BraveWelcomeUI::BraveWelcomeUI(content::WebUI* web_ui, std::string_view name)
   const bool is_jpn = country_id == country_codes::CountryId("JP");
   if (!profile->GetPrefs()->GetBoolean(
           brave_welcome_page::prefs::kHasSeenBraveWelcomePage)) {
-    if (is_jpn) {
+    if (is_jpn && velmren::kProductPromotionsEnabled) {
       base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
           FROM_HERE, base::BindOnce(&OpenJapanWelcomePage, profile),
           base::Seconds(3));
@@ -171,6 +172,9 @@ BraveWelcomeUI::BraveWelcomeUI(content::WebUI* web_ui, std::string_view name)
 
   // Add managed state information for welcome flow logic
   PrefService* local_state = g_browser_process->local_state();
+  source->AddBoolean("webDiscoveryFeatureEnabled",
+                     BUILDFLAG(ENABLE_WEB_DISCOVERY));
+  source->AddBoolean("telemetryFeatureEnabled", velmren::kTelemetryEnabled);
   source->AddBoolean(
       "isWebDiscoveryEnabledManaged",
 #if BUILDFLAG(ENABLE_WEB_DISCOVERY)

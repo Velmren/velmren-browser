@@ -19,6 +19,7 @@
 #include "brave/components/brave_education/buildflags.h"
 #include "brave/components/constants/pref_names.h"
 #include "brave/components/p3a/pref_names.h"
+#include "brave/components/velmren/product_policy.h"
 #include "brave/components/web_discovery/buildflags/buildflags.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/metrics/metrics_reporting_state.h"
@@ -193,6 +194,9 @@ void WelcomeDOMHandler::HandleOpenSettingsPage(const base::ListValue& args) {
 
 void WelcomeDOMHandler::HandleSetMetricsReportingEnabled(
     const base::ListValue& args) {
+  if (!velmren::kTelemetryEnabled) {
+    return;
+  }
   CHECK_EQ(args.size(), 1U);
   if (!args[0].is_bool()) {
     return;
@@ -262,5 +266,8 @@ void WelcomeDOMHandler::SetLocalStateBooleanEnabled(
 }
 
 void WelcomeDOMHandler::SetP3AEnabled(const base::ListValue& args) {
+  if (!velmren::kTelemetryEnabled) {
+    return;
+  }
   SetLocalStateBooleanEnabled(p3a::kP3AEnabled, args);
 }

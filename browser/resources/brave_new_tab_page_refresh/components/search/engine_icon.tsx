@@ -49,6 +49,7 @@ function getNamedIcon(engineHost: string) {
     case 'search.yahoo.com':
       return 'yahoo-color'
     case 'yandex.com':
+    case 'yandex.ru':
       return 'yandex-color'
     case 'www.ecosia.org':
       return 'ecosia-color'

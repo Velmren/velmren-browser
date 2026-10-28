@@ -81,32 +81,10 @@
       $i18n{searchEnginesSettingsDialogSubtitle}
     </div>
   </div>
-  <template is="dom-if" if="[[promotedEngine_]]">
-    <div slot="header" class="dialog-header">
-      <cr-radio-group selected="{{selectedEngineId_}}">
-        <cr-radio-button class="label-first" name="[[promotedEngine_.id]]">
-          <div class="search-engine">
-            <settings-search-engine-icon engine="[[promotedEngine_]]">
-            </settings-search-engine-icon>
-            <div id="name-description">
-              [[promotedEngine_.name]]
-              <div id="description">
-                $i18n{searchEngineListBraveSearchDescription}
-              </div>
-            </div>
-            <leo-label mode="default" color="primary">
-              $i18n{searchEngineListBraveSearchRecommended}
-            </leo-label>
-          </div>
-        </cr-radio-button>
-      </cr-radio-group>
-    </div>
-  </template>
   <div slot="body" class="dialog-body">
     <cr-radio-group selected="{{selectedEngineId_}}">
       <template is="dom-repeat" items="[[searchEngines]]">
-        <cr-radio-button class="label-first" name="[[item.id]]"
-                         hidden="[[isPromotedEngine_(item)]]">
+        <cr-radio-button class="label-first" name="[[item.id]]">
           <div class="search-engine">
             <settings-search-engine-icon engine="[[item]]">
             </settings-search-engine-icon>

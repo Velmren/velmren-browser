@@ -26,6 +26,7 @@
 #include "brave/components/constants/pref_names.h"
 #include "brave/components/constants/webui_url_constants.h"
 #include "brave/components/ntp_background_images/browser/features.h"
+#include "brave/components/search_engines/brave_prepopulated_engines.h"
 #include "brave/components/ntp_background_images/browser/ntp_custom_images_source.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile.h"
@@ -81,23 +82,15 @@ namespace {
 
 using regional_capabilities::RegionalCapabilitiesServiceFactory;
 
-constexpr char kBraveSearchHost[] = "search.brave.com";
-constexpr char kYahooSearchHost[] = "search.yahoo.co.jp";
-
 }  // namespace
 
 std::string_view GetSearchDefaultHost(
     regional_capabilities::RegionalCapabilitiesService* regional_capabilities) {
   CHECK(regional_capabilities);
-  regional_capabilities::CountryIdHolder country_id =
-      regional_capabilities->GetCountryId();
-  regional_capabilities::CountryIdHolder japan_country_id(
-      country_codes::CountryId("JP"));
-  if (country_id == japan_country_id) {
-    return kYahooSearchHost;
-  }
-
-  return kBraveSearchHost;
+  return regional_capabilities->GetRegionalDefaultEngine() ==
+                 TemplateURLPrepopulateData::PREPOPULATED_ENGINE_ID_YANDEX
+             ? "yandex.ru"
+             : "www.google.com";
 }
 
 NewTabPageInitializer::NewTabPageInitializer(content::WebUI& web_ui)

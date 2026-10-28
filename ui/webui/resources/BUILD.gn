@@ -641,12 +641,36 @@ if (enable_speedreader) {
   ]
 }
 
+# Keep product artwork separate from third-party service icons such as Search.
+velmren_icons = [
+  [
+    "velmren-icon-color.svg",
+    "logo.svg",
+  ],
+  [
+    "velmren-icon-monochrome.svg",
+    "logo-monochrome.svg",
+  ],
+]
+velmren_icon_names = []
+velmren_icon_deps = []
+foreach(icon, velmren_icons) {
+  icon_target = "velmren_" + string_replace(icon[0], ".svg", "")
+
+  copy(icon_target) {
+    sources = [ "//brave/app/theme/velmren/" + icon[1] ]
+    outputs = [ "$brave_resources_extra_grdps_path/icons/" + icon[0] ]
+  }
+  velmren_icon_names += [ icon[0] ]
+  velmren_icon_deps += [ ":" + icon_target ]
+}
+
 generate_grd("icons_grdp") {
   grd_prefix = "brave_icons"
   resource_path_prefix = "brave-icons"
   out_grd = "$brave_resources_extra_grdps_path/brave_icons_resources.grdp"
 
-  input_files = leo_icons_sources
+  input_files = leo_icons_sources + velmren_icon_names
   input_files_base_dir =
       rebase_path("$brave_resources_extra_grdps_path/icons/", root_build_dir)
 
@@ -692,4 +716,5 @@ copy("fonts_copy") {
 copy("icons_copy") {
   sources = rebase_path(leo_icons_sources, ".", leo_icons_base_path)
   outputs = [ "$brave_resources_extra_grdps_path/icons/{{source_file_part}}" ]
+  deps = velmren_icon_deps
 }

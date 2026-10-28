@@ -11,6 +11,8 @@ _LEGAL_IDS = ('COPYRIGHT', 'TERMS_OF_SERVICE', 'TERMS_OF_USE', 'PRIVACY_POLICY',
 
 def brand_ui_text(name, text):
     """Keep attribution and external URLs while branding browser UI text."""
+    if name == 'IDS_SEARCH_ENGINES_STARTER_PACK_ASK_BRAVE_SEARCH_NAME':
+        return 'Brave Search'
     if (any(part in name for part in _LEGAL_IDS)
             or ('IMPORT' in name and 'BRAVE' in name)
             or any(part in name for part in ('P3A', 'USAGE_PING'))):

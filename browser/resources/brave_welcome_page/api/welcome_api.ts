@@ -94,6 +94,7 @@ interface ApiInit {
     addImportStatusListener: (fn: (status: ImportDataStatus) => void) => void
   }
   isCrashReportingPrefManaged: boolean
+  telemetryFeatureEnabled: boolean
   isP3APrefManaged: boolean
   isWebDiscoveryPrefManaged: boolean
   webDiscoveryFeatureEnabled: boolean
@@ -150,6 +151,7 @@ function defaultInit(): ApiInit {
       'isCrashReportingPrefManaged',
     ),
     isP3APrefManaged: loadTimeData.getBoolean('isP3APrefManaged'),
+    telemetryFeatureEnabled: loadTimeData.getBoolean('telemetryFeatureEnabled'),
     isWebDiscoveryPrefManaged: loadTimeData.getBoolean(
       'isWebDiscoveryPrefManaged',
     ),
@@ -241,6 +243,7 @@ export function createWelcomeApi(init = defaultInit()) {
       importDataStatus: state<ImportDataStatus>(''),
       isCrashReportingPrefManaged: state(init.isCrashReportingPrefManaged),
       isP3APrefManaged: state(init.isP3APrefManaged),
+      telemetryFeatureEnabled: state(init.telemetryFeatureEnabled),
       isWebDiscoveryPrefManaged: state(init.isWebDiscoveryPrefManaged),
       webDiscoveryFeatureEnabled: state(init.webDiscoveryFeatureEnabled),
       aiChatFeatureEnabled: state(init.aiChatFeatureEnabled),

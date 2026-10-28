@@ -68,7 +68,7 @@ export function ImportStatusView(props: Props) {
           <Icon name='carat-right' />
         </div>
         <div className='brave-icon'>
-          <BrowserIcon name='Brave' />
+          <Icon name='velmren-icon-color' />
           {progressIndicator()}
         </div>
       </div>

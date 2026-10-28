@@ -26,7 +26,7 @@ namespace TemplateURLPrepopulateData {
 // For more info, see:
 // ComputeMergeEnginesRequirements in components/search_engines/util.cc;
 
-inline constexpr int kBraveCurrentDataVersion = 35;
+inline constexpr int kBraveCurrentDataVersion = 36;
 
 // DO NOT CHANGE THIS ONE. Used for backfilling kBraveDefaultSearchVersion.
 inline constexpr int kBraveFirstTrackedDataVersion = 6;

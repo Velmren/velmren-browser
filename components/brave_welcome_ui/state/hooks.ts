@@ -89,7 +89,8 @@ export function useViewTypeTransition(currentViewType: ViewType | undefined) : V
     // Skip HelpWDP only if web discovery is managed
     const isWebDiscoveryEnabledManaged =
         loadTimeData.getBoolean('isWebDiscoveryEnabledManaged')
-    const nextAfterImport = isWebDiscoveryEnabledManaged ?
+    const nextAfterImport = isWebDiscoveryEnabledManaged ||
+        !loadTimeData.getBoolean('webDiscoveryFeatureEnabled') ?
         ViewType.HelpImprove : ViewType.HelpWDP
     // </if>
 

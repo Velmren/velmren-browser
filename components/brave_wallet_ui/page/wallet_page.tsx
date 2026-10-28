@@ -13,7 +13,7 @@ import { BrowserRouter } from 'react-router-dom'
 import StyledComponentsProvider from '$web-common/StyledComponentsProvider'
 
 // assets
-import faveiconUrl from '../assets/svg-icons/brave-icon.svg'
+import faveiconUrl from '../../../app/theme/velmren/logo.svg'
 
 // utils
 import { loadTimeData } from '../../common/loadTimeData'

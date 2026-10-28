@@ -16,9 +16,9 @@ import WebAnimationPlayer from '../../api/web_animation_player'
 import DataContext from '../../state/context'
 import { shouldPlayAnimations, useViewTypeTransition } from '../../state/hooks'
 
-// Logo is copied at build time based on branding (see BUILD.gn)
-import braveLogoUrl
-  from 'gen/brave/components/brave_welcome_ui/welcome_logo@2x.webp'
+// Use the same source artwork as the installed browser.
+import browserLogoUrl
+  from 'gen/brave/components/brave_welcome_ui/welcome_logo.svg'
 
 function Welcome () {
   const { viewType, setViewType, scenes } = React.useContext(DataContext)
@@ -80,7 +80,7 @@ function Welcome () {
       // </if>
     >
       <div className="view-logo-box">
-        <img src={braveLogoUrl} />
+        <img src={browserLogoUrl} alt='' />
       </div>
       <div className={classnames({ 'view-content': true, 'initial': shouldPlayAnimations })}>
         <div className="view-header-box">

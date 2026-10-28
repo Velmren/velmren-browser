@@ -96,7 +96,7 @@ export function ConnectAccount() {
     if (provider === 'solana') {
       return (
         <>
-          <Icon name='brave-icon-release-color' />
+          <Icon name='velmren-icon-color' />
           <div className='new-badge'>{getString('newBadgeText')}</div>
         </>
       )

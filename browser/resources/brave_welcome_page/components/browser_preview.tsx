@@ -80,7 +80,7 @@ export function BrowserPreview(props: BrowserPreviewProps) {
 function ActiveTab() {
   return (
     <div className='active-tab'>
-      <Icon name='social-brave-release-favicon-fullheight-color' />
+      <Icon name='velmren-icon-color' />
       <span className='tab-title'>{getString('WELCOME_PAGE_TITLE')}</span>
       <Icon name='close' />
     </div>
@@ -112,7 +112,7 @@ function AddressBar() {
           {getString('WELCOME_PAGE_PREVIEW_ADDRESS_BAR_TEXT')}
         </span>
         <div className='omnibox-button'>
-          <Icon name='social-brave-release-favicon-fullheight-color' />
+          <Icon name='velmren-icon-monochrome' />
         </div>
       </div>
       <div className='toolbar-button'>

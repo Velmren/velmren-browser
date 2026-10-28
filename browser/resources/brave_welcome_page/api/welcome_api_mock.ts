@@ -279,6 +279,7 @@ export function createWelcomeApiMock(): WelcomeApi {
     },
     isCrashReportingPrefManaged: false,
     isP3APrefManaged: false,
+    telemetryFeatureEnabled: true,
     isWebDiscoveryPrefManaged: false,
     webDiscoveryFeatureEnabled: true,
     aiChatFeatureEnabled: true,

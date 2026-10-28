@@ -16,7 +16,6 @@ import type {CrDialogElement} from 'chrome://resources/cr_elements/cr_dialog/cr_
 import {WebUiListenerMixin} from 'chrome://resources/cr_elements/web_ui_listener_mixin.js'
 import {assert} from 'chrome://resources/js/assert.js'
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js'
-import {loadTimeData} from '../i18n_setup.js'
 
 import type {SearchEngine, SearchEnginesBrowserProxy} from '../search_page/search_engines_browser_proxy.js'
 import {ChoiceMadeLocation, SearchEnginesBrowserProxyImpl} from '../search_page/search_engines_browser_proxy.js'
@@ -79,19 +78,11 @@ export class SettingsNormalSearchEngineListDialogElement extends
         notify: true,
       },
 
-      /**
-       * Promoted search engine
-       */
-       promotedEngine_: {
-         type: Object,
-         computed: 'computePromotedEngine_(searchEngines)',
-       },
     }
   }
 
   declare searchEngines: SearchEngine[]
 
-  private declare promotedEngine_: SearchEngine|undefined
   private declare selectedEngineId_: string
   private declare showSaveGuestChoice_: boolean
   private declare saveGuestChoice_: boolean|null
@@ -145,22 +136,6 @@ export class SettingsNormalSearchEngineListDialogElement extends
     return saveGuestChoice !== null
   }
 
-  private isPromotedEngine_(engine: SearchEngine): boolean {
-    return this.promotedEngine_ === engine
-  }
-
-  private isBraveSearchEngine_(engine: SearchEngine): boolean {
-    return engine.name === loadTimeData.getString('braveSearchEngineName')
-        && engine.isPrepopulated === true
-  }
-
-  private computePromotedEngine_(
-      searchEngines: Array<SearchEngine>): SearchEngine|undefined {
-    if (loadTimeData.getBoolean('isLocaleJapan') || !searchEngines?.length) {
-      return undefined
-    }
-    return searchEngines.find(this.isBraveSearchEngine_)
-  }
 }
 
 declare global {

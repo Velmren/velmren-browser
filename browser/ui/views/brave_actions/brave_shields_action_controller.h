@@ -10,6 +10,7 @@
 #include <optional>
 
 #include "base/functional/callback.h"
+#include "base/gtest_prod_util.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/raw_ref.h"
 #include "brave/browser/brave_shields/brave_shields_tab_helper.h"
@@ -83,6 +84,9 @@ class BraveShieldsActionController
   Profile* profile() { return &profile_.get(); }
 
  private:
+  FRIEND_TEST_ALL_PREFIXES(BraveLocationBarModelDelegateBrowserTest,
+                           ShieldsUseProductArtwork);
+
   bool IsPageInReaderMode(content::WebContents* web_contents) const;
   bool ShouldShowBubbleForContents(content::WebContents* web_contents) const;
   void ShowBubble(GURL webui_url);

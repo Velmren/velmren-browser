@@ -281,41 +281,41 @@ TEST_F(BraveTemplateURLPrepopulateDataTest, ProvidersFromPrepopulated) {
 // Verifies default search provider for locale
 TEST_F(BraveTemplateURLPrepopulateDataTest,
        DefaultSearchProvidersForArgentina) {
-  CheckForCountry('A', 'R', PREPOPULATED_ENGINE_ID_BRAVE);
+  CheckForCountry('A', 'R', PREPOPULATED_ENGINE_ID_GOOGLE);
 }
 
 TEST_F(BraveTemplateURLPrepopulateDataTest, DefaultSearchProvidersForIndia) {
-  CheckForCountry('I', 'N', PREPOPULATED_ENGINE_ID_BRAVE);
+  CheckForCountry('I', 'N', PREPOPULATED_ENGINE_ID_GOOGLE);
 }
 
 TEST_F(BraveTemplateURLPrepopulateDataTest, DefaultSearchProvidersForBrazil) {
-  CheckForCountry('B', 'R', PREPOPULATED_ENGINE_ID_BRAVE);
+  CheckForCountry('B', 'R', PREPOPULATED_ENGINE_ID_GOOGLE);
 }
 
 TEST_F(BraveTemplateURLPrepopulateDataTest, DefaultSearchProvidersForUSA) {
-  CheckForCountry('U', 'S', PREPOPULATED_ENGINE_ID_BRAVE);
+  CheckForCountry('U', 'S', PREPOPULATED_ENGINE_ID_GOOGLE);
 }
 
 TEST_F(BraveTemplateURLPrepopulateDataTest, DefaultSearchProvidersForGermany) {
-  CheckForCountry('D', 'E', PREPOPULATED_ENGINE_ID_BRAVE);
+  CheckForCountry('D', 'E', PREPOPULATED_ENGINE_ID_GOOGLE);
 }
 
 TEST_F(BraveTemplateURLPrepopulateDataTest, DefaultSearchProvidersForFrance) {
-  CheckForCountry('F', 'R', PREPOPULATED_ENGINE_ID_BRAVE);
+  CheckForCountry('F', 'R', PREPOPULATED_ENGINE_ID_GOOGLE);
 }
 
 TEST_F(BraveTemplateURLPrepopulateDataTest,
        DefaultSearchProvidersForGreatBritain) {
-  CheckForCountry('G', 'B', PREPOPULATED_ENGINE_ID_BRAVE);
+  CheckForCountry('G', 'B', PREPOPULATED_ENGINE_ID_GOOGLE);
 }
 
 TEST_F(BraveTemplateURLPrepopulateDataTest, DefaultSearchProvidersForCanada) {
-  CheckForCountry('C', 'A', PREPOPULATED_ENGINE_ID_BRAVE);
+  CheckForCountry('C', 'A', PREPOPULATED_ENGINE_ID_GOOGLE);
 }
 
 TEST_F(BraveTemplateURLPrepopulateDataTest,
        DefaultSearchProvidersForAustralia) {
-  CheckForCountry('A', 'U', PREPOPULATED_ENGINE_ID_BRAVE);
+  CheckForCountry('A', 'U', PREPOPULATED_ENGINE_ID_GOOGLE);
 }
 
 TEST_F(BraveTemplateURLPrepopulateDataTest,
@@ -328,45 +328,45 @@ TEST_F(BraveTemplateURLPrepopulateDataTest, DefaultSearchProvidersForIreland) {
 }
 
 TEST_F(BraveTemplateURLPrepopulateDataTest, DefaultSearchProvidersForAustria) {
-  CheckForCountry('A', 'T', PREPOPULATED_ENGINE_ID_BRAVE);
+  CheckForCountry('A', 'T', PREPOPULATED_ENGINE_ID_GOOGLE);
 }
 
 TEST_F(BraveTemplateURLPrepopulateDataTest, DefaultSearchProvidersForSpain) {
-  CheckForCountry('E', 'S', PREPOPULATED_ENGINE_ID_BRAVE);
+  CheckForCountry('E', 'S', PREPOPULATED_ENGINE_ID_GOOGLE);
 }
 
 TEST_F(BraveTemplateURLPrepopulateDataTest, DefaultSearchProvidersForMexico) {
-  CheckForCountry('M', 'X', PREPOPULATED_ENGINE_ID_BRAVE);
+  CheckForCountry('M', 'X', PREPOPULATED_ENGINE_ID_GOOGLE);
 }
 
 TEST_F(BraveTemplateURLPrepopulateDataTest,
        DefaultSearchProvidersForRepublicOfArmenia) {
-  CheckForCountry('A', 'M', PREPOPULATED_ENGINE_ID_YANDEX);
+  CheckForCountry('A', 'M', PREPOPULATED_ENGINE_ID_GOOGLE);
 }
 
 TEST_F(BraveTemplateURLPrepopulateDataTest,
        DefaultSearchProvidersForRepublicOfAzerbaijan) {
-  CheckForCountry('A', 'Z', PREPOPULATED_ENGINE_ID_YANDEX);
+  CheckForCountry('A', 'Z', PREPOPULATED_ENGINE_ID_GOOGLE);
 }
 
 TEST_F(BraveTemplateURLPrepopulateDataTest,
        DefaultSearchProvidersForRepublicOfBelarus) {
-  CheckForCountry('B', 'Y', PREPOPULATED_ENGINE_ID_YANDEX);
+  CheckForCountry('B', 'Y', PREPOPULATED_ENGINE_ID_GOOGLE);
 }
 
 TEST_F(BraveTemplateURLPrepopulateDataTest,
        DefaultSearchProvidersForKyrgyzRepublic) {
-  CheckForCountry('K', 'G', PREPOPULATED_ENGINE_ID_YANDEX);
+  CheckForCountry('K', 'G', PREPOPULATED_ENGINE_ID_GOOGLE);
 }
 
 TEST_F(BraveTemplateURLPrepopulateDataTest,
        DefaultSearchProvidersForRepublicOfKazakhstan) {
-  CheckForCountry('K', 'Z', PREPOPULATED_ENGINE_ID_YANDEX);
+  CheckForCountry('K', 'Z', PREPOPULATED_ENGINE_ID_GOOGLE);
 }
 
 TEST_F(BraveTemplateURLPrepopulateDataTest,
        DefaultSearchProvidersForRepublicOfMoldova) {
-  CheckForCountry('M', 'D', PREPOPULATED_ENGINE_ID_YANDEX);
+  CheckForCountry('M', 'D', PREPOPULATED_ENGINE_ID_GOOGLE);
 }
 
 TEST_F(BraveTemplateURLPrepopulateDataTest,
@@ -376,24 +376,24 @@ TEST_F(BraveTemplateURLPrepopulateDataTest,
 
 TEST_F(BraveTemplateURLPrepopulateDataTest,
        DefaultSearchProvidersForRepublicOfTajikistan) {
-  CheckForCountry('T', 'J', PREPOPULATED_ENGINE_ID_YANDEX);
+  CheckForCountry('T', 'J', PREPOPULATED_ENGINE_ID_GOOGLE);
 }
 
 TEST_F(BraveTemplateURLPrepopulateDataTest,
        DefaultSearchProvidersForTurkmenistan) {
-  CheckForCountry('T', 'M', PREPOPULATED_ENGINE_ID_YANDEX);
+  CheckForCountry('T', 'M', PREPOPULATED_ENGINE_ID_GOOGLE);
 }
 
 TEST_F(BraveTemplateURLPrepopulateDataTest,
        DefaultSearchProvidersForRepublicOfUzbekistan) {
-  CheckForCountry('U', 'Z', PREPOPULATED_ENGINE_ID_YANDEX);
+  CheckForCountry('U', 'Z', PREPOPULATED_ENGINE_ID_GOOGLE);
 }
 
 TEST_F(BraveTemplateURLPrepopulateDataTest,
        DefaultSearchProvidersForSouthKorea) {
-  CheckForCountry('K', 'R', PREPOPULATED_ENGINE_ID_NAVER);
+  CheckForCountry('K', 'R', PREPOPULATED_ENGINE_ID_GOOGLE);
 }
 
 TEST_F(BraveTemplateURLPrepopulateDataTest, DefaultSearchProvidersForItaly) {
-  CheckForCountry('I', 'T', PREPOPULATED_ENGINE_ID_BRAVE);
+  CheckForCountry('I', 'T', PREPOPULATED_ENGINE_ID_GOOGLE);
 }

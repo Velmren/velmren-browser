@@ -6,7 +6,7 @@
 import * as React from 'react'
 
 // Images
-import BraveIcon from '../../../assets/svg-icons/brave-icon.svg'
+import BraveIcon from '../../../../../app/theme/velmren/logo.svg'
 import PlaceholderIcon from '../../../assets/svg-icons/nft-placeholder.svg'
 
 // Types

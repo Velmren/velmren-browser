@@ -3,6 +3,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include <string_view>
 #include <tuple>
 #include <vector>
 
@@ -15,6 +16,7 @@
 #include "brave/browser/search_engines/search_engine_provider_service_factory.h"
 #include "brave/browser/search_engines/search_engine_provider_util.h"
 #include "brave/browser/ui/browser_commands.h"
+#include "brave/browser/ui/webui/brave_new_tab_page_refresh/new_tab_page_initializer.h"
 #include "brave/components/constants/pref_names.h"
 #include "brave/components/l10n/common/test/scoped_default_locale.h"
 #include "brave/components/search_engines/brave_prepopulated_engines.h"
@@ -80,14 +82,15 @@ TemplateURLData CreateTestSearchEngine() {
   return result;
 }
 
-std::string GetBraveSearchProviderSyncGUID(Profile* profile) {
+std::string GetRegionalSearchProviderSyncGUID(Profile* profile) {
   CHECK(profile);
   auto data = TemplateURLPrepopulateData::GetPrepopulatedEngine(
       *profile->GetPrefs(),
       regional_capabilities::RegionalCapabilitiesServiceFactory::GetForProfile(
           profile)
           ->GetRegionalPrepopulatedEngines(),
-      TemplateURLPrepopulateData::PREPOPULATED_ENGINE_ID_BRAVE);
+      regional_capabilities::RegionalCapabilitiesServiceFactory::GetForProfile(
+          profile)->GetRegionalDefaultEngine());
   DCHECK(data);
   return data->sync_guid;
 }
@@ -109,7 +112,7 @@ IN_PROC_BROWSER_TEST_F(SearchEngineProviderServiceTest,
   auto* service = TemplateURLServiceFactory::GetForProfile(profile);
   EXPECT_TRUE(VerifyTemplateURLServiceLoad(service));
 
-  EXPECT_EQ(GetBraveSearchProviderSyncGUID(profile),
+  EXPECT_EQ(GetRegionalSearchProviderSyncGUID(profile),
             profile->GetPrefs()->GetString(
                 prefs::kSyncedDefaultPrivateSearchProviderGUID));
 }
@@ -156,10 +159,8 @@ IN_PROC_BROWSER_TEST_F(SearchEngineProviderServiceTest,
       service->GetDefaultSearchProvider()->prepopulate_id();
   const int initial_private_provider_id =
       incognito_service->GetDefaultSearchProvider()->prepopulate_id();
-  // Check Brave Search is default provider for private window.
-  EXPECT_EQ(static_cast<int>(
-                TemplateURLPrepopulateData::PREPOPULATED_ENGINE_ID_BRAVE),
-            initial_private_provider_id);
+  // Both windows initially use the same regional default.
+  EXPECT_EQ(initial_normal_provider_id, initial_private_provider_id);
 
   // Check changing normal provider doesn't affect private provider.
   TemplateURLData test_data = CreateTestSearchEngine();
@@ -200,7 +201,7 @@ IN_PROC_BROWSER_TEST_F(SearchEngineProviderServiceTest,
   // properly.
   profile->GetPrefs()->SetString(prefs::kSyncedDefaultPrivateSearchProviderGUID,
                                  "invalid_id");
-  EXPECT_EQ(GetBraveSearchProviderSyncGUID(profile),
+  EXPECT_EQ(GetRegionalSearchProviderSyncGUID(profile),
             profile->GetPrefs()->GetString(
                 prefs::kSyncedDefaultPrivateSearchProviderGUID));
   EXPECT_EQ(initial_private_provider_id,
@@ -282,75 +283,66 @@ INSTANTIATE_TEST_SUITE_P(
         {"ko_KR", true, false},
         {"ko_KR", false, false}}));
 
-class MigrateSearchEnginePrefsInJPTest : public InProcessBrowserTest {
+class VelmrenRegionalSearchTest
+    : public InProcessBrowserTest,
+      public testing::WithParamInterface<const char*> {
  public:
-  MigrateSearchEnginePrefsInJPTest() = default;
-  ~MigrateSearchEnginePrefsInJPTest() override = default;
-
   void SetUpCommandLine(base::CommandLine* command_line) override {
     InProcessBrowserTest::SetUpCommandLine(command_line);
-
-    command_line->AppendSwitchASCII(switches::kSearchEngineChoiceCountry, "JP");
+    command_line->AppendSwitchASCII(switches::kSearchEngineChoiceCountry,
+                                    GetParam());
   }
-
-  TemplateURLService* service() {
-    return TemplateURLServiceFactory::GetForProfile(browser()->GetProfile());
-  }
-
-  PrefService* prefs() { return browser()->GetProfile()->GetPrefs(); }
-
- private:
-  const brave_l10n::test::ScopedDefaultLocale default_locale{"ja_JP"};
 };
 
-IN_PROC_BROWSER_TEST_F(MigrateSearchEnginePrefsInJPTest,
-                       PRE_PRE_DefaultSearchProviderUpdateTest) {
-  EXPECT_TRUE(VerifyTemplateURLServiceLoad(service()));
-
-  // To simulate existing user at next launch, set 31
-  // as we set yahoo as a default in jp at 31.
-  // At the next launch, default provider will be yahoo with this setting.
-  prefs()->SetInteger(prefs::kBraveDefaultSearchVersion, 31);
-
-  // To run migration code again at the next launch.
-  prefs()->ClearPref(kMigratedSearchDefaultInJP);
-  prefs()->SetBoolean(prefs::kSearchSuggestEnabled, true);
+IN_PROC_BROWSER_TEST_P(VelmrenRegionalSearchTest, DefaultsAndAlternatives) {
+  auto* profile = browser()->GetProfile();
+  auto* service = TemplateURLServiceFactory::GetForProfile(profile);
+  ASSERT_TRUE(VerifyTemplateURLServiceLoad(service));
+  const bool yandex_default = std::string_view(GetParam()) == "RU";
+  const int expected = yandex_default
+      ? TemplateURLPrepopulateData::PREPOPULATED_ENGINE_ID_YANDEX
+      : TemplateURLPrepopulateData::PREPOPULATED_ENGINE_ID_GOOGLE;
+  EXPECT_EQ(expected, service->GetDefaultSearchProvider()->prepopulate_id());
+  auto private_data = TemplateURLDataFromDictionary(profile->GetPrefs()->GetDict(
+      prefs::kSyncedDefaultPrivateSearchProviderData));
+  ASSERT_TRUE(private_data);
+  EXPECT_EQ(expected, private_data->prepopulate_id);
+  auto* regional =
+      regional_capabilities::RegionalCapabilitiesServiceFactory::GetForProfile(
+          profile);
+  EXPECT_EQ(yandex_default ? "yandex.ru" : "www.google.com",
+            brave_new_tab_page_refresh::GetSearchDefaultHost(regional));
+  auto* yandex = service->GetTemplateURLForHost("yandex.ru");
+  ASSERT_TRUE(yandex);
+  EXPECT_EQ("yandex.ru",
+            yandex->GenerateSearchURL(service->search_terms_data(), u"test")
+                .host());
+  EXPECT_EQ(std::string::npos, yandex->url().find("clid="));
 }
 
-// To verify migration code doesn't touch search suggestions if current provider
-// is yahoo jp.
-IN_PROC_BROWSER_TEST_F(MigrateSearchEnginePrefsInJPTest,
-                       PRE_DefaultSearchProviderUpdateTest) {
-  EXPECT_TRUE(VerifyTemplateURLServiceLoad(service()));
-
-  const int provider_id =
-      service()->GetDefaultSearchProvider()->prepopulate_id();
-  EXPECT_EQ(provider_id,
-            static_cast<int>(
-                TemplateURLPrepopulateData::PREPOPULATED_ENGINE_ID_YAHOO_JP));
-  EXPECT_TRUE(prefs()->GetBoolean(prefs::kSearchSuggestEnabled));
-
-  // To simulate existing user at next launch, set older version than 31
-  // as we set yahoo as a default in jp at 31.
-  // At the next launch, default provider will be non-yahoo by setting old
-  // version number.
-  prefs()->SetInteger(prefs::kBraveDefaultSearchVersion, 30);
-
-  // To make migration code run at the next launch, clear related prefs.
-  prefs()->ClearPref(kMigratedSearchDefaultInJP);
+IN_PROC_BROWSER_TEST_P(VelmrenRegionalSearchTest, PRE_PreservesUserChoices) {
+  auto* profile = browser()->GetProfile();
+  auto* service = TemplateURLServiceFactory::GetForProfile(profile);
+  ASSERT_TRUE(VerifyTemplateURLServiceLoad(service));
+  auto* custom = service->Add(std::make_unique<TemplateURL>(CreateTestSearchEngine()));
+  service->SetUserSelectedDefaultSearchProvider(custom);
+  profile->GetPrefs()->SetString(prefs::kSyncedDefaultPrivateSearchProviderGUID,
+                                 custom->sync_guid());
 }
 
-IN_PROC_BROWSER_TEST_F(MigrateSearchEnginePrefsInJPTest,
-                       DefaultSearchProviderUpdateTest) {
-  EXPECT_TRUE(VerifyTemplateURLServiceLoad(service()));
-
-  const int provider_id =
-      service()->GetDefaultSearchProvider()->prepopulate_id();
-  EXPECT_EQ(provider_id,
-            static_cast<int>(
-                TemplateURLPrepopulateData::PREPOPULATED_ENGINE_ID_YAHOO_JP));
-  EXPECT_FALSE(prefs()->GetBoolean(prefs::kSearchSuggestEnabled));
+IN_PROC_BROWSER_TEST_P(VelmrenRegionalSearchTest, PreservesUserChoices) {
+  auto* profile = browser()->GetProfile();
+  auto* service = TemplateURLServiceFactory::GetForProfile(profile);
+  ASSERT_TRUE(VerifyTemplateURLServiceLoad(service));
+  EXPECT_EQ(u"test.com", service->GetDefaultSearchProvider()->keyword());
+  auto private_data = TemplateURLDataFromDictionary(profile->GetPrefs()->GetDict(
+      prefs::kSyncedDefaultPrivateSearchProviderData));
+  ASSERT_TRUE(private_data);
+  EXPECT_EQ(u"test.com", private_data->keyword());
 }
+
+INSTANTIATE_TEST_SUITE_P(Regions, VelmrenRegionalSearchTest,
+                        testing::Values("RU", "BY", "KZ", "US", "JP", "DE"));
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 
@@ -459,11 +451,9 @@ IN_PROC_BROWSER_TEST_F(ExtensionBrowserTest,
   UnloadExtension(extension->id());
   EXPECT_EQ(default_provider, url_service->GetDefaultSearchProvider());
 
-  // Check Brave Search is back to as a default provider for private window
-  // after unloading extension.
+  // Unloading the extension restores the regional private default.
   current_incognito_dse = incognito_url_service->GetDefaultSearchProvider();
-  EXPECT_EQ(static_cast<int>(
-                TemplateURLPrepopulateData::PREPOPULATED_ENGINE_ID_BRAVE),
+  EXPECT_EQ(default_provider->prepopulate_id(),
             current_incognito_dse->prepopulate_id());
   EXPECT_EQ(TemplateURL::NORMAL, current_incognito_dse->type());
 }

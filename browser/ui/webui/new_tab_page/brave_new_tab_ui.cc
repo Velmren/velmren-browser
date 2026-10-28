@@ -138,9 +138,13 @@ BraveNewTabUI::BraveNewTabUI(
   source->AddBoolean(
       "featureFlagSearchWidget",
       base::FeatureList::IsEnabled(features::kBraveNtpSearchWidget));
-  source->AddString(
-      "searchWidgetDefaultHost",
-      brave_new_tab_page_refresh::GetSearchDefaultHost(regional_capabilities_));
+  const auto search_default_host =
+      brave_new_tab_page_refresh::GetSearchDefaultHost(regional_capabilities_);
+  // The legacy NTP represents Google's unresolved URL template by an empty host.
+  source->AddString("searchWidgetDefaultHost",
+                    search_default_host == "www.google.com"
+                        ? ""
+                        : search_default_host);
 
   source->AddString("newTabTakeoverLearnMoreLinkUrl",
                     ntp_background_images::kNewTabTakeoverLearnMoreLinkUrl);

@@ -136,7 +136,7 @@ export const BackgroundGradientBottomLayer = styled.div`
 `
 
 export const BraveIcon = styled(Icon).attrs({
-  name: 'brave-icon-release-color',
+  name: 'velmren-icon-color',
 })`
   --leo-icon-size: 20px;
 `

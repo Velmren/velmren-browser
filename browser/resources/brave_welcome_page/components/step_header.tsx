@@ -9,7 +9,7 @@ import Icon from '@brave/leo/react/icon'
 export function StepHeader() {
   return (
     <div className='step-header'>
-      <Icon name='social-brave-release-favicon-fullheight-color' />
+      <Icon name='velmren-icon-color' />
     </div>
   )
 }

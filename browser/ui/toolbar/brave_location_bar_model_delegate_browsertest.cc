@@ -8,13 +8,22 @@
 #include "base/test/scoped_feature_list.h"
 #include "brave/browser/brave_shields/brave_shields_tab_helper.h"
 #include "brave/browser/ui/page_info/features.h"
+#include "brave/browser/ui/views/brave_actions/brave_shields_action_controller.h"
 #include "brave/components/vector_icons/vector_icons.h"
+#include "brave/ui/color/nala/nala_color_id.h"
+#include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_location_bar_model_delegate.h"
+#include "chrome/browser/ui/color/chrome_color_id.h"
+#include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
+#include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test.h"
 #include "net/dns/mock_host_resolver.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
+#include "ui/color/color_provider.h"
+#include "ui/gfx/image/image_unittest_util.h"
+#include "ui/gfx/paint_vector_icon.h"
 
 using security_state::SecurityLevel;
 
@@ -81,6 +90,32 @@ class BraveLocationBarModelDelegateBrowserTest : public InProcessBrowserTest {
  protected:
   std::unique_ptr<MockBraveLocationBarModelDelegate> delegate_;
 };
+
+IN_PROC_BROWSER_TEST_F(BraveLocationBarModelDelegateBrowserTest,
+                       ShieldsUseProductArtwork) {
+  BraveShieldsActionController controller(browser(), {});
+  const auto& colors = GetActiveWebContents()->GetColorProvider();
+  const auto enabled = controller.GetIconImage(true);
+  const auto disabled = controller.GetIconImage(false);
+  const auto expected_enabled = gfx::CreateVectorIcon(
+      kLeoBraveIconOnlyFaceIcon, enabled.width(),
+      colors.GetColor(kColorOmniboxResultsIcon));
+  const auto expected_disabled = gfx::CreateVectorIcon(
+      kLeoBraveIconOnlyFaceDisabledIcon, disabled.width(),
+      colors.GetColor(nala::kColorIconDisabled));
+  EXPECT_TRUE(gfx::test::AreBitmapsEqual(*enabled.bitmap(),
+                                       *expected_enabled.bitmap()));
+  EXPECT_TRUE(gfx::test::AreBitmapsEqual(*disabled.bitmap(),
+                                       *expected_disabled.bitmap()));
+  EXPECT_FALSE(gfx::test::AreBitmapsEqual(*enabled.bitmap(), *disabled.bitmap()));
+}
+
+IN_PROC_BROWSER_TEST_F(BraveLocationBarModelDelegateBrowserTest,
+                       ReturnsProductIconForInternalPage) {
+  ASSERT_TRUE(
+      ui_test_utils::NavigateToURL(browser(), GURL("chrome://settings/")));
+  EXPECT_EQ(delegate_->GetVectorIconOverride(), &kLeoBraveIconOnlyFaceIcon);
+}
 
 IN_PROC_BROWSER_TEST_F(BraveLocationBarModelDelegateBrowserTest,
                        ReturnsNullForNonSecurePage) {

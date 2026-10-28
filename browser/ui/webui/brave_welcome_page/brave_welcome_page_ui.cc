@@ -25,6 +25,7 @@
 #include "brave/components/constants/pref_names.h"
 #include "brave/components/constants/webui_url_constants.h"
 #include "brave/components/p3a/pref_names.h"
+#include "brave/components/velmren/product_policy.h"
 #include "brave/components/web_discovery/buildflags/buildflags.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile.h"
@@ -106,6 +107,7 @@ BraveWelcomePageUI::BraveWelcomePageUI(content::WebUI* web_ui)
   source->AddLocalizedStrings(webui::kBraveWelcomePageStrings);
 
   PrefService* local_state = g_browser_process->local_state();
+  source->AddBoolean("telemetryFeatureEnabled", velmren::kTelemetryEnabled);
   source->AddBoolean("isCrashReportingPrefManaged",
                      local_state->IsManagedPreference(
                          metrics::prefs::kMetricsReportingEnabled));
@@ -132,7 +134,8 @@ BraveWelcomePageUI::BraveWelcomePageUI(content::WebUI* web_ui)
   source->AddBoolean("vpnFeatureEnabled", features.contains(Feature::kVPN));
 
   PrefService* prefs = profile->GetPrefs();
-  if (!prefs->GetBoolean(brave_welcome_page::prefs::kHasSeenBraveWelcomePage) &&
+  if (velmren::kProductPromotionsEnabled &&
+      !prefs->GetBoolean(brave_welcome_page::prefs::kHasSeenBraveWelcomePage) &&
       IsJapanCountryId(prefs)) {
     base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
         FROM_HERE,

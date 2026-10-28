@@ -203,22 +203,16 @@ const PrepopulatedEngine brave_yandex =
     ModifyEngineParams(yandex_com,
                        u"Yandex",
                        nullptr,
-                       "https://yandex.ru/search/?clid="
-#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
-                       "2423859"
-#else
-                       "2353835"
-#endif
-                       "&text={searchTerms}",
+                       "https://yandex.ru/search/?text={searchTerms}",
                        "https://suggest.yandex.ru/suggest-ff.cgi?"
-                       "part={searchTerms}&v=3&sn=5&srv=brave_desktop",
+                       "part={searchTerms}&v=3&sn=5",
                        nullptr,
                        PREPOPULATED_ENGINE_ID_YANDEX);
 // LINT.ThenChange(//brave/components/search_engines/brave_prepopulated_engines.h:kBraveCurrentDataVersion)
 
 // LINT.IfChange
 const PrepopulatedEngine brave_search = MakeBravePrepopulatedEngine(
-    u"Brave",
+    u"Brave Search",
     u":br",
     "https://cdn.search.brave.com/serp/favicon.ico",
     "IDR_SEARCH_ENGINE_BRAVE",

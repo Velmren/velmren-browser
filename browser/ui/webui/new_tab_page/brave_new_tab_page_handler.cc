@@ -29,6 +29,7 @@
 #include "brave/components/ntp_background_images/browser/ntp_background_images_service.h"
 #include "brave/components/ntp_background_images/browser/url_constants.h"
 #include "brave/components/ntp_background_images/browser/view_counter_service.h"
+#include "brave/components/search_engines/brave_prepopulated_engines.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search_engines/template_url_service_factory.h"
@@ -40,6 +41,7 @@
 #include "components/prefs/pref_service.h"
 #include "components/search_engines/search_engine_type.h"
 #include "components/search_engines/template_url.h"
+#include "components/search_engines/template_url_service.h"
 #include "components/tabs/public/tab_interface.h"
 #include "content/public/browser/page_navigator.h"
 #include "content/public/browser/web_contents.h"
@@ -317,7 +319,19 @@ void BraveNewTabPageHandler::SearchWhatYouTyped(const std::string& host,
   auto* service = TemplateURLServiceFactory::GetForProfile(profile_);
   CHECK(service);
 
+  // The legacy list exposes Google's unresolved template as an empty host.
+  // Brave's host can also collide with the @ask starter-pack engine.
   auto* template_url = service->GetTemplateURLForHost(host);
+  if (host.empty() || host == "search.brave.com") {
+    const int engine_id =
+        host.empty()
+            ? TemplateURLPrepopulateData::PREPOPULATED_ENGINE_ID_GOOGLE
+            : TemplateURLPrepopulateData::PREPOPULATED_ENGINE_ID_BRAVE;
+    const auto engines = service->GetTemplateURLs();
+    const auto engine = std::ranges::find(
+        engines, engine_id, &TemplateURL::prepopulate_id);
+    template_url = engine == engines.end() ? nullptr : *engine;
+  }
   DCHECK(template_url);
   if (!template_url) {
     return;

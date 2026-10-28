@@ -20,6 +20,7 @@ const icons = {
   'www.startpage.com': 'startpage-color',
   'search.yahoo.com': 'yahoo-color',
   'yandex.com': 'yandex-color',
+  'yandex.ru': 'yandex-color',
   'ecosia.org': 'ecosia-color',
 }
 

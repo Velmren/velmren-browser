@@ -70,13 +70,16 @@ function HelpImprove() {
     return WelcomeBrowserProxyImpl.getInstance().getWelcomeCompleteURL()
   })
 
-  // Show toggles only if the preference is not managed by policy
-  const showMetricsToggle = !loadTimeData.getBoolean('isMetricsReportingEnabledManaged')
+  const telemetryEnabled = loadTimeData.getBoolean('telemetryFeatureEnabled')
+  // Only offer telemetry supported by the product and allowed by policy.
+  const showMetricsToggle = telemetryEnabled &&
+    !loadTimeData.getBoolean('isMetricsReportingEnabledManaged')
   // <if expr="is_brave_origin_branded">
   // Brave Origin: never show P3A toggle
   const showP3AToggle = false
   // <else>
-  const showP3AToggle = !loadTimeData.getBoolean('isP3AEnabledManaged')
+  const showP3AToggle = telemetryEnabled &&
+    !loadTimeData.getBoolean('isP3AEnabledManaged')
   // </if>
 
   const handleP3AChange = () => {

@@ -15,6 +15,7 @@ interface AvailableMetrics {
 // metrics step.
 export function useAvailableMetrics(): AvailableMetrics {
   const api = useWelcomeApi()
+  const telemetryEnabled = api.useTelemetryFeatureEnabledData()
 
   const webDiscoveryFeatureEnabled = api.useWebDiscoveryFeatureEnabledData()
   const isWebDiscoveryPrefManaged = api.useIsWebDiscoveryPrefManagedData()
@@ -23,8 +24,8 @@ export function useAvailableMetrics(): AvailableMetrics {
 
   return {
     webDiscovery: webDiscoveryFeatureEnabled && !isWebDiscoveryPrefManaged,
-    p3a: !isP3APrefManaged,
-    crashReports: !isCrashReportingPrefManaged,
+    p3a: telemetryEnabled && !isP3APrefManaged,
+    crashReports: telemetryEnabled && !isCrashReportingPrefManaged,
   }
 }
 

@@ -12,6 +12,13 @@ Velmren registrations for future packaging. Origin is explicitly unsupported.
 mint `#40D9BC`, and pale mint `#D4FFF3`. The small monochrome V inherits the native
 control color. No Brave lion artwork is used on the supported browser surfaces.
 
+The welcome hero and password manager use `logo.svg` directly. Shared WebUI
+resources package `velmren-icon-color` and `velmren-icon-monochrome` from this
+directory; use these names for browser UI. Nala's Brave icons remain available
+for actual external services, search engines, publishers, and import sources.
+Native location and Shields icons use the local `leo_brave_icon_*` V paths in
+`components/vector_icons`, not Nala's generated lion paths.
+
 Run `python script/velmren/generate_brand_assets.py --font <segoeuib.ttf>` from the
 repository to regenerate the Windows ICOs and PNG resources with Pillow. The
 Windows font is used only for the Velmren wordmark; the mark is geometric. Existing

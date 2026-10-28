@@ -38,13 +38,12 @@ constexpr auto kTargetCountriesForEnableSearchSuggestionsByDefault =
                                               "MX", "US"});
 }
 
-void SetBraveAsDefaultPrivateSearchProvider(Profile& profile) {
+void SetRegionalDefaultPrivateSearchProvider(Profile& profile) {
   auto& prefs = *profile.GetPrefs();
   auto* prepopulate_data_resolver =
       TemplateURLPrepopulateData::ResolverFactory::GetForProfile(&profile);
   const auto template_url_data =
-      prepopulate_data_resolver->GetPrepopulatedEngine(
-          TemplateURLPrepopulateData::PREPOPULATED_ENGINE_ID_BRAVE);
+      prepopulate_data_resolver->GetFallbackSearch();
   DCHECK(template_url_data);
   prefs.SetString(prefs::kSyncedDefaultPrivateSearchProviderGUID,
                   template_url_data->sync_guid);
@@ -62,8 +61,8 @@ void UpdateDefaultPrivateSearchProviderData(Profile& profile) {
 
   if (private_provider_guid.empty()) {
     // This can happen while resetting whole settings.
-    // In this case, set brave as a default search provider.
-    SetBraveAsDefaultPrivateSearchProvider(profile);
+    // In this case, set the regional engine as a default search provider.
+    SetRegionalDefaultPrivateSearchProvider(profile);
     return;
   }
 
@@ -77,8 +76,8 @@ void UpdateDefaultPrivateSearchProviderData(Profile& profile) {
 
   // When user delete current private search provder from provider list in
   // settings page, |private_provider_guid| will not be existed in the list. Use
-  // Brave.
-  SetBraveAsDefaultPrivateSearchProvider(profile);
+  // the regional default.
+  SetRegionalDefaultPrivateSearchProvider(profile);
 }
 
 void PrepareDefaultPrivateSearchProviderDataIfNeeded(Profile& profile) {
@@ -95,9 +94,9 @@ void PrepareDefaultPrivateSearchProviderDataIfNeeded(Profile& profile) {
   const std::string private_provider_guid =
       prefs.GetString(prefs::kSyncedDefaultPrivateSearchProviderGUID);
 
-  // Set Brave as a private window's initial search provider.
+  // Set the regional engine as a private window's initial search provider.
   if (private_provider_guid.empty()) {
-    SetBraveAsDefaultPrivateSearchProvider(profile);
+    SetRegionalDefaultPrivateSearchProvider(profile);
     return;
   }
 
@@ -111,8 +110,8 @@ void PrepareDefaultPrivateSearchProviderDataIfNeeded(Profile& profile) {
     } else {
       // This could happen with update default provider list when brave is not
       // updated for longtime. So it doesn't have any chance to cache url data.
-      // Set Brave as default private search provider.
-      SetBraveAsDefaultPrivateSearchProvider(profile);
+      // Set the regional engine as default private search provider.
+      SetRegionalDefaultPrivateSearchProvider(profile);
     }
     return;
   }
