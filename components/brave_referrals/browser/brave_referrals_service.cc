@@ -191,7 +191,15 @@ BraveReferralsService::BraveReferralsService(PrefService* pref_service,
 BraveReferralsService::~BraveReferralsService() = default;
 
 void BraveReferralsService::Start() {
-  if (!velmren::kTelemetryEnabled || initialized_) {
+  if (initialized_) {
+    return;
+  }
+
+  if (!velmren::kTelemetryEnabled) {
+    // Complete the delegate lifecycle so it releases its profile observer.
+    initialized_ = true;
+    DCHECK(delegate_);
+    delegate_->OnInitialized();
     return;
   }
 

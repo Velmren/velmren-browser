@@ -104,7 +104,7 @@ class BraveReferralsServiceTest : public testing::Test {
     TestBraveReferralsServiceDelegate() = default;
     ~TestBraveReferralsServiceDelegate() override = default;
 
-    void OnInitialized() override {}
+    void OnInitialized() override { ++initialization_count_; }
 
     base::FilePath GetUserDataDirectory() override { return user_data_dir_; }
 
@@ -121,11 +121,13 @@ class BraveReferralsServiceTest : public testing::Test {
 
     base::FilePath user_data_dir_;
     base::Time first_run_time_;
+    int initialization_count_ = 0;
     raw_ptr<network::mojom::URLLoaderFactory> loader_factory = nullptr;
   };
 
-  void CreateReferralsService() {
+  TestBraveReferralsServiceDelegate* CreateReferralsService() {
     auto test_delegate = std::make_unique<TestBraveReferralsServiceDelegate>();
+    auto* delegate = test_delegate.get();
     test_delegate->user_data_dir_ = temp_dir_.GetPath();
     test_delegate->loader_factory = shared_url_loader_factory_.get();
     test_delegate->first_run_time_ = first_run_time_;
@@ -133,6 +135,7 @@ class BraveReferralsServiceTest : public testing::Test {
     referrals_service_ = std::make_unique<BraveReferralsService>(
         &pref_service_, "test", "test-api-key");
     referrals_service_->set_delegate(std::move(test_delegate));
+    return delegate;
   }
 
  protected:
@@ -151,6 +154,22 @@ class BraveReferralsServiceTest : public testing::Test {
   BraveReferralsService::ReferralInitializedCallback
       referral_initialized_callback_;
 };
+
+TEST_F(BraveReferralsServiceTest, VelmrenCompletesDelegateWithoutTelemetry) {
+  auto* delegate = CreateReferralsService();
+
+  referrals_service_->Start();
+  EXPECT_EQ(delegate->initialization_count_, 1);
+  referrals_service_->Start();
+  EXPECT_EQ(delegate->initialization_count_, 1);
+
+  task_environment_.FastForwardBy(base::Days(35));
+  EXPECT_EQ(request_count_, 0u);
+  EXPECT_FALSE(init_callback_called_);
+  EXPECT_FALSE(pref_service_.GetBoolean(kReferralInitialization));
+  EXPECT_FALSE(pref_service_.GetBoolean(kReferralCheckedForPromoCodeFile));
+  EXPECT_FALSE(pref_service_.HasPrefPath(kReferralAttemptTimestamp));
+}
 
 TEST_F(BraveReferralsServiceTest, VelmrenDoesNotStartWithMigratedOptIn) {
   pref_service_.SetBoolean(kStatsReportingEnabled, true);
