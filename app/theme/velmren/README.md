@@ -18,6 +18,10 @@ directory; use these names for browser UI. Nala's Brave icons remain available
 for actual external services, search engines, publishers, and import sources.
 Native location and Shields icons use the local `leo_brave_icon_*` V paths in
 `components/vector_icons`, not Nala's generated lion paths.
+The native new-tab favicon uses the same V through the `TabData` override;
+`IDR_FAVICON_NTP_DARK/LIGHT` are upstream artwork and must not be used by Velmren.
+The shared `IDR_NTP_FAVICON` used by bookmarks is copied from the 16px product
+logo at both supported scale factors by the asset generator and branding step.
 
 Run `python script/velmren/generate_brand_assets.py --font <segoeuib.ttf>` from the
 repository to regenerate the Windows ICOs and PNG resources with Pillow. The

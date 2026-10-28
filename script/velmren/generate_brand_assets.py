@@ -6,6 +6,7 @@ Pillow renders the same simple geometry at 4x resolution for crisp small icons.
 """
 from pathlib import Path
 import argparse
+import shutil
 from PIL import Image, ImageDraw, ImageFont
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -67,6 +68,10 @@ def main():
     # Preserve icon resource order and filenames; replace embedded bitmap art.
     for path in (ROOT/'app/theme/brave/win').glob('*.ico'):
         mark(256).save(path,format='ICO',sizes=[(s,s) for s in [16,20,24,32,40,48,64,128,256]])
+    for scale in ['default_100_percent', 'default_200_percent']:
+        shutil.copyfile(
+            ROOT/'app/theme'/scale/'brave/product_logo_16.png',
+            ROOT/'build/chromium/resources/chrome/app/theme'/scale/'common/favicon_ntp.png')
     mark(512).save(ROOT/'app/theme/velmren/logo-preview.png')
     print(f'Generated {len(files)} PNGs, Windows ICOs, and SVG source.')
 
