@@ -14,6 +14,8 @@ inline constexpr bool kTelemetryEnabled = false;
 inline constexpr bool kProductPromotionsEnabled = false;
 inline constexpr bool kSponsoredContentEnabled = false;
 inline constexpr bool kRemoteExperimentsEnabled = false;
+// Official component delivery requires Brave's private service credentials.
+inline constexpr bool kPublicFilterListsEnabled = true;
 
 }  // namespace velmren
 

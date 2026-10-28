@@ -261,6 +261,9 @@
     "META": {"sizes": {"includes": [10]}},
     "includes": [54180],
   },
+  "brave/components/velmren/resources/velmren_filter_resources.grd": {
+    "includes": [54200],
+  },
   # WARNING: The IDs range is 2^16-1. Check
   # out/<BUILD_TYPE>/gen/brave/resources/brave_resource_ids for how much the
   # ids got expanded for the build.

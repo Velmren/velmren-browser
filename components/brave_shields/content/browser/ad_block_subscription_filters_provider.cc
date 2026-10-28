@@ -14,7 +14,9 @@
 #include "base/task/thread_pool.h"
 #include "brave/components/brave_shields/core/browser/ad_block_filters_provider.h"
 #include "brave/components/brave_shields/core/common/adblock/rs/src/lib.rs.h"
+#include "brave/components/velmren/public_filters.h"
 #include "components/prefs/pref_service.h"
+#include "ui/base/resource/resource_bundle.h"
 
 namespace brave_shields {
 
@@ -23,12 +25,24 @@ namespace {
 // static
 void AddDATBufferToFilterSet(
     base::OnceCallback<void(const adblock::FilterListMetadata&)> on_metadata,
+    const velmren::PublicFilterList* public_list,
     DATFileDataBuffer buffer,
     const perfetto::Flow& flow,
     rust::Box<adblock::FilterSet>* filter_set) {
   TRACE_EVENT("brave.adblock",
               "AddDATBufferToFilterSet_SubscriptionFiltersProvider", flow);
-  auto result = (*filter_set)->add_filter_list(buffer);
+  if (public_list) {
+    const std::string input(buffer.begin(), buffer.end());
+    const auto processed = velmren::PreprocessPublicFilters(input);
+    if (!processed) {
+      LOG(ERROR) << "Invalid public filter list conditionals: "
+                 << public_list->url;
+      return;
+    }
+    buffer.assign(processed->begin(), processed->end());
+  }
+  auto result = (*filter_set)->add_filter_list_with_permissions(
+      buffer, public_list ? public_list->permission_mask : 0);
   if (result.result_kind == adblock::ResultKind::Success) {
     std::move(on_metadata).Run(result.value.metadata);
   } else {
@@ -43,9 +57,12 @@ AdBlockSubscriptionFiltersProvider::AdBlockSubscriptionFiltersProvider(
     AdBlockFiltersProviderManager* manager,
     base::FilePath list_file,
     base::RepeatingCallback<void(const adblock::FilterListMetadata&)>
-        on_metadata_retrieved)
-    : AdBlockFiltersProvider(false, manager),
+        on_metadata_retrieved,
+    const velmren::PublicFilterList* public_list)
+    : AdBlockFiltersProvider(public_list && public_list->is_default_engine,
+                             manager),
       list_file_(list_file),
+      public_list_(public_list),
       on_metadata_retrieved_(on_metadata_retrieved) {}
 
 AdBlockSubscriptionFiltersProvider::~AdBlockSubscriptionFiltersProvider() =
@@ -75,6 +92,13 @@ void AdBlockSubscriptionFiltersProvider::OnDATFileDataReady(
     const DATFileDataBuffer& dat_buf) {
   TRACE_EVENT("brave.adblock",
               "AdBlockSubscriptionFiltersProvider::OnDATFileDataReady", flow);
+  DATFileDataBuffer filters = dat_buf;
+  if (filters.empty() && public_list_ &&
+      ui::ResourceBundle::HasSharedInstance()) {
+    const auto bundled = ui::ResourceBundle::GetSharedInstance()
+                             .LoadDataResourceString(public_list_->resource_id);
+    filters.assign(bundled.begin(), bundled.end());
+  }
   std::move(cb).Run(base::BindOnce(
       &AddDATBufferToFilterSet,
       base::BindOnce(
@@ -87,7 +111,7 @@ void AdBlockSubscriptionFiltersProvider::OnDATFileDataReady(
           },
           base::SingleThreadTaskRunner::GetCurrentDefault(),
           on_metadata_retrieved_),
-      dat_buf, flow));
+      public_list_.get(), std::move(filters), flow));
 }
 
 void AdBlockSubscriptionFiltersProvider::OnListAvailable() {

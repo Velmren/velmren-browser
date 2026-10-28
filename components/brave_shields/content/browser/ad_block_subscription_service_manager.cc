@@ -29,6 +29,8 @@
 #include "brave/components/brave_shields/core/common/adblock/rs/src/lib.rs.h"
 #include "brave/components/brave_shields/core/common/brave_shield_constants.h"
 #include "brave/components/brave_shields/core/common/pref_names.h"
+#include "brave/components/velmren/product_policy.h"
+#include "brave/components/velmren/public_filters.h"
 #include "components/prefs/pref_service.h"
 #include "components/prefs/scoped_user_pref_update.h"
 #include "crypto/sha2.h"
@@ -251,7 +253,8 @@ void AdBlockSubscriptionServiceManager::CreateSubscription(
           GetSubscriptionPath(sub_url).Append(kCustomSubscriptionListText),
           base::BindRepeating(
               &AdBlockSubscriptionServiceManager::OnListMetadata,
-              weak_ptr_factory_.GetWeakPtr(), sub_url));
+              weak_ptr_factory_.GetWeakPtr(), sub_url),
+          velmren::FindPublicFilterList(sub_url.spec()));
   subscription_filters_providers_.insert(
       std::make_pair(sub_url, std::move(subscription_filters_provider)));
 
@@ -292,7 +295,8 @@ void AdBlockSubscriptionServiceManager::EnableSubscription(const GURL& sub_url,
             GetSubscriptionPath(sub_url).Append(kCustomSubscriptionListText),
             base::BindRepeating(
                 &AdBlockSubscriptionServiceManager::OnListMetadata,
-                weak_ptr_factory_.GetWeakPtr(), sub_url));
+                weak_ptr_factory_.GetWeakPtr(), sub_url),
+            velmren::FindPublicFilterList(sub_url.spec()));
     subscription_filters_provider->OnListAvailable();
     subscription_filters_providers_.insert(
         {sub_url, std::move(subscription_filters_provider)});
@@ -345,6 +349,31 @@ void AdBlockSubscriptionServiceManager::OnGetDownloadManager(
 
   download_manager_->CancelAllPendingDownloads();
   LoadSubscriptionServices();
+
+  if (velmren::kPublicFilterListsEnabled && local_state_ &&
+      !local_state_->GetBoolean(prefs::kAdBlockPublicListsSeeded)) {
+    AdBlockSubscriptionFiltersProvider* default_provider = nullptr;
+    AdBlockSubscriptionFiltersProvider* additional_provider = nullptr;
+    for (const auto& list : velmren::GetPublicFilterLists()) {
+      // A disabled subscription is an explicit choice, even without a provider.
+      if (!subscriptions_.contains(list.url)) {
+        const GURL url(list.url);
+        CreateSubscription(url);
+        auto info = GetInfo(url);
+        info->title = std::string(list.title);
+        UpdateSubscriptionPrefs(url, *info);
+        (list.is_default_engine ? default_provider : additional_provider) =
+            subscription_filters_providers_.at(url).get();
+      }
+    }
+    local_state_->SetBoolean(prefs::kAdBlockPublicListsSeeded, true);
+    if (default_provider) {
+      default_provider->OnListAvailable();
+    }
+    if (additional_provider) {
+      additional_provider->OnListAvailable();
+    }
+  }
 
   subscription_update_timer_->Schedule(
       kListCheckInitialDelay, kListRetryInterval,
@@ -442,7 +471,8 @@ void AdBlockSubscriptionServiceManager::LoadSubscriptionServices() {
                     kCustomSubscriptionListText),
                 base::BindRepeating(
                     &AdBlockSubscriptionServiceManager::OnListMetadata,
-                    weak_ptr_factory_.GetWeakPtr(), sub_url));
+                    weak_ptr_factory_.GetWeakPtr(), sub_url),
+                velmren::FindPublicFilterList(sub_url.spec()));
         subscription_filters_provider->OnListAvailable();
         subscription_filters_providers_.insert(
             std::make_pair(sub_url, std::move(subscription_filters_provider)));

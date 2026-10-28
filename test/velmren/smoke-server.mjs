@@ -52,6 +52,11 @@ const server = createServer(async (request, response) => {
       response.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(counters))
       return
     }
+    if (url.pathname === '/redirect-probe.js') {
+      response.writeHead(200, { 'Content-Type': 'application/javascript' })
+        .end('window.velmrenOriginalScriptRan = true;')
+      return
+    }
     if (url.pathname === '/authenticate' && request.method === 'POST') {
       // Synthetic inputs only. Do not persist or log submitted credentials.
       request.resume()
@@ -66,6 +71,8 @@ const server = createServer(async (request, response) => {
       html = page('Synthetic sign-in completed', '<p>No account or submitted password was stored by this server.</p><a href="/login">Return to empty login form</a>')
     } else if (url.pathname === '/video') {
       html = page('Native picture in picture', '<video id="video" controls loop src="/sample.mp4"></video><button id="pip">Open native picture in picture</button><pre id="state"></pre><script>const video=document.querySelector("video"),state=document.querySelector("#state");document.querySelector("#pip").onclick=async()=>{try{await video.play();await video.requestPictureInPicture()}catch(e){state.textContent=e.name+": "+e.message}};for(const name of ["enterpictureinpicture","leavepictureinpicture","play","pause","seeked"]){video.addEventListener(name,()=>{state.textContent=JSON.stringify({event:name,paused:video.paused,currentTime:video.currentTime,pip:!!document.pictureInPictureElement},null,2)})}</script>')
+    } else if (url.pathname === '/scriptlet') {
+      html = page('Scriptlet and redirect checks', '<script src="/redirect-probe.js"></script><p>Read the two synthetic window flags to verify injected resources and redirect behavior.</p>')
     } else if (url.pathname === '/ads') {
       html = page('Controlled ad blocking', `<p>Use the isolated test profile with <code>--host-resolver-rules="MAP doubleclick.net 127.0.0.1"</code>. All image requests stay on this computer.</p><p>Control: <strong id="control">waiting</strong></p><p>Advertising: <strong id="ad">waiting</strong></p><script>for(const [id,src] of [['control','/control.png'],['ad','http://doubleclick.net:${port}/ad_banner.png']]){const img=new Image();img.onload=()=>document.getElementById(id).textContent='loaded';img.onerror=()=>document.getElementById(id).textContent='blocked or failed';img.src=src;document.body.append(img)}</script><p>Confirm the advertising image loads with Shields temporarily off, then is blocked with Shields on. Compare server counters at <a href="/counts">/counts</a>.</p>`)
     } else if (/^\/tab\/[123]$/.test(url.pathname)) {

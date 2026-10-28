@@ -1,0 +1,46 @@
+{
+  "generatedAt": "2026-10-28T10:39:54.823Z",
+  "output": "E:\\Astra\\2026-10-27\\https-www-youtube-com-shorts-9l7z\\work\\shields-resources\\resources.json",
+  "sizeBytes": 1029319,
+  "sha256": "47e61cca0bc2eed267eddd4c5fb9de8e5ca251cf5ec38b0435f0eae46114203e",
+  "resourceCount": 213,
+  "namedResourceCount": 213,
+  "braveResourceCount": 17,
+  "sources": {
+    "packager": {
+      "url": "https://github.com/brave/brave-core-crx-packager",
+      "revision": "72418b387cb1feddc614aaacb8cf166db8e80ed8",
+      "function": "lib/adBlockRustUtils.js:generateResourcesFile",
+      "license": "MPL-2.0"
+    },
+    "uBlock": {
+      "url": "https://github.com/brave/uBlock",
+      "revision": "4dfbb048607ec4fd19c1c252fd255df6cc653720",
+      "license": "GPL-3.0-or-later"
+    },
+    "braveResources": {
+      "url": "https://github.com/brave/adblock-resources",
+      "revision": "6da9b247c3368baa8b4f24cd02046e18702a6527",
+      "sha256": "d085eb0754b7a54d9e1a18a0314b1946b066f61a15457de834d98beb53b4e40f",
+      "license": "MPL-2.0"
+    },
+    "adblockRust": {
+      "npmPackage": "adblock-rs",
+      "version": "0.13.2",
+      "integrity": "sha512-P9DPy+R94aLeMHiHRtplx6s3okzbwBjEkgAl+wNwyUsC1gOPlKiqkvNUh/WRVZrgXjqYzCRAIqNgLB1H+/xVZA==",
+      "license": "MPL-2.0"
+    }
+  },
+  "validation": {
+    "noMissingDependencies": true,
+    "scriptletsResolved": [
+      "aopr",
+      "set"
+    ],
+    "scriptletOutputBytes": 18019,
+    "redirectResolved": "noopjs",
+    "networkRequestBlocked": true,
+    "runtime": "v24.14.0",
+    "scope": "Generator adblock-rs engine; browser acceptance remains separate"
+  }
+}

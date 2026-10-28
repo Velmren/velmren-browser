@@ -6,6 +6,14 @@
 import("//testing/test.gni")
 
 if (is_win) {
+  test("velmren_filter_unittests") {
+    sources = [ "//brave/components/velmren/public_filters_unittest.cc" ]
+    deps = [
+      "//base/test:run_all_unittests",
+      "//brave/components/velmren:public_filters",
+      "//testing/gtest",
+    ]
+  }
   # Reuse Chromium's unchanged password tests and complete component test
   # initialization without building unrelated component test suites.
   test("velmren_password_unittests") {

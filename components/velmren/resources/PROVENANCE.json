@@ -1,0 +1,291 @@
+{
+  "catalogRevision": "6da9b247c3368baa8b4f24cd02046e18702a6527",
+  "lists": [
+    {
+      "url": "https://raw.githubusercontent.com/uBlockOrigin/uAssets/master/filters/filters.txt",
+      "title": "uBlock Origin Filters",
+      "group": "Brave Default Adblock Filters",
+      "is_default_engine": true,
+      "permission_mask": 1,
+      "format": "Standard",
+      "file": "lists/00.txt",
+      "sha256": "118d32ee30089ed3b8cecb30e63eb884bfd138dabd10d51fb3edcc8ef8acdad0",
+      "bytes": 471693
+    },
+    {
+      "url": "https://raw.githubusercontent.com/uBlockOrigin/uAssets/master/filters/filters-2020.txt",
+      "title": "uBlock Origin 2020 Filters",
+      "group": "Brave Default Adblock Filters",
+      "is_default_engine": true,
+      "permission_mask": 1,
+      "format": "Standard",
+      "file": "lists/01.txt",
+      "sha256": "2bf0991064d5d4c4628504ce1c8aecf884f5ee1e7f4fe7b09bb362e95d9667d0",
+      "bytes": 131780
+    },
+    {
+      "url": "https://raw.githubusercontent.com/uBlockOrigin/uAssets/master/filters/filters-2021.txt",
+      "title": "uBlock Origin 2021 Filters",
+      "group": "Brave Default Adblock Filters",
+      "is_default_engine": true,
+      "permission_mask": 1,
+      "format": "Standard",
+      "file": "lists/02.txt",
+      "sha256": "f8e8dbea4f3f516ff1844528ab48031ffc348f90eca40aef5bfe1c0840000f89",
+      "bytes": 166671
+    },
+    {
+      "url": "https://raw.githubusercontent.com/uBlockOrigin/uAssets/master/filters/filters-2022.txt",
+      "title": "uBlock Origin 2022 Filters",
+      "group": "Brave Default Adblock Filters",
+      "is_default_engine": true,
+      "permission_mask": 1,
+      "format": "Standard",
+      "file": "lists/03.txt",
+      "sha256": "d1a3349004f87253e4032b6665c53e18f446e019af413e2fdd7963f25a448627",
+      "bytes": 156913
+    },
+    {
+      "url": "https://raw.githubusercontent.com/uBlockOrigin/uAssets/master/filters/filters-2023.txt",
+      "title": "uBlock Origin 2023 Filters",
+      "group": "Brave Default Adblock Filters",
+      "is_default_engine": true,
+      "permission_mask": 1,
+      "format": "Standard",
+      "file": "lists/04.txt",
+      "sha256": "8ec7d1e6aa157831588601d11dee1d46a60c53b81985e16904f91dd95a92d53a",
+      "bytes": 214253
+    },
+    {
+      "url": "https://raw.githubusercontent.com/uBlockOrigin/uAssets/master/filters/filters-2024.txt",
+      "title": "uBlock Origin 2024 Filters",
+      "group": "Brave Default Adblock Filters",
+      "is_default_engine": true,
+      "permission_mask": 1,
+      "format": "Standard",
+      "file": "lists/05.txt",
+      "sha256": "36d34d0b29a107b206986ea546de8b07d483e7ec5fd53f6140ebe3a68f38495a",
+      "bytes": 231291
+    },
+    {
+      "url": "https://raw.githubusercontent.com/uBlockOrigin/uAssets/master/filters/filters-2025.txt",
+      "title": "uBlock Origin 2025 Filters",
+      "group": "Brave Default Adblock Filters",
+      "is_default_engine": true,
+      "permission_mask": 1,
+      "format": "Standard",
+      "file": "lists/06.txt",
+      "sha256": "773576fa229ef551c7caff6a905d8b729da5a829f0e8f74db781ffe27ca5d490",
+      "bytes": 169059
+    },
+    {
+      "url": "https://raw.githubusercontent.com/uBlockOrigin/uAssets/master/filters/filters-2026.txt",
+      "title": "uBlock Origin 2026 Filters",
+      "group": "Brave Default Adblock Filters",
+      "is_default_engine": true,
+      "permission_mask": 1,
+      "format": "Standard",
+      "file": "lists/07.txt",
+      "sha256": "0e2d95d2b98a7d09b5d420bc45207bc138146406ed694eea1a0443f2044b952a",
+      "bytes": 102551
+    },
+    {
+      "url": "https://raw.githubusercontent.com/uBlockOrigin/uAssets/master/filters/filters-general.txt",
+      "title": "uBlock Origin filters - General",
+      "group": "Brave Default Adblock Filters",
+      "is_default_engine": true,
+      "permission_mask": 1,
+      "format": "Standard",
+      "file": "lists/08.txt",
+      "sha256": "79bcdb389773f0ad077fe7dc72806a8e4331ab65396c5a25931c2ed7e2245a50",
+      "bytes": 707310
+    },
+    {
+      "url": "https://raw.githubusercontent.com/uBlockOrigin/uAssets/master/filters/badware.txt",
+      "title": "uBlock Origin filters - Badware risks",
+      "group": "Brave Default Adblock Filters",
+      "is_default_engine": true,
+      "permission_mask": 1,
+      "format": "Standard",
+      "file": "lists/09.txt",
+      "sha256": "153b6c919468af3f0c79defd43ce4dd7ab2b3a6c5f98b591b7c7762adb60c2dc",
+      "bytes": 278140
+    },
+    {
+      "url": "https://raw.githubusercontent.com/uBlockOrigin/uAssets/master/filters/resource-abuse.txt",
+      "title": "uBlock Origin filters – Resource abuse",
+      "group": "Brave Default Adblock Filters",
+      "is_default_engine": true,
+      "permission_mask": 1,
+      "format": "Standard",
+      "file": "lists/10.txt",
+      "sha256": "26758d49f533218b559207724a3d294d1fa74e36cdce080999bc1b7f96ad552a",
+      "bytes": 9223
+    },
+    {
+      "url": "https://raw.githubusercontent.com/uBlockOrigin/uAssets/master/filters/unbreak.txt",
+      "title": "uBlock Origin filters - Unbreak",
+      "group": "Brave Default Adblock Filters",
+      "is_default_engine": true,
+      "permission_mask": 1,
+      "format": "Standard",
+      "file": "lists/11.txt",
+      "sha256": "b6ab74c5afe5badc48758272a581d38968ff2caa7f24c746c6e573d2c0cf8f8d",
+      "bytes": 281520
+    },
+    {
+      "url": "https://raw.githubusercontent.com/uBlockOrigin/uAssets/master/filters/quick-fixes.txt",
+      "title": "uBlock Origin filters - Quick Fixes",
+      "group": "Brave Default Adblock Filters",
+      "is_default_engine": true,
+      "permission_mask": 1,
+      "format": "Standard",
+      "file": "lists/12.txt",
+      "sha256": "27d27be222153d3619c07962aecf8f5aaf25d3f3a6694f251f7bae9d5409949b",
+      "bytes": 90659
+    },
+    {
+      "url": "https://raw.githubusercontent.com/uBlockOrigin/uAssets/master/filters/ubo-link-shorteners.txt",
+      "title": "uBlock Origin filters - link shortners",
+      "group": "Brave Default Adblock Filters",
+      "is_default_engine": true,
+      "permission_mask": 1,
+      "format": "Standard",
+      "file": "lists/13.txt",
+      "sha256": "3c9912ff1250065d10338a02f4b4af9cecdc141f4c7e53942bd64da7094ea1c0",
+      "bytes": 121167
+    },
+    {
+      "url": "https://easylist.to/easylist/easylist.txt",
+      "title": "EasyList",
+      "group": "Brave Default Adblock Filters",
+      "is_default_engine": true,
+      "permission_mask": 1,
+      "format": "Standard",
+      "file": "lists/14.txt",
+      "sha256": "8c5a5359065c5688b7c939f822cac001ace1e13bf3445561a8b9d6a1c3c154cf",
+      "bytes": 2003322
+    },
+    {
+      "url": "https://malware-filter.gitlab.io/malware-filter/urlhaus-filter-agh-online.txt",
+      "title": "URLhaus Malicious URL Blocklist",
+      "group": "Brave Default Adblock Filters",
+      "is_default_engine": true,
+      "permission_mask": 1,
+      "format": "Standard",
+      "file": "lists/15.txt",
+      "sha256": "1cb5a1744e4344ff1cfe73226f98c940f6c32ee113fb3216182503c46eca44a7",
+      "bytes": 38163
+    },
+    {
+      "url": "https://raw.githubusercontent.com/brave/adblock-lists/master/brave-unbreak.txt",
+      "title": "Brave Unbreak",
+      "group": "Brave Default Adblock Filters",
+      "is_default_engine": true,
+      "permission_mask": 1,
+      "format": "Standard",
+      "file": "lists/16.txt",
+      "sha256": "57c08f868a2a886105b2047580fc06ee79f3ded076aca66968da885956812eb0",
+      "bytes": 121930
+    },
+    {
+      "url": "https://raw.githubusercontent.com/brave/adblock-lists/master/brave-lists/brave-specific.txt",
+      "title": "Brave Specific",
+      "group": "Brave Default Adblock Filters",
+      "is_default_engine": true,
+      "permission_mask": 1,
+      "format": "Standard",
+      "file": "lists/17.txt",
+      "sha256": "f2fa61e972136c51b052cf1e832480cbba22adf03c1210eaff5a654b8e0935a1",
+      "bytes": 10831
+    },
+    {
+      "url": "https://raw.githubusercontent.com/brave/adblock-lists/master/brave-lists/brave-social.txt",
+      "title": "Brave Social",
+      "group": "Brave Default Adblock Filters",
+      "is_default_engine": true,
+      "permission_mask": 1,
+      "format": "Standard",
+      "file": "lists/18.txt",
+      "sha256": "b4a5abdf0388d3cf118096f370cab84d7578221733d27dd04e4bd52dad41a722",
+      "bytes": 1272
+    },
+    {
+      "url": "https://raw.githubusercontent.com/brave/adblock-lists/master/brave-lists/brave-unbreak.txt",
+      "title": "Brave Unbreak",
+      "group": "Brave Default Adblock Filters",
+      "is_default_engine": true,
+      "permission_mask": 1,
+      "format": "Standard",
+      "file": "lists/19.txt",
+      "sha256": "63a1fdc6aeebbb93b8c15602b6180c85f9aadfddfab200b7c8f4e0cc8ee76159",
+      "bytes": 24
+    },
+    {
+      "url": "https://raw.githubusercontent.com/brave/adblock-lists/master/brave-lists/brave-android-specific.txt",
+      "title": "Brave Android-Specific Rules",
+      "group": "Brave Default Adblock Filters",
+      "is_default_engine": true,
+      "permission_mask": 1,
+      "format": "Standard",
+      "file": "lists/20.txt",
+      "sha256": "2a12131a2b4b1f575e2336eef9f7273cff3312381c195cc6caaedc80d4668641",
+      "bytes": 195
+    },
+    {
+      "url": "https://raw.githubusercontent.com/brave/adblock-lists/master/brave-lists/brave-sugarcoat.txt",
+      "title": "SugarCoat Rules",
+      "group": "Brave Default Adblock Filters",
+      "is_default_engine": true,
+      "permission_mask": 1,
+      "format": "Standard",
+      "file": "lists/21.txt",
+      "sha256": "1fa064de6651638c5235f3f4a57a206869daea92d5ac6f41e787342e17f07127",
+      "bytes": 385
+    },
+    {
+      "url": "https://easylist.to/easylist/easyprivacy.txt",
+      "title": "EasyPrivacy",
+      "group": "Brave Default Privacy Filters",
+      "is_default_engine": true,
+      "permission_mask": 1,
+      "format": "Standard",
+      "file": "lists/22.txt",
+      "sha256": "a04a08e162141fb77751aa67cac8d986ffb6c9d613703725aa739ce81aba2c3d",
+      "bytes": 1511529
+    },
+    {
+      "url": "https://raw.githubusercontent.com/uBlockOrigin/uAssets/master/filters/privacy.txt",
+      "title": "uBlock Origin filters – Privacy",
+      "group": "Brave Default Privacy Filters",
+      "is_default_engine": true,
+      "permission_mask": 1,
+      "format": "Standard",
+      "file": "lists/23.txt",
+      "sha256": "7e8fd50fc0a2064dc1b308225a8de579fae47435aece21d1c76687b95d6e4f55",
+      "bytes": 184458
+    },
+    {
+      "url": "https://raw.githubusercontent.com/brave/adblock-lists/master/brave-lists/brave-firstparty.txt",
+      "title": "Brave First-Party Specific Filters",
+      "group": "Brave First Party Adblock Filters",
+      "is_default_engine": false,
+      "permission_mask": 1,
+      "format": "Standard",
+      "file": "lists/24.txt",
+      "sha256": "5c4b55471c06d7c197c708944ee8d1277905019a93f469a03c9fb710b8bf67cb",
+      "bytes": 220668
+    },
+    {
+      "url": "https://raw.githubusercontent.com/brave/adblock-lists/master/brave-lists/brave-firstparty-regional.txt",
+      "title": "Brave First-Party Regional Filters",
+      "group": "Brave First Party Adblock Filters",
+      "is_default_engine": false,
+      "permission_mask": 1,
+      "format": "Standard",
+      "file": "lists/25.txt",
+      "sha256": "c1a06034820b39de381746d9c4ee8251a29f56dbd9c609d404236f4b93d04e39",
+      "bytes": 51376
+    }
+  ]
+}

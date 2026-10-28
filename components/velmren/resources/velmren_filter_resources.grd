@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<grit latest_public_release="0" current_release="1">
+  <outputs>
+    <output filename="grit/velmren_filter_resources.h" type="rc_header">
+      <emit emit_type="prepend"></emit>
+    </output>
+    <output filename="velmren_filter_resources.pak" type="data_package" />
+  </outputs>
+  <release seq="1">
+    <includes>
+      <include name="IDR_VELMREN_ADBLOCK_RESOURCES" file="resources.json" type="BINDATA" />
+      <include name="IDR_VELMREN_FILTER_LIST_00" file="lists/00.txt" type="BINDATA" />
+      <include name="IDR_VELMREN_FILTER_LIST_01" file="lists/01.txt" type="BINDATA" />
+      <include name="IDR_VELMREN_FILTER_LIST_02" file="lists/02.txt" type="BINDATA" />
+      <include name="IDR_VELMREN_FILTER_LIST_03" file="lists/03.txt" type="BINDATA" />
+      <include name="IDR_VELMREN_FILTER_LIST_04" file="lists/04.txt" type="BINDATA" />
+      <include name="IDR_VELMREN_FILTER_LIST_05" file="lists/05.txt" type="BINDATA" />
+      <include name="IDR_VELMREN_FILTER_LIST_06" file="lists/06.txt" type="BINDATA" />
+      <include name="IDR_VELMREN_FILTER_LIST_07" file="lists/07.txt" type="BINDATA" />
+      <include name="IDR_VELMREN_FILTER_LIST_08" file="lists/08.txt" type="BINDATA" />
+      <include name="IDR_VELMREN_FILTER_LIST_09" file="lists/09.txt" type="BINDATA" />
+      <include name="IDR_VELMREN_FILTER_LIST_10" file="lists/10.txt" type="BINDATA" />
+      <include name="IDR_VELMREN_FILTER_LIST_11" file="lists/11.txt" type="BINDATA" />
+      <include name="IDR_VELMREN_FILTER_LIST_12" file="lists/12.txt" type="BINDATA" />
+      <include name="IDR_VELMREN_FILTER_LIST_13" file="lists/13.txt" type="BINDATA" />
+      <include name="IDR_VELMREN_FILTER_LIST_14" file="lists/14.txt" type="BINDATA" />
+      <include name="IDR_VELMREN_FILTER_LIST_15" file="lists/15.txt" type="BINDATA" />
+      <include name="IDR_VELMREN_FILTER_LIST_16" file="lists/16.txt" type="BINDATA" />
+      <include name="IDR_VELMREN_FILTER_LIST_17" file="lists/17.txt" type="BINDATA" />
+      <include name="IDR_VELMREN_FILTER_LIST_18" file="lists/18.txt" type="BINDATA" />
+      <include name="IDR_VELMREN_FILTER_LIST_19" file="lists/19.txt" type="BINDATA" />
+      <include name="IDR_VELMREN_FILTER_LIST_20" file="lists/20.txt" type="BINDATA" />
+      <include name="IDR_VELMREN_FILTER_LIST_21" file="lists/21.txt" type="BINDATA" />
+      <include name="IDR_VELMREN_FILTER_LIST_22" file="lists/22.txt" type="BINDATA" />
+      <include name="IDR_VELMREN_FILTER_LIST_23" file="lists/23.txt" type="BINDATA" />
+      <include name="IDR_VELMREN_FILTER_LIST_24" file="lists/24.txt" type="BINDATA" />
+      <include name="IDR_VELMREN_FILTER_LIST_25" file="lists/25.txt" type="BINDATA" />
+    </includes>
+  </release>
+</grit>

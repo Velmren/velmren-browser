@@ -9,6 +9,7 @@
 #include <string>
 
 #include "base/functional/callback.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/trace_event/trace_event.h"
 #include "brave/components/brave_component_updater/browser/dat_file_util.h"
@@ -16,6 +17,10 @@
 #include "brave/components/brave_shields/core/browser/ad_block_filters_provider_manager.h"
 #include "brave/components/brave_shields/core/common/adblock/rs/src/lib.rs.h"
 #include "third_party/rust/cxx/v1/cxx.h"
+
+namespace velmren {
+struct PublicFilterList;
+}
 
 using brave_component_updater::DATFileDataBuffer;
 
@@ -31,7 +36,8 @@ class AdBlockSubscriptionFiltersProvider : public AdBlockFiltersProvider {
       AdBlockFiltersProviderManager* manager,
       base::FilePath list_file,
       base::RepeatingCallback<void(const adblock::FilterListMetadata&)>
-          on_metadata_retrieved);
+          on_metadata_retrieved,
+      const velmren::PublicFilterList* public_list = nullptr);
   AdBlockSubscriptionFiltersProvider(
       const AdBlockSubscriptionFiltersProvider&) = delete;
   AdBlockSubscriptionFiltersProvider& operator=(
@@ -54,6 +60,8 @@ class AdBlockSubscriptionFiltersProvider : public AdBlockFiltersProvider {
   std::string GetNameForDebugging() override;
 
   base::FilePath list_file_;
+  // Points to an immutable, compiled-in descriptor, never remote metadata.
+  raw_ptr<const velmren::PublicFilterList> public_list_;
 
   base::RepeatingCallback<void(const adblock::FilterListMetadata&)>
       on_metadata_retrieved_;

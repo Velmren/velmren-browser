@@ -257,15 +257,14 @@ const update = () => {
       'text_defaults_md.css',
     ),
   ])
-  // Replace chrome dark logo with channel specific brave logo.
+  // Keep dark WebUI toolbars on the same Velmren mark as the light theme.
   fileMap.add([
     path.join(
       config.braveCoreDir,
-      'node_modules',
-      '@brave',
-      'leo',
-      'icons',
-      config.getBraveLogoIconName(),
+      'app',
+      'theme',
+      'velmren',
+      'logo.svg',
     ),
     path.join(
       config.srcDir,

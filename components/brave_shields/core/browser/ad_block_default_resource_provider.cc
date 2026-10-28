@@ -12,6 +12,9 @@
 #include "base/task/thread_pool.h"
 #include "brave/components/brave_component_updater/browser/dat_file_util.h"
 #include "brave/components/brave_shields/core/browser/ad_block_component_installer.h"
+#include "brave/components/velmren/product_policy.h"
+#include "brave/components/velmren/resources/grit/velmren_filter_resources.h"
+#include "ui/base/resource/resource_bundle.h"
 
 namespace {
 
@@ -76,6 +79,15 @@ void AdBlockDefaultResourceProvider::LoadResources(
     base::OnceCallback<void(AdblockResourceStorageBox)> cb) {
   base::FilePath resources_path = GetResourcesPath();
   if (resources_path.empty()) {
+    if (velmren::kPublicFilterListsEnabled &&
+        ui::ResourceBundle::HasSharedInstance()) {
+      auto resources = ui::ResourceBundle::GetSharedInstance()
+                           .LoadDataResourceString(IDR_VELMREN_ADBLOCK_RESOURCES);
+      if (!resources.empty()) {
+        std::move(cb).Run(adblock::new_resource_storage(resources));
+        return;
+      }
+    }
     // If the path is not ready yet, run the callback with empty resources to
     // avoid blocking filter data loads.
     auto empty_storage = adblock::new_empty_resource_storage();

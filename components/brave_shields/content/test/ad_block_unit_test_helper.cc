@@ -10,10 +10,15 @@
 #include "base/task/sequenced_task_runner.h"
 #include "brave/components/brave_shields/content/browser/ad_block_service.h"
 #include "brave/components/brave_shields/core/browser/ad_block_component_service_manager.h"
+#include "brave/components/velmren/product_policy.h"
 
 namespace brave_shields {
 
 void SetupAdBlockServiceForTesting(AdBlockService* ad_block_service) {
+  // Velmren already posts this initialization from the service constructor.
+  if (velmren::kPublicFilterListsEnabled) {
+    return;
+  }
   // Post the empty-catalog load instead of running it synchronously. If the
   // gates are initialized synchronously, a test that registers a filter
   // provider immediately after this call ends up with two in-flight engine

@@ -38,6 +38,7 @@
 #include "brave/components/brave_shields/core/common/features.h"
 #include "brave/components/brave_shields/core/common/pref_names.h"
 #include "brave/components/constants/brave_switches.h"
+#include "brave/components/velmren/product_policy.h"
 #include "components/prefs/pref_change_registrar.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
@@ -209,7 +210,8 @@ AdBlockService::AdBlockService(
 
   auto default_resource_provider =
       std::make_unique<AdBlockDefaultResourceProvider>(
-          component_update_service_);
+          velmren::kPublicFilterListsEnabled ? nullptr
+                                           : component_update_service_);
   default_resource_provider_ = default_resource_provider.get();
 
   custom_resource_provider_ = new AdBlockCustomResourceProvider(
@@ -217,7 +219,8 @@ AdBlockService::AdBlockService(
   resource_provider_.reset(custom_resource_provider_.get());
   filter_list_catalog_provider_ =
       std::make_unique<AdBlockFilterListCatalogProvider>(
-          component_update_service_);
+          velmren::kPublicFilterListsEnabled ? nullptr
+                                           : component_update_service_);
 
   dat_cache_manager_ = std::make_unique<AdBlockDATCacheManager>(profile_dir_);
   // Start reading cached DAT files from disk as early as possible so the
@@ -233,6 +236,20 @@ AdBlockService::AdBlockService(
       local_state_, filters_provider_manager_.get(), locale_,
       component_update_service_, filter_list_catalog_provider_.get(),
       &list_p3a_);
+  if (velmren::kPublicFilterListsEnabled) {
+    // Settle the gates after construction so providers registered in this turn
+    // are present before the first engine build. Synchronous initialization can
+    // queue an empty build ahead of the real providers and race the DAT cache.
+    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
+        FROM_HERE, base::BindOnce(
+                       [](base::WeakPtr<AdBlockService> service) {
+                         if (service) {
+                           service->component_service_manager()
+                               ->SetFilterListCatalog({});
+                         }
+                       },
+                       weak_factory_.GetWeakPtr()));
+  }
   subscription_service_manager_ =
       std::make_unique<AdBlockSubscriptionServiceManager>(
           local_state_, filters_provider_manager_.get(),
@@ -456,6 +473,7 @@ void RegisterPrefsForAdBlockService(PrefRegistrySimple* registry) {
   registry->RegisterStringPref(prefs::kAdBlockCustomFilters, std::string());
   registry->RegisterDictionaryPref(prefs::kAdBlockRegionalFilters);
   registry->RegisterDictionaryPref(prefs::kAdBlockListSubscriptions);
+  registry->RegisterBooleanPref(prefs::kAdBlockPublicListsSeeded, false);
   registry->RegisterBooleanPref(prefs::kAdBlockCheckedDefaultRegion, false);
   registry->RegisterBooleanPref(prefs::kAdBlockCheckedAllDefaultRegions, false);
   registry->RegisterBooleanPref(prefs::kAdBlockOnlyModeEnabled, false);

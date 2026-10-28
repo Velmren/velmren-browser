@@ -1,0 +1,14 @@
+# Copyright (c) 2026 The Velmren Authors. All rights reserved.
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this file,
+# You can obtain one at https://mozilla.org/MPL/2.0/.
+
+import("//brave/resources/brave_grit.gni")
+
+brave_grit("resources") {
+  source = "velmren_filter_resources.grd"
+  outputs = [
+    "grit/velmren_filter_resources.h",
+    "velmren_filter_resources.pak",
+  ]
+}
