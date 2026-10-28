@@ -781,14 +781,20 @@ IN_PROC_BROWSER_TEST_F(SerpMetricsTabHelperTest,
 }
 
 IN_PROC_BROWSER_TEST_F(SerpMetricsTabHelperTest,
-                       CreateTabHelperForRegularProfile) {
+                       VelmrenDoesNotCreateTabHelperForRegularProfile) {
   SerpMetricsService* serp_metrics_service =
       SerpMetricsServiceFactory::GetFor(GetProfile());
-  EXPECT_TRUE(serp_metrics_service);
+  ASSERT_TRUE(serp_metrics_service);
+  EXPECT_FALSE(serp_metrics_service->Get());
 
   SerpMetricsTabHelper* serp_metrics_tab_helper =
       SerpMetricsTabHelper::FromWebContents(GetWebContents());
-  EXPECT_TRUE(serp_metrics_tab_helper);
+  EXPECT_FALSE(serp_metrics_tab_helper);
+
+  ASSERT_TRUE(content::NavigateToURL(
+      GetWebContents(), https_server_->GetURL("search.brave.com", "/search?q=test")));
+  EXPECT_FALSE(serp_metrics_service->Get());
+  EXPECT_FALSE(SerpMetricsTabHelper::FromWebContents(GetWebContents()));
 }
 
 #if !BUILDFLAG(IS_ANDROID)

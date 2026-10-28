@@ -6,7 +6,6 @@
 #include "brave/browser/serp_metrics/serp_metrics_tab_helper.h"
 
 #include "base/check.h"
-#include "base/check_deref.h"
 #include "base/feature_list.h"
 #include "brave/browser/serp_metrics/serp_metrics_service_factory.h"
 #include "brave/components/constants/pref_names.h"
@@ -58,7 +57,11 @@ void SerpMetricsTabHelper::MaybeCreateForWebContents(
   }
 
   SerpMetrics* serp_metrics = serp_metrics_service->Get();
-  CreateForWebContents(web_contents, CHECK_DEREF(serp_metrics));
+  if (!serp_metrics) {
+    // Velmren policy can disable the collector even when the feature is enabled.
+    return;
+  }
+  CreateForWebContents(web_contents, *serp_metrics);
 }
 
 ///////////////////////////////////////////////////////////////////////////////

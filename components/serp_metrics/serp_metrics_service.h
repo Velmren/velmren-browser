@@ -30,7 +30,7 @@ class SerpMetricsService : public KeyedService {
 
   ~SerpMetricsService() override;
 
-  // Returns `nullptr` if `SerpMetricsFeature` is disabled.
+  // Returns `nullptr` if the feature or product telemetry policy is disabled.
   SerpMetrics* Get();
 
  private:
