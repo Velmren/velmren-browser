@@ -1,0 +1,9 @@
+{
+  "mode": "Release",
+  "schema": 2,
+  "product": "velmren",
+  "channel": "preview",
+  "platform": "win-x64",
+  "feedUri": "https://updates.example.invalid/velmren/preview/win-x64/",
+  "allowedRedirectHosts": ["cdn.example.invalid"]
+}

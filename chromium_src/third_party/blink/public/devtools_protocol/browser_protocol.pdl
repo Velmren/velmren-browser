@@ -54,3 +54,13 @@ domain Network
     parameters
       Network.RequestId requestId
       AdblockInfo info
+
+domain Target
+  # Velmren prototype: hand an owned hidden target to a human or resume hidden
+  # work without replacing its WebContents or document. Requires agent mode
+  # and the trusted browser session that created the hidden target. Shown
+  # targets are also closed when their owning session disconnects.
+  experimental command setTargetVisibility
+    parameters
+      TargetID targetId
+      boolean visible

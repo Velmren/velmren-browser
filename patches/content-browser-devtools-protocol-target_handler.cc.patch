@@ -1,0 +1,26 @@
+diff --git a/content/browser/devtools/protocol/target_handler.cc b/content/browser/devtools/protocol/target_handler.cc
+index e77c87427f88569d10830c31e665cf93f6e8dce3..29c2d7a600182fe4f339fb654a50b85db06fe7bf 100644
+--- a/content/browser/devtools/protocol/target_handler.cc
++++ b/content/browser/devtools/protocol/target_handler.cc
+@@ -1393,10 +1393,10 @@ Response TargetHandler::CreateTarget(
+     // Hidden target can be created only when remote debugging is enabled.
+     DevToolsManagerDelegate* delegate =
+         DevToolsManager::GetInstance()->delegate();
+-    if (!delegate || delegate
++    if (!delegate || (delegate
+                          ->RemoteDebuggingTargets(
+                              DevToolsManagerDelegate::TargetType::kFrame)
+-                         .empty()) {
++                         .empty() BRAVE_TARGET_HANDLER_CREATE_HIDDEN_TARGET)) {
+       return protocol::Response::ServerError(
+           "Hidden target can be created only when remote debugging is enabled");
+     }
+@@ -1404,7 +1404,7 @@ Response TargetHandler::CreateTarget(
+       return protocol::Response::InvalidParams(
+           "Hidden target cannot be created for tab");
+     }
+-    if (new_window) {
++    if (new_window.value_or(false)) {
+       return protocol::Response::InvalidParams(
+           "Hidden target cannot be created in a new window");
+     }

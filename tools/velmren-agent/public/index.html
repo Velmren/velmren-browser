@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Velmren · Agent workspace</title>
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#workspace">Skip to tasks</a>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="Velmren agent workspace"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M5 7h6l5 12 5-12h6L16 29Z"/><path class="mark-cut" d="m12 3 4 8 4-8Z"/></svg><span>VELMREN</span></a>
+    <span class="prototype">LOCAL PROTOTYPE</span>
+    <div class="connection"><span class="connection-dot" aria-hidden="true"></span><span id="connection-state">Connecting</span></div>
+  </header>
+  <main id="workspace">
+    <section class="page-heading" aria-labelledby="page-title">
+      <div><p class="eyebrow">BROWSER CONTROL</p><h1 id="page-title">Agent workspace</h1><p class="intro">A clear view of what your agents are doing. Take over when they need you.</p></div>
+      <button id="refresh" class="button primary" type="button">Refresh tasks</button>
+    </section>
+    <div id="notice" class="notice" role="alert" hidden></div>
+    <p id="announcement" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></p>
+    <section class="metrics" aria-label="Task summary">
+      <div class="metric"><span class="metric-label">Agent active</span><strong id="count-active">—</strong><span class="metric-note">Working in background</span></div>
+      <div class="metric attention"><span class="metric-label">Needs you</span><strong id="count-human">—</strong><span class="metric-note">Waiting for human input</span></div>
+      <div class="metric"><span class="metric-label">Paused</span><strong id="count-paused">—</strong><span class="metric-note">Ready when you are</span></div>
+      <div class="metric"><span class="metric-label">All tasks</span><strong id="count-total">—</strong><span id="capacity" class="metric-note">Local broker</span></div>
+    </section>
+    <div class="workspace-grid">
+      <section class="task-section" aria-labelledby="tasks-heading">
+        <div class="section-heading"><h2 id="tasks-heading">Tasks <span id="task-count" class="count">0</span></h2><label class="filter-label" for="filter">Show<select id="filter"><option value="all">All tasks</option><option value="working">Working</option><option value="human">Needs you / human</option><option value="finished">Finished</option></select></label></div>
+        <div id="tasks" class="task-list" aria-busy="true"></div>
+        <div id="empty" class="empty-state" hidden><div class="empty-symbol" aria-hidden="true">↗</div><h3 id="empty-title">Your workspace is ready</h3><p id="empty-message">Create a task from Codex, Claude, or the CLI. It will appear here with its progress and controls.</p></div>
+      </section>
+      <aside class="inspector" aria-labelledby="inspector-heading">
+        <div class="section-heading"><h2 id="inspector-heading">Page inspector</h2><span class="quiet-tag">ON DEMAND</span></div>
+        <div id="inspector-empty" class="inspector-empty"><svg viewBox="0 0 48 48" aria-hidden="true"><rect x="7" y="10" width="34" height="28" rx="4"/><path d="M7 18h34M14 14h1m4 0h1M15 25h18m-18 6h12"/></svg><h3>Look into a task</h3><p>Choose Observe to read the page and its controls. Capture an image when you need a visual check.</p></div>
+        <div id="inspection" hidden>
+          <p id="inspection-owner" class="eyebrow"></p><h3 id="inspection-title" class="inspection-title"></h3><p id="inspection-url" class="url"></p><p id="inspection-stamp" class="muted"></p>
+          <div class="inspector-actions"><button id="inspect-again" class="button" type="button">Observe again</button><button id="screenshot" class="button" type="button">Capture screenshot</button></div>
+          <div id="inspection-error" class="inline-error" role="alert" hidden></div>
+          <figure id="screenshot-view" class="screenshot-view" hidden><img id="screenshot-image" alt="On-demand screenshot of the selected browser task"><figcaption id="screenshot-caption"></figcaption></figure>
+          <details open><summary>Page text</summary><pre id="page-text" class="page-text"></pre></details>
+          <details><summary id="elements-summary">Page controls</summary><ol id="elements" class="elements"></ol></details>
+          <details id="downloads-details" hidden><summary>Downloads</summary><ul id="downloads" class="downloads"></ul></details>
+        </div>
+      </aside>
+    </div>
+    <footer><span id="updated">Waiting for the local broker</span><span>Task pages stay in the background until you choose Show.</span></footer>
+  </main>
+</body>
+</html>

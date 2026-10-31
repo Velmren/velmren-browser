@@ -1,6 +1,29 @@
-![Brave Browser](./docs/images/brave.svg)
+# Velmren
 
-# Brave Core
+Velmren is an experimental Windows x64 browser fork based on Brave and
+Chromium. It includes a separate local agent companion, a per-user installer,
+and signed update manifests. The current release work targets Windows only;
+the upstream platform instructions below do not establish Velmren support for
+other operating systems.
+
+- [Windows build recipe](tools/velmren-delivery/BUILD-WINDOWS.md)
+- [Installer and update architecture](tools/velmren-delivery/README.md)
+- [Preview release channel](tools/velmren-delivery/RELEASE-CHANNEL.md)
+- [Local agent companion and client connections](tools/velmren-agent/README.md)
+- [Second-PC installation instructions, in Russian](tools/velmren-setup/support/SECOND-PC-RU.md)
+
+This is a preview project. The update manifest signature verifies release
+integrity; it is not an Authenticode publisher signature. Clean-Windows
+installation acceptance and public update-feed availability must be recorded
+for each published release. Preparing the source or building an installer does
+not establish either result.
+
+Velmren is independently maintained and is not an official Brave or Google
+distribution. Upstream copyright and license notices are retained; see
+[LICENSE](LICENSE). Bundled Chromium, Node.js, filter lists, and other
+dependencies retain their respective licenses and credits.
+
+## Upstream Brave Core
 
 Brave Core is a set of changes, APIs, and scripts used for customizing Chromium
 to make the Brave browser. Please also check

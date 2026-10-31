@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <OutputType Condition="'$(DeliveryMode)' == 'Release'">WinExe</OutputType>
+    <ApplicationIcon>../../app/theme/brave/win/brave.ico</ApplicationIcon>
+    <Company>Velmren</Company>
+    <Product>Velmren</Product>
+    <Description>Velmren launcher and update engine</Description>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>VelmrenDelivery</AssemblyName>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <DebugType>none</DebugType>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <DeliveryMode Condition="'$(DeliveryMode)' == ''">Development</DeliveryMode>
+    <DeliveryPolicyFile Condition="'$(DeliveryMode)' == 'Development'">$(MSBuildProjectDirectory)/DevelopmentPolicy.json</DeliveryPolicyFile>
+    <DefineConstants Condition="'$(DeliveryMode)' == 'Release'">$(DefineConstants);RELEASE_DELIVERY</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(PinnedPublicKey)' != ''">
+    <EmbeddedResource Include="$(PinnedPublicKey)" LogicalName="Velmren.UpdatePublicKey" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Remove="tests/**/*.cs;bin/**/*.cs;obj/**/*.cs" />
+    <EmbeddedResource Include="$(DeliveryPolicyFile)" LogicalName="Velmren.DeliveryPolicy" Condition="'$(DeliveryPolicyFile)' != ''" />
+  </ItemGroup>
+  <Target Name="ValidateDeliveryBuild" BeforeTargets="PrepareForBuild">
+    <Error Condition="'$(DeliveryMode)' != 'Development' and '$(DeliveryMode)' != 'Release'" Text="DeliveryMode must be Development or Release." />
+    <Error Condition="'$(DeliveryMode)' == 'Release' and ('$(PinnedPublicKey)' == '' or !Exists('$(PinnedPublicKey)'))" Text="Release requires an explicit existing PinnedPublicKey." />
+    <Error Condition="'$(DeliveryMode)' == 'Release' and ('$(DeliveryPolicyFile)' == '' or !Exists('$(DeliveryPolicyFile)'))" Text="Release requires an explicit existing DeliveryPolicyFile." />
+    <Error Condition="'$(DeliveryMode)' == 'Release' and Exists('$(PinnedPublicKey)') and $([System.IO.File]::ReadAllText('$(PinnedPublicKey)').Contains('PRIVATE KEY'))" Text="PinnedPublicKey must never contain a private key." />
+  </Target>
+</Project>

@@ -1,0 +1,4 @@
+declare_args() {
+  # Bound linker memory use without changing optimization level or profiles.
+  velmren_win_lto_jobs = "all"
+}

@@ -1,0 +1,42 @@
+# Optimized Velmren desktop build. Keep the tested product feature set.
+is_debug = false
+is_component_build = false
+is_official_build = true
+velmren_standalone_build = true
+chrome_pgo_phase = 2
+dcheck_always_on = false
+skip_signing = true
+use_remoteexec = false
+concurrent_links = -1
+velmren_win_lto_jobs = "4"
+symbol_level = 1
+blink_symbol_level = 0
+v8_symbol_level = 0
+
+# Delivery is managed by the Velmren launcher, not Brave's update service.
+enable_updater = false
+use_prebuilt_omaha4 = false
+enable_update_notifications = false
+enable_hangout_services_extension = false
+enable_cdm_host_verification = false
+
+enable_ai_chat = false
+enable_brave_ads = false
+enable_brave_education = false
+enable_brave_news = false
+enable_brave_rewards = false
+enable_brave_stats_updater = false
+enable_brave_talk = false
+enable_brave_vpn_v1 = false
+enable_brave_vpn_v2 = false
+enable_brave_wallet = false
+enable_brave_wayback_machine = false
+enable_crash_dialog = false
+enable_email_aliases = false
+enable_local_ai = false
+enable_playlist = false
+enable_psst = false
+enable_speedreader = false
+enable_tor = false
+enable_web_discovery = false
+enable_web_discovery_native = false

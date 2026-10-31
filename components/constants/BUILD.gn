@@ -12,7 +12,7 @@ declare_args() {
   brave_services_key = ""
 }
 
-if (is_official_build) {
+if (is_official_build && !velmren_standalone_build) {
   assert(brave_services_key != "")
 }
 

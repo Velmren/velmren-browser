@@ -1,0 +1,9 @@
+{
+  "mode": "Development",
+  "schema": 1,
+  "product": "velmren-local-development",
+  "channel": null,
+  "platform": null,
+  "feedUri": null,
+  "allowedRedirectHosts": []
+}

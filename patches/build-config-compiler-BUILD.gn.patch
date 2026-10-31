@@ -1,0 +1,21 @@
+diff --git a/build/config/compiler/BUILD.gn b/build/config/compiler/BUILD.gn
+index c106acfca9..a4341e4494 100644
+--- a/build/config/compiler/BUILD.gn
++++ b/build/config/compiler/BUILD.gn
+@@ -25,6 +25,7 @@ import("//build/config/unwind.gni")
+ import("//build/toolchain/rbe.gni")
+ import("//build/toolchain/toolchain.gni")
+ import("//build_overrides/build.gni")
++import("//brave/tools/velmren-delivery/lto.gni")
+ 
+ if (current_cpu == "arm" || current_cpu == "arm64") {
+   import("//build/config/arm.gni")
+@@ -820,7 +821,7 @@ config("compiler") {
+ 
+     if (is_win) {
+       ldflags += [
+-        "/opt:lldltojobs=all",
++        "/opt:lldltojobs=$velmren_win_lto_jobs",
+         "-mllvm:-import-instr-limit=$import_instr_limit",
+         "-mllvm:-disable-auto-upgrade-debug-info",
+       ]

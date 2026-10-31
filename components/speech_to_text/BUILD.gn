@@ -10,7 +10,7 @@ declare_args() {
   service_key_stt = ""
 }
 
-if (is_official_build) {
+if (is_official_build && !velmren_standalone_build) {
   assert(service_key_stt != "")
 }
 

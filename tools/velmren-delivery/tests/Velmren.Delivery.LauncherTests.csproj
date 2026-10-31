@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <StartupObject>Velmren.Delivery.LauncherTests</StartupObject>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../*.cs;LauncherTests.cs" />
+    <EmbeddedResource Include="../DevelopmentPolicy.json" LogicalName="Velmren.DeliveryPolicy" />
+    <EmbeddedResource Include="$(PinnedPublicKey)" LogicalName="Velmren.UpdatePublicKey" />
+  </ItemGroup>
+</Project>

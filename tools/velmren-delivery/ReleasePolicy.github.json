@@ -1,0 +1,9 @@
+{
+  "mode": "Release",
+  "schema": 2,
+  "product": "velmren",
+  "channel": "preview",
+  "platform": "win-x64",
+  "feedUri": "https://github.com/Velmren/velmren-browser/releases/latest/download/",
+  "allowedRedirectHosts": ["release-assets.githubusercontent.com"]
+}

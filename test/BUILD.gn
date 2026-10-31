@@ -1281,6 +1281,8 @@ test("brave_browser_tests") {
       "//chrome/browser/ui/side_panel:side_panel_views_dependent",
       "//chrome/browser/ui/webui/bookmarks",
     ]
+    sources +=
+        [ "//brave/browser/devtools/velmren_agent_target_browsertest.cc" ]
   }
 
   if (enable_widevine) {

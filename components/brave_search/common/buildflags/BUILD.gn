@@ -4,12 +4,13 @@
 # You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import("//build/buildflag_header.gni")
+import("//brave/build/config.gni")
 
 declare_args() {
   service_key_search = ""
 }
 
-if (is_official_build) {
+if (is_official_build && !velmren_standalone_build) {
   assert(service_key_search != "")
 }
 

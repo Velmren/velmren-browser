@@ -1,0 +1,5 @@
+bin/
+obj/
+*.pem
+!preview-public.pem
+*.zip

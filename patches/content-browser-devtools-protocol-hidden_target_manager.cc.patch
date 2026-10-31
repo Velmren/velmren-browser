@@ -1,0 +1,34 @@
+diff --git a/content/browser/devtools/protocol/hidden_target_manager.cc b/content/browser/devtools/protocol/hidden_target_manager.cc
+index 06f3a00e19..09f5d91768 100644
+--- a/content/browser/devtools/protocol/hidden_target_manager.cc
++++ b/content/browser/devtools/protocol/hidden_target_manager.cc
+@@ -12,7 +12,7 @@ namespace content::protocol {
+ 
+ HiddenTargetManager::HiddenTargetManager() = default;
+ 
+-HiddenTargetManager::~HiddenTargetManager() = default;
++HiddenTargetManager::~HiddenTargetManager() { Clear(); }
+ 
+ void HiddenTargetManager::CloseContents(content::WebContents* source) {
+   hidden_web_contents_.erase(source);
+@@ -22,10 +22,12 @@ std::string HiddenTargetManager::CreateHiddenTarget(
+     const GURL& url,
+     BrowserContext* browser_context) {
+   WebContents::CreateParams create_params(browser_context);
++  BRAVE_HIDDEN_TARGET_MANAGER_CREATE_PARAMS
+   std::unique_ptr<WebContents> web_contents =
+       WebContents::Create(create_params);
+   // Required for the hidden WebContents to be properly disposed.
+   web_contents->SetDelegate(this);
++  BRAVE_HIDDEN_TARGET_MANAGER_PREPARE_CONTENTS
+   // The hidden target hosts a `window.cdp` binding wired to a trusted
+   // browser-level DevTools session (BrowserToPageConnector). Its siteless
+   // about:blank navigation never reaches SetIsUsed(), so the process would
+@@ -47,6 +49,7 @@ std::string HiddenTargetManager::CreateHiddenTarget(
+ }
+ 
+ void HiddenTargetManager::Clear() {
++  BRAVE_HIDDEN_TARGET_MANAGER_CLEAR
+   hidden_web_contents_.clear();
+ }
+ 
