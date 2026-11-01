@@ -15,6 +15,9 @@ internal static class TransportTests
     public static async Task<int> Main(string[] args) => await Program.RunTransportTests(args.Single());
 }
 
+internal sealed record LegacyManifest(int Schema, string Product, string Version, string Package, long Size, string Sha256,
+    long ExpandedSize, PayloadFile[] Files, string? Channel = null, string? Platform = null, string? PackageUrl = null);
+
 internal sealed class ScriptedHandler(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> send) : HttpMessageHandler
 {
     protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) => send(request, cancellationToken);
@@ -75,6 +78,27 @@ internal static partial class Program
         CheckTest("optional-package-uri", () => AssertTest(policy.PackageUri(feed, manifest with { PackageUrl = null }).AbsoluteUri == new Uri(feed, manifest.Package).AbsoluteUri, "Package fallback differs."));
         CheckTest("signed-package-uri-query", () => AssertTest(policy.PackageUri(feed, manifest).Query == "?signature=secret-test-token", "Signed CDN query lost."));
         CheckTest("immutable-package-uri", () => RejectTest<InvalidDataException>(() => SameRelease(manifest, manifest with { PackageUrl = manifest.PackageUrl + "-changed" })));
+        var dual = manifest with { CompactArchive = new("7z", "velmren-1.2.3.4.7z", 20, new string('a', 64)) };
+        CheckTest("compact-descriptor-valid", () => ValidateCompactArchive(dual));
+        CheckTest("compact-transfer-and-cache-selected", () =>
+        {
+            var selected = SelectArchive(dual);
+            AssertTest(selected.Package == dual.CompactArchive.Package && selected.Size == 20 && selected.Sha256 == dual.CompactArchive.Sha256
+                && selected.Files == dual.Files && ArchiveCachePath(work, selected).EndsWith(new string('a', 64) + ".7z"), "Compact transfer selection differs.");
+        });
+        CheckTest("offline-zip-fallback", () => AssertTest(SelectArchive(dual, work) == dual, "Absent offline 7z must retain the canonical ZIP."));
+        CheckTest("old-manifest-reader-retains-canonical-zip", () =>
+        {
+            var legacy = JsonSerializer.Deserialize<LegacyManifest>(Bytes(dual), Json)!;
+            AssertTest(legacy.Package == manifest.Package && legacy.Sha256 == manifest.Sha256 && legacy.Size == manifest.Size, "Legacy reader changed transfer identity.");
+        });
+        foreach (var invalid in new[] {
+            dual.CompactArchive with { Format = "zip" }, dual.CompactArchive with { Package = "../other.7z" },
+            dual.CompactArchive with { Package = "velmren-1.2.3.5.7z" }, dual.CompactArchive with { Size = 0 },
+            dual.CompactArchive with { Size = MaxPackage + 1 }, dual.CompactArchive with { Sha256 = "bad" },
+            dual.CompactArchive with { PackageUrl = "https://unapproved.invalid/payload.7z" } })
+            CheckTest("compact-descriptor-rejected-" + TransportChecks.Count, () => RejectTest<InvalidDataException>(() => ValidateCompactArchive(dual with { CompactArchive = invalid })));
+        CheckTest("compact-rebinding-rejected", () => RejectTest<InvalidDataException>(() => SameRelease(dual, dual with { CompactArchive = dual.CompactArchive with { Sha256 = new string('b', 64) } })));
         foreach (var status in new[] { 301, 302, 303, 307, 308 })
         {
             await CheckTestAsync("redirect-" + status + "-fresh-range-only", async () =>

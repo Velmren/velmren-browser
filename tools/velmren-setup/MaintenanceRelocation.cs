@@ -1,9 +1,11 @@
 using System.Diagnostics;
-using System.Text.Json;
 
 namespace Velmren.Setup;
 
-internal sealed record MaintenanceSession(string Root, string Source, int ParentId, long ParentStartTime);
+internal sealed record MaintenanceSession(string Root, string Source, int ParentId, long ParentStartTime)
+{
+    public MaintenanceSession() : this("", "", 0, 0) { }
+}
 
 internal static class MaintenanceRelocation
 {
@@ -21,7 +23,7 @@ internal static class MaintenanceRelocation
 
     internal static bool RelocateIfNeeded(SetupOptions options)
     {
-        var executable = Environment.ProcessPath ?? throw new InvalidOperationException("Missing setup executable.");
+        var executable = FrameworkCompatibility.ProcessPath;
         var cacheRoot = CacheRootFor(options.Root);
         if (options.MaintenanceSession is not null)
         {
@@ -33,8 +35,7 @@ internal static class MaintenanceRelocation
         using var parent = Process.GetCurrentProcess();
         var clone = PrepareClone(options.Root, executable, cacheRoot, parent.Id, parent.StartTime.ToUniversalTime().Ticks);
         var info = new ProcessStartInfo(clone.Executable) { UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = clone.Directory };
-        foreach (var argument in new[] { "--uninstall", "--root", options.Root, "--maintenance-session", Path.GetFileName(clone.Directory) })
-            info.ArgumentList.Add(argument);
+        info.Arguments = FrameworkCompatibility.Arguments(new[] { "--uninstall", "--root", options.Root, "--maintenance-session", Path.GetFileName(clone.Directory) });
         using var process = Process.Start(info) ?? throw new IOException("Could not start maintenance.");
         return true;
     }
@@ -46,7 +47,7 @@ internal static class MaintenanceRelocation
         var directory = PayloadSession.CreatePrivateDirectory(cacheRoot);
         var clone = Path.Combine(directory, FileName);
         File.Copy(executable, clone, false);
-        File.WriteAllText(Path.Combine(directory, SessionFile), JsonSerializer.Serialize(new MaintenanceSession(root, executable, parentId, parentStartTime)));
+        File.WriteAllText(Path.Combine(directory, SessionFile), JsonCodec.Serialize(new MaintenanceSession(root, executable, parentId, parentStartTime)));
         return (directory, clone);
     }
 
@@ -63,9 +64,9 @@ internal static class MaintenanceRelocation
         var marker = Path.Combine(directory, SessionFile);
         PayloadSession.EnsureNoLinks(marker);
         if (new FileInfo(marker).Length > 16 * 1024) throw new InvalidDataException("Invalid maintenance marker.");
-        var session = JsonSerializer.Deserialize<MaintenanceSession>(File.ReadAllText(marker)) ?? throw new InvalidDataException("Invalid maintenance marker.");
+        var session = JsonCodec.Deserialize<MaintenanceSession>(File.ReadAllText(marker)) ?? throw new InvalidDataException("Invalid maintenance marker.");
         if (!session.Root.Equals(options.Root, StringComparison.OrdinalIgnoreCase) || !IsWithin(session.Source, options.Root) ||
-            session.ParentId <= 0 || session.ParentId == Environment.ProcessId)
+            session.ParentId <= 0 || session.ParentId == FrameworkCompatibility.ProcessId)
             throw new InvalidDataException("Maintenance session root mismatch.");
         return session;
     }

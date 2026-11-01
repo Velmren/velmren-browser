@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <Import Project="../DeliveryArchiveDependencies.props" />
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <StartupObject>Velmren.Delivery.CompactArchiveTests</StartupObject>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <DefineConstants>$(DefineConstants);RELEASE_DELIVERY</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../*.cs;CompactArchiveTests.cs" />
+    <EmbeddedResource Include="../ReleasePolicy.github.json" LogicalName="Velmren.DeliveryPolicy" />
+    <EmbeddedResource Include="../preview-public.pem" LogicalName="Velmren.UpdatePublicKey" />
+  </ItemGroup>
+</Project>

@@ -41,7 +41,10 @@ if ($Feed) {
     $feedValue = $Feed
 }
 
-$resources = [ordered]@{ 'Setup.Payload.Engine' = $engine }
+$resources = [ordered]@{}
+$engineHash = (Get-FileHash -LiteralPath $engine -Algorithm SHA256).Hash.ToLowerInvariant()
+$engineSize = (Get-Item -LiteralPath $engine).Length
+if ($engineSize -le 0 -or $engineSize -gt 512MB) { throw 'Engine must be non-empty and no larger than 512 MiB.' }
 $packageName = $null
 if ($BundleDirectory) {
     $bundle = [IO.Path]::GetFullPath($BundleDirectory)
@@ -61,11 +64,25 @@ if ($BundleDirectory) {
     $packagePath = Join-Path $bundle $packageName
     Assert-NoLinks $packagePath
     if (-not (Test-Path -LiteralPath $packagePath -PathType Leaf)) { throw 'Signed manifest package is missing.' }
+    # Reuse the signed package's engine instead of embedding a second bootstrap copy.
+    $packageInput = [IO.File]::OpenRead($packagePath)
+    $archive = [IO.Compression.ZipArchive]::new($packageInput, [IO.Compression.ZipArchiveMode]::Read)
+    try {
+        $entries = @($archive.Entries | Where-Object FullName -CEQ 'delivery/Velmren.exe')
+        if ($entries.Count -ne 1 -or $entries[0].Length -ne $engineSize) { throw 'Bundle must contain exactly one matching delivery/Velmren.exe.' }
+        $entryInput = $entries[0].Open()
+        $algorithm = [Security.Cryptography.SHA256]::Create()
+        try { $entryHash = [BitConverter]::ToString($algorithm.ComputeHash($entryInput)).Replace('-', '').ToLowerInvariant() }
+        finally { $algorithm.Dispose(); $entryInput.Dispose() }
+        if ($entryHash -ne $engineHash) { throw 'Bundle delivery engine does not match EnginePath.' }
+    }
+    finally { $archive.Dispose(); $packageInput.Dispose() }
     $resources.Add('Setup.Payload.Manifest', $manifestPath)
     $resources.Add('Setup.Payload.Package', $packagePath)
 }
 
 if (-not $Name) { $Name = if ($BundleDirectory -or $Feed) { 'VelmrenSetup' } else { 'VelmrenMaintenance' } }
+if ($Name -eq 'VelmrenMaintenance' -and ($BundleDirectory -or $Feed)) { throw 'Maintenance must not embed a package or feed.' }
 $parsedVersion = $null
 if (-not [Version]::TryParse($Version, [ref]$parsedVersion)) { throw 'Version must be numeric.' }
 $output = [IO.Path]::GetFullPath($OutputDirectory)
@@ -74,7 +91,18 @@ Assert-NoLinks $output
 $stage = Join-Path $output ('build-' + [Guid]::NewGuid().ToString('N'))
 [IO.Directory]::CreateDirectory($stage) | Out-Null
 $configPath = Join-Path $stage 'payload.json'
-@{ Feed = $feedValue; Package = $packageName } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding utf8
+$engineSource = if ($BundleDirectory) { 'package' } elseif ($Feed) { 'gzip' } else { 'installed' }
+if ($engineSource -eq 'gzip') {
+    $compressedPath = Join-Path $stage 'engine.exe.gz'
+    $input = [IO.File]::OpenRead($engine)
+    $outputStream = [IO.File]::Create($compressedPath)
+    $gzip = [IO.Compression.GZipStream]::new($outputStream, [IO.Compression.CompressionLevel]::Optimal)
+    try { $input.CopyTo($gzip) }
+    finally { $gzip.Dispose(); $outputStream.Dispose(); $input.Dispose() }
+    $resources.Add('Setup.Payload.Engine', $compressedPath)
+}
+@{ Feed = $feedValue; Package = $packageName; EngineSha256 = $engineHash; EngineSize = $engineSize; EngineSource = $engineSource } |
+    ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding utf8
 $resources.Add('Setup.Payload.Config', $configPath)
 
 $props = Join-Path $stage 'payload.props'
@@ -98,10 +126,9 @@ finally { $writer.Dispose() }
 $project = Join-Path $PSScriptRoot 'Velmren.Setup.csproj'
 $publish = Join-Path $stage 'publish'
 $dotnetArguments = @(
-    'publish', $project, '-c', 'Release', '-r', $Runtime, '--self-contained', 'true',
+    'publish', $project, '-c', 'Release',
     '-o', $publish,
-    '-p:PublishSingleFile=true', '-p:IncludeNativeLibrariesForSelfExtract=true',
-    '-p:EnableCompressionInSingleFile=true', '-p:DebugType=none',
+    '-p:DebugType=none',
     "-p:BaseIntermediateOutputPath=$stage/obj/", "-p:BaseOutputPath=$stage/bin/",
     "-p:SetupPayloadProps=$props", "-p:AssemblyName=$Name", "-p:Version=$Version"
 )
@@ -116,6 +143,9 @@ $hash = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerI
     sha256 = $hash
     size = (Get-Item -LiteralPath $destination).Length
     runtime = $Runtime
+    uiFramework = 'net472-os-provided'
+    engineSource = $engineSource
+    engineSha256 = $engineHash
     bundle = [bool]$BundleDirectory
     onlineFeed = [bool]$Feed
     signed = $false

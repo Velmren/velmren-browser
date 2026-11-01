@@ -13,9 +13,10 @@ using System.Text.RegularExpressions;
 namespace Velmren.Delivery;
 
 internal sealed record PayloadFile(string Path, long Size, string Sha256);
+internal sealed record ArchiveVariant(string Format, string Package, long Size, string Sha256, string? PackageUrl = null);
 internal sealed record Manifest(int Schema, string Product, string Version, string Package,
     long Size, string Sha256, long ExpandedSize, PayloadFile[] Files,
-    string? Channel = null, string? Platform = null, string? PackageUrl = null);
+    string? Channel = null, string? Platform = null, string? PackageUrl = null, ArchiveVariant? CompactArchive = null);
 internal sealed record Envelope(string Payload, string Signature);
 internal sealed record Pointer(string Version);
 internal sealed record Settings(int Schema, string Feed, int PollSeconds);
@@ -55,7 +56,7 @@ internal static partial class Program
             switch (command)
             {
                 case "keygen": Keygen(Required(options, "directory")); break;
-                case "package": Package(Required(options, "payload"), Required(options, "version"), Required(options, "feed-directory"), Required(options, "private-key"), options.GetValueOrDefault("package-url")); break;
+                case "package": Package(Required(options, "payload"), Required(options, "version"), Required(options, "feed-directory"), Required(options, "private-key"), options.GetValueOrDefault("package-url"), options.GetValueOrDefault("compact-archive"), options.GetValueOrDefault("compact-package-url")); break;
                 case "install": await Install(Required(options, "root"), options.GetValueOrDefault("feed") ?? Policy.FeedUri ?? Required(options, "feed"), Number(options, "poll-seconds", 120), token); break;
                 case "install-bundle": await Install(Required(options, "root"), options.GetValueOrDefault("feed") ?? Policy.FeedUri ?? Required(options, "feed"), Number(options, "poll-seconds", 120), token, Required(options, "bundle-directory")); break;
                 case "register": await Register(Root(options), Boolean(options, "desktop", false), token); break;
@@ -241,6 +242,7 @@ internal static partial class Program
         if (manifest.Package != $"velmren-{manifest.Version}.zip" || manifest.Size <= 0 || manifest.Size > MaxPackage || manifest.ExpandedSize < 0 || manifest.ExpandedSize > MaxPackage || manifest.Files is null || manifest.Files.Length is < 1 or > 30000)
             throw new InvalidDataException("Invalid package limits.");
         CheckHash(manifest.Sha256);
+        ValidateCompactArchive(manifest);
         var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         long total = 0;
         foreach (var file in manifest.Files)
@@ -259,7 +261,8 @@ internal static partial class Program
         }
     }
     static void CheckHash(string value) { if (value is null || value.Length != 64 || value.Any(c => !char.IsAsciiHexDigit(c))) throw new InvalidDataException("Invalid SHA-256."); }
-    static void Package(string payload, string version, string feed, string privateKey, string? packageUrl = null)
+    static void Package(string payload, string version, string feed, string privateKey, string? packageUrl = null,
+        string? compactArchivePath = null, string? compactPackageUrl = null)
     {
         _ = VersionOf(version);
         payload = Path.GetFullPath(payload); feed = Path.GetFullPath(feed);
@@ -290,7 +293,7 @@ internal static partial class Program
                 var relative = Path.GetRelativePath(payload, source).Replace('\\', '/');
                 SafePath(payload, relative);
                 using var input = new FileStream(source, FileMode.Open, FileAccess.Read, FileShare.Read);
-                var entry = archive.CreateEntry(relative, CompressionLevel.Fastest);
+                var entry = archive.CreateEntry(relative, CompressionLevel.SmallestSize);
                 entry.ExternalAttributes = 0;
                 using var destination = entry.Open();
                 using var hasher = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
@@ -300,7 +303,17 @@ internal static partial class Program
             }
         }
         var manifest = new Manifest(Policy.Schema, Policy.Product, version, archiveName, new FileInfo(temp).Length, Hash(temp), inventory.Sum(f => f.Size), inventory.ToArray(), Policy.Channel, Policy.Platform, packageUrl);
+        if (compactArchivePath is not null)
+        {
+            compactArchivePath = Path.GetFullPath(compactArchivePath);
+            NoLinks(compactArchivePath);
+            if (Path.GetFileName(compactArchivePath) != $"velmren-{version}.7z") throw new InvalidDataException("Unexpected compact archive filename.");
+            manifest = manifest with { CompactArchive = new("7z", Path.GetFileName(compactArchivePath), new FileInfo(compactArchivePath).Length, Hash(compactArchivePath), compactPackageUrl) };
+        }
+        else if (compactPackageUrl is not null) throw new InvalidDataException("Compact package URL requires a compact archive.");
         Validate(manifest);
+        if (compactArchivePath is not null)
+            ExtractCompactArchive(compactArchivePath, SafePath(feed, ".compact-verification-" + Guid.NewGuid().ToString("N")), manifest, CancellationToken.None);
         var app = Read<AppConfig>(Path.Combine(payload, "delivery-app.json")); ValidateApp(payload, app);
         var signed = Bytes(manifest);
         var envelope = Bytes(new Envelope(Convert.ToBase64String(signed), Convert.ToBase64String(rsa.SignData(signed, HashAlgorithmName.SHA256, RSASignaturePadding.Pss))));
@@ -360,7 +373,7 @@ internal static partial class Program
         var settings = GetSettings(root);
         using var operation = await Lock(root, cancellationToken);
         var verified = await Latest(FeedUri(settings.Feed), cancellationToken);
-        await ApplyRelease(root, verified, ct => Download(root, FeedUri(settings.Feed), verified.Manifest, ct), cancellationToken);
+        await ApplyRelease(root, verified, ct => Download(root, FeedUri(settings.Feed), SelectArchive(verified.Manifest), ct), cancellationToken);
     }
     static async Task ApplyRelease(string root, Verified verified, Func<CancellationToken, Task<string>> archiveSource, CancellationToken cancellationToken)
     {
@@ -372,7 +385,7 @@ internal static partial class Program
         if (current?.Version == manifest.Version)
         {
             SameRelease(ReadInstalledManifest(root, manifest.Version).Manifest, manifest);
-            TryActivate(root, cancellationToken);
+            TryActivate(root, cancellationToken, cleanupRetired: true);
             Event(root, "up-to-date", manifest.Version); return;
         }
         var versionPath = VersionDirectory(root, manifest.Version);
@@ -394,12 +407,13 @@ internal static partial class Program
         EnsureSandboxReadAccess(Path.Combine(versionPath, "app"));
         RememberHighWater(root, verified);
         Atomic(Path.Combine(root, "pending.json"), Bytes(new Pointer(manifest.Version)));
-        TryActivate(root, cancellationToken);
+        TryActivate(root, cancellationToken, cleanupRetired: true);
     }
     static async Task<string> Download(string root, Uri feed, Manifest manifest, CancellationToken cancellationToken,
         DeliveryTransport? transport = null, DeliveryPolicy? policy = null)
     {
-        var complete = SafePath(root, "downloads/" + manifest.Sha256 + ".zip");
+        var complete = ArchiveCachePath(root, manifest);
+        DirectorySafe(SafePath(root, "downloads"));
         var partial = complete + ".part"; NoLinks(partial);
         TrackOwned(root, [Path.GetRelativePath(root, complete), Path.GetRelativePath(root, partial)]);
         if (File.Exists(complete) && new FileInfo(complete).Length == manifest.Size && Hash(complete, cancellationToken).Equals(manifest.Sha256, StringComparison.OrdinalIgnoreCase)) return complete;
@@ -450,6 +464,12 @@ internal static partial class Program
     }
     static void Extract(string archivePath, string destination, Manifest manifest, CancellationToken cancellationToken)
     {
+        if (Path.GetExtension(archivePath) == ".7z")
+        {
+            if (manifest.CompactArchive is null) throw new InvalidDataException("Unsigned compact archive representation.");
+            ExtractCompactArchive(archivePath, destination, manifest, cancellationToken);
+            return;
+        }
         DirectorySafe(destination);
         using var archive = ZipFile.OpenRead(archivePath);
         if (archive.Entries.Count != manifest.Files.Length) throw new InvalidDataException("Archive inventory count mismatch.");
@@ -489,7 +509,7 @@ internal static partial class Program
     static void SameRelease(Manifest installed, Manifest offered)
     {
         if (installed.Size != offered.Size || !installed.Sha256.Equals(offered.Sha256, StringComparison.OrdinalIgnoreCase)
-            || installed.PackageUrl != offered.PackageUrl)
+            || installed.PackageUrl != offered.PackageUrl || installed.CompactArchive != offered.CompactArchive)
             throw new InvalidDataException("An immutable release version was rebound to another package.");
     }
     static Verified ReadInstalledManifest(string root, string version)
@@ -578,7 +598,13 @@ internal static partial class Program
         }
         return false;
     }
-    static bool TryActivate(string root, CancellationToken cancellationToken = default)
+    static bool TryActivate(string root, CancellationToken cancellationToken = default, bool cleanupRetired = false)
+    {
+        var activated = TryActivateCore(root, cancellationToken);
+        if (cleanupRetired) CleanupRetiredArtifacts(root, cancellationToken);
+        return activated;
+    }
+    static bool TryActivateCore(string root, CancellationToken cancellationToken)
     {
         var pending = Current(root, "pending.json");
         if (pending is null && !File.Exists(SafePath(root, LauncherJournal))
@@ -677,7 +703,7 @@ internal static partial class Program
                 next = DateTime.UtcNow.AddSeconds(interval);
             }
         }
-        using (var operation = await Lock(root, cancellationToken)) TryActivate(root, cancellationToken);
+        using (var operation = await Lock(root, cancellationToken)) TryActivate(root, cancellationToken, cleanupRetired: true);
         Event(root, agents ? "agents-exited" : "browser-exited", Current(root)?.Version);
     }
     static async Task InitialUpdateCheck(string root, CancellationToken cancellationToken = default)

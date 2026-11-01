@@ -264,14 +264,8 @@ internal class SetupForm : SetupWindow
 
     private void BrowseClick(object? sender, EventArgs e)
     {
-        using var dialog = new FolderBrowserDialog
-        {
-            Description = "Выберите папку для Velmren",
-            UseDescriptionForTitle = true,
-            SelectedPath = destination.Text,
-            ShowNewFolderButton = true
-        };
-        if (dialog.ShowDialog(this) == DialogResult.OK) destination.Text = dialog.SelectedPath;
+        var selected = FolderPicker.Show(this, destination.Text);
+        if (selected is not null) destination.Text = selected;
     }
 
     private async Task PrimaryClickAsync()
@@ -286,7 +280,7 @@ internal class SetupForm : SetupWindow
                     var executable = Path.Combine(selectedRoot, "Velmren.exe");
                     PayloadSession.EnsureNoLinks(executable);
                     var info = new ProcessStartInfo(executable) { UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = selectedRoot };
-                    foreach (var argument in new[] { "launch", "--root", selectedRoot }) info.ArgumentList.Add(argument);
+                    info.Arguments = FrameworkCompatibility.Arguments(new[] { "launch", "--root", selectedRoot });
                     Process.Start(info)?.Dispose();
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
@@ -317,7 +311,7 @@ internal class SetupForm : SetupWindow
         var token = cancellation.Token;
         try
         {
-            payload ??= await PayloadSession.ExtractAsync(token, MaintenanceRelocation.CacheRootFor(selectedRoot));
+            payload ??= await PayloadSession.ExtractAsync(token, MaintenanceRelocation.CacheRootFor(selectedRoot), selectedRoot);
             payload.ResetCancellation();
             var notifications = new Progress<EngineEvent>(OnEngineEvent);
             var arguments = new List<string> { uninstall ? "uninstall" : payload.BundleDirectory is null ? "install" : "install-bundle", "--root", selectedRoot };

@@ -3,7 +3,8 @@ param(
   [Parameter(Mandatory)][string]$Installer,
   [Parameter(Mandatory)][string]$PrivateKey,
   [Parameter(Mandatory)][string]$WorkDirectory,
-  [int]$Port = 18773
+  [int]$Port = 18773,
+  [switch]$CompactUpdate
 )
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $false
@@ -80,6 +81,7 @@ function Hostile-Archive([string]$Version, [string]$Kind) {
   $envelope = Get-Content -Raw -LiteralPath (Join-Path $feed 'manifest-1.0.0.1.json') | ConvertFrom-Json
   $manifest = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($envelope.payload)) | ConvertFrom-Json
   $manifest.version = $Version
+  $manifest.compactArchive = $null
   $manifest.package = "velmren-$Version.zip"
   $zipPath = Join-Path $feed $manifest.package
   $input = [IO.Compression.ZipFile]::OpenRead((Join-Path $feed 'velmren-1.0.0.1.zip'))
@@ -101,7 +103,11 @@ try {
   'release N' | Set-Content -LiteralPath (Join-Path $payload 'release.txt') -Encoding utf8NoBOM
   Run-Delivery @('package','--payload',$payload,'--version','1.0.0.0','--feed-directory',$feed,'--private-key',$PrivateKey)
   'release N+1' | Set-Content -LiteralPath (Join-Path $payload 'release.txt') -Encoding utf8NoBOM
-  Run-Delivery @('package','--payload',$payload,'--version','1.0.0.1','--feed-directory',$feed,'--private-key',$PrivateKey)
+  if ($CompactUpdate) {
+    & (Join-Path $PSScriptRoot 'Build-Release.ps1') -Installer $Installer -PayloadDirectory $payload -Version '1.0.0.1' -FeedDirectory $feed -PrivateKey $PrivateKey
+  } else {
+    Run-Delivery @('package','--payload',$payload,'--version','1.0.0.1','--feed-directory',$feed,'--private-key',$PrivateKey)
+  }
   Select-Release '1.0.0.0'
   $server = Start-Process -FilePath $Installer -ArgumentList @('serve','--directory',('"' + $feed + '"'),'--port',"$Port",'--truncate-first-package','32768') -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $work 'feed.stdout.log') -RedirectStandardError (Join-Path $work 'feed.stderr.log')
   Wait-For { try { (Invoke-WebRequest "http://127.0.0.1:$Port/latest.json" -TimeoutSec 1).StatusCode -eq 200 } catch { $false } }
@@ -124,6 +130,13 @@ try {
   Wait-For { Test-Path -LiteralPath (Join-Path $profile 'synthetic-running.txt') }
   Select-Release '1.0.0.1'
   Wait-For { Test-Path -LiteralPath (Join-Path $installRoot 'pending.json') }
+  if ($CompactUpdate) {
+    $compactEnvelope = Get-Content -LiteralPath (Join-Path $feed 'manifest-1.0.0.1.json') -Raw | ConvertFrom-Json
+    $compactManifest = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($compactEnvelope.payload)) | ConvertFrom-Json
+    Assert (Test-Path -LiteralPath (Join-Path $installRoot "downloads/$($compactManifest.compactArchive.sha256).7z")) 'Automatic updater did not select the signed compact archive.'
+    Assert (!(Test-Path -LiteralPath (Join-Path $installRoot "downloads/$($compactManifest.sha256).zip"))) 'Automatic updater downloaded the compatibility ZIP unnecessarily.'
+    $checks.Add('automatic update selects and verifies compact 7z while the compatibility ZIP stays available')
+  }
   Assert ((Current-Version) -eq '1.0.0.0') 'Update activated while the application was running.'
   Assert (!$launcher.HasExited) 'The launcher exited before the deferred-activation check.'
   Wait-For { $launcher.HasExited }

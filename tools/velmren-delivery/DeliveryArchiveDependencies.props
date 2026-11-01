@@ -1,0 +1,7 @@
+<Project>
+  <ItemGroup>
+    <PackageReference Include="SharpCompress" Version="0.50.7" />
+    <EmbeddedResource Include="$(MSBuildThisFileDirectory)THIRD-PARTY-NOTICES.txt" LogicalName="Velmren.ThirdPartyNotices" />
+    <None Include="$(MSBuildThisFileDirectory)THIRD-PARTY-NOTICES.txt" Link="THIRD-PARTY-NOTICES.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

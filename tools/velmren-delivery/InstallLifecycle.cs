@@ -175,12 +175,13 @@ internal static partial class Program
             if (bundle is null)
             {
                 var offered = await Latest(FeedUri(feed), cancellationToken);
-                await ApplyRelease(root, offered, ct => Download(root, FeedUri(feed), offered.Manifest, ct), cancellationToken);
+                await ApplyRelease(root, offered, ct => Download(root, FeedUri(feed), SelectArchive(offered.Manifest), ct), cancellationToken);
             }
             else
             {
-                var source = SafePath(bundleDirectory!, bundle.Manifest.Package);
-                await ApplyRelease(root, bundle, ct => CopyBundle(root, source, bundle.Manifest, ct), cancellationToken);
+                var selected = SelectArchive(bundle.Manifest, bundleDirectory!);
+                var source = SafePath(bundleDirectory!, selected.Package);
+                await ApplyRelease(root, bundle, ct => CopyBundle(root, source, selected, ct), cancellationToken);
             }
             var current = Current(root) ?? throw new InvalidOperationException("Initial installation did not activate.");
             VerifyInstalled(root, current.Version, cancellationToken);
@@ -201,11 +202,12 @@ internal static partial class Program
 
     static async Task<string> CopyBundle(string root, string source, Manifest manifest, CancellationToken cancellationToken)
     {
+        DirectorySafe(SafePath(root, "downloads"));
         Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(new { action = "bundle-verifying" }));
         NoLinks(source);
         if (new FileInfo(source).Length != manifest.Size || !Hash(source, cancellationToken).Equals(manifest.Sha256, StringComparison.OrdinalIgnoreCase))
             throw new CryptographicException("Bundle package size or SHA-256 rejected.");
-        var complete = SafePath(root, "downloads/" + manifest.Sha256 + ".zip");
+        var complete = ArchiveCachePath(root, manifest);
         var partial = complete + ".part";
         TrackOwned(root, [Path.GetRelativePath(root, complete), Path.GetRelativePath(root, partial)]);
         if (File.Exists(complete) && new FileInfo(complete).Length == manifest.Size && Hash(complete, cancellationToken).Equals(manifest.Sha256, StringComparison.OrdinalIgnoreCase)) return complete;

@@ -41,15 +41,18 @@ portable paths, environment setup, and the build commands.
 `-NodeExecutable`, explicit `-PublicKey`, `-PrivateKey`, `-Policy`, four-part
 `-Version`, and a fresh `-OutputDirectory`. It builds a Release engine, builds
 maintenance around that exact engine, stages both into the signed browser
-payload, creates the signed ZIP/manifest, and embeds the bundle into
-`setup/VelmrenSetup.exe`. Optional `-PackageUrl` supports an immutable package
+payload, creates signed ZIP and 7z representations of the same files, and builds
+`setup/VelmrenSetup.exe` with one compressed bootstrap engine. The optional
+`offline-setup/VelmrenSetup.exe` contains the canonical ZIP and reuses its engine.
+Optional `-PackageUrl` supports an immutable package
 on an allowed HTTPS host. `release.json` records artifact hashes and public
 policy; no private key is embedded. The script does not publish or upload.
 The engine is always rebuilt into a fresh isolated build directory. Before
 execution or packaging, its actual single-file bundle is inspected: the embedded
 managed assembly must match that build's assembly and contain no registry rename
 or flush imports/calls. `registry-inspection.json` binds this check to the final
-engine hash. Maintenance and setup embed this same engine. The manifest, package,
+engine hash. Maintenance pins this engine's identity and uses a verified private
+copy of the installed engine. The manifest, packages,
 maintenance, engine and setup hashes are recorded in `release.json`.
 
 `tests/Test-ReleasePackaging.ps1 -WorkDirectory <new-directory>` exercises the
@@ -57,6 +60,27 @@ whole chain using non-executed browser/agent/runtime fixtures and an isolated
 test key. It verifies the signature, every archived file, and the engine/bundle
 bytes actually embedded in both frontends. Only the engine's `policy` and
 `package` commands run; this check performs no installation or registration.
+
+The signed schema-2 manifest retains its canonical ZIP fields for installed
+0.1.0.2 launchers. Its optional `compactArchive` descriptor authorizes a 7z with
+the same complete file inventory. New online clients prefer 7z; offline bundles
+fall back to the ZIP when a compact file is absent. Archive size, SHA-256, paths,
+every extracted file and all existing product/feed checks remain mandatory.
+`Build-Release.ps1` uses the prepared checkout's 7za (or `-SevenZipExecutable`),
+LZMA2 with a 64-MiB dictionary and four compression threads. `-NoCompactArchive`
+keeps ZIP-only fixture packaging available. See [decoder validation](tests/COMPACT-ARCHIVE-TESTS.md).
+
+Payload staging excludes GRIT `.pak.info` build metadata and Windows build/test
+diagnostic DLLs. All language `.pak` files, GPU runtimes, reading resources and
+the agent runtime remain. The core launcher is not compressed at startup.
+
+After update activation or normal browser exit, retention keeps the active
+release, newest predecessor verified against its signed file hashes, pending
+release and transaction dependencies. With both operation and run locks held,
+it removes only owned obsolete files and recognized downloaded archives.
+Unknown files, profile and agent-state are preserved. Locked files and failed
+inventory writes are retried later. Cleanup never runs on the normal startup
+path; ordinary launch still avoids a full payload scan.
 
 The host policy must name the actual chosen feed before distribution. HTTPS
 redirects are bounded to five, remain HTTPS and stay on exact allowed hosts;

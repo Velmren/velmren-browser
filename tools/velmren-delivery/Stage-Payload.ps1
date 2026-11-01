@@ -58,11 +58,23 @@ $runtime = Join-Path $target 'runtime'
 New-Item -ItemType Directory -Path $browser, $agent, $runtime -Force | Out-Null
 if (!(Test-Path -LiteralPath (Join-Path $BrowserDirectory 'velmren.exe'))) { throw 'Browser velmren.exe is missing.' }
 foreach ($file in Get-ChildItem -LiteralPath $BrowserDirectory -File) {
+  # These are build/test diagnostics, excluded by Chromium's Windows release manifest.
+  if ($file.Name -in 'VkLayer_khronos_validation.dll', 'VkICD_mock_icd.dll', 'dbghelp.dll', 'dbgcore.dll', 'msdia140.dll', 'symsrv.dll') { continue }
   if ($file.Extension -in '.dll', '.pak', '.bin', '.dat', '.manifest' -or $file.Name -in 'velmren.exe', 'chrome_proxy.exe', 'chrome_pwa_launcher.exe', 'notification_helper.exe', 'vulkan-1.dll', 'vk_swiftshader_icd.json') {
     Copy-TreeSafe $file.FullName (Join-Path $browser $file.Name)
   }
 }
-foreach ($name in 'locales', 'resources', 'MEIPreload', 'IwaKeyDistribution', 'hyphen-data') {
+$locales = Join-Path $BrowserDirectory 'locales'
+if (Test-Path -LiteralPath $locales) {
+  Assert-NoReparse $locales
+  $localesTarget = Join-Path $browser 'locales'
+  New-Item -ItemType Directory -Path $localesTarget -Force | Out-Null
+  # .pak.info contains GRIT build-time resource/source mappings, never runtime translations.
+  foreach ($locale in Get-ChildItem -LiteralPath $locales -File -Filter '*.pak') {
+    Copy-TreeSafe $locale.FullName (Join-Path $localesTarget $locale.Name)
+  }
+}
+foreach ($name in 'resources', 'MEIPreload', 'IwaKeyDistribution', 'hyphen-data') {
   $source = Join-Path $BrowserDirectory $name
   if (Test-Path -LiteralPath $source) { Copy-TreeSafe $source (Join-Path $browser $name) }
 }
@@ -94,6 +106,9 @@ $repo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 Copy-TreeSafe (Join-Path $repo 'LICENSE') (Join-Path $licenses 'Brave-MPL-2.0.txt')
 Copy-TreeSafe (Join-Path $repo '../LICENSE') (Join-Path $licenses 'Chromium-LICENSE.txt')
 Copy-TreeSafe $NodeLicense (Join-Path $licenses 'Node-LICENSE.txt')
+if ($DeliveryEngine) {
+  Copy-TreeSafe (Join-Path $PSScriptRoot 'THIRD-PARTY-NOTICES.txt') (Join-Path $licenses 'Delivery-THIRD-PARTY-NOTICES.txt')
+}
 $config | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $target 'delivery-app.json') -Encoding utf8NoBOM
 $files = @(Get-ChildItem -LiteralPath $target -File -Recurse)
 [pscustomobject]@{ Payload = $target; Files = $files.Count; Bytes = ($files | Measure-Object Length -Sum).Sum } | ConvertTo-Json

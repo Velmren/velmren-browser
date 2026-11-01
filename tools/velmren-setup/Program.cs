@@ -5,10 +5,11 @@ internal static class Program
     [STAThread]
     private static int Main(string[] args)
     {
-        ApplicationConfiguration.Initialize();
         try
         {
             var options = SetupOptions.Parse(args);
+            using var application = new FrameworkApplication(options.Root);
+            FrameworkApplication.InitializeUi();
             var payload = PayloadSession.ReadConfiguration();
             if (!options.Uninstall && options.RootSpecified && payload.Feed is null && payload.Package is null &&
                 File.Exists(Path.Combine(options.Root, "Velmren.exe"))) options = options with { Uninstall = true };

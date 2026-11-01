@@ -1,4 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
+  <Import Project="DeliveryArchiveDependencies.props" />
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <OutputType Condition="'$(DeliveryMode)' == 'Release'">WinExe</OutputType>

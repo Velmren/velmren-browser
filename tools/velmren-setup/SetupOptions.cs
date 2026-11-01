@@ -25,7 +25,7 @@ internal sealed record SetupOptions(bool Uninstall, string Root, bool RootSpecif
 
     internal static string ValidateRoot(string value)
     {
-        if (string.IsNullOrWhiteSpace(value) || !Path.IsPathFullyQualified(value))
+        if (string.IsNullOrWhiteSpace(value) || !FrameworkCompatibility.IsFullyQualified(value))
             throw new ArgumentException("Choose an absolute destination.");
         var full = Path.GetFullPath(value.Trim());
         if (Path.GetPathRoot(full)!.Equals(full, StringComparison.OrdinalIgnoreCase))

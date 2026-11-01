@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Text;
-using System.Text.Json;
 
 namespace Velmren.Setup;
 
@@ -23,9 +22,7 @@ internal sealed class EngineRunner
             StandardErrorEncoding = Encoding.UTF8,
             WorkingDirectory = Path.GetDirectoryName(engine)!
         };
-        foreach (var argument in arguments) info.ArgumentList.Add(argument);
-        info.ArgumentList.Add("--cancel-file");
-        info.ArgumentList.Add(cancelPath);
+        info.Arguments = FrameworkCompatibility.Arguments(arguments.Concat(new[] { "--cancel-file", cancelPath }));
         using var process = new Process { StartInfo = info };
         cancellationToken.ThrowIfCancellationRequested();
         process.Start();
@@ -40,18 +37,18 @@ internal sealed class EngineRunner
         });
         try
         {
-            await process.WaitForExitAsync(cancellationToken);
+            await FrameworkCompatibility.WaitForExitAsync(process, cancellationToken);
         }
         catch (OperationCanceledException)
         {
-            try { await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(8)); }
-            catch (TimeoutException)
+            var stopped = FrameworkCompatibility.WaitForExitAsync(process);
+            if (await Task.WhenAny(stopped, Task.Delay(TimeSpan.FromSeconds(8))) != stopped)
             {
                 // Never terminate the browser, agent, or unrelated processes.
-                try { process.Kill(entireProcessTree: false); }
+                try { process.Kill(); }
                 catch (InvalidOperationException) { }
-                await process.WaitForExitAsync();
             }
+            await stopped;
             await Task.WhenAll(stdout, stderr);
             throw;
         }
@@ -74,14 +71,18 @@ internal sealed class EngineRunner
     {
         try
         {
-            using var document = JsonDocument.Parse(line);
-            var value = document.RootElement;
-            if (value.ValueKind != JsonValueKind.Object || !value.TryGetProperty("action", out var action) || action.ValueKind != JsonValueKind.String)
+            var value = JsonCodec.Deserialize<Dictionary<string, object>>(line);
+            if (value is null || !value.TryGetValue("action", out var action) || action is not string actionText)
                 return null;
-            int? percent = value.TryGetProperty("percent", out var p) && p.TryGetInt32(out var number) ? Math.Clamp(number, 0, 100) : null;
-            return new EngineEvent(action.GetString()!, percent);
+            int? percent = null;
+            if (value.TryGetValue("percent", out var p))
+            {
+                if (p is not int number) return null;
+                percent = Math.Max(0, Math.Min(number, 100));
+            }
+            return new EngineEvent(actionText, percent);
         }
-        catch (JsonException) { return null; }
+        catch (ArgumentException) { return null; }
         catch (InvalidOperationException) { return null; }
     }
 
@@ -89,7 +90,7 @@ internal sealed class EngineRunner
     {
         var buffer = new char[2048];
         int count;
-        while ((count = await reader.ReadAsync(buffer)) > 0)
+        while ((count = await reader.ReadAsync(buffer, 0, buffer.Length)) > 0)
         {
             if (error.Length < 8192) error.Append(buffer, 0, Math.Min(count, 8192 - error.Length));
         }

@@ -25,12 +25,18 @@ https://github.com/Velmren/velmren-browser/releases/download/preview-0.1.0.0/vel
 ```
 
 Pass that exact URL as `-PackageUrl` before signing. Publish the generated
-`latest.json`, versioned manifest, ZIP, and installer together with the source
+`latest.json`, versioned manifest, ZIP, 7z, and installer together with the source
 revision and hashes. The feed reads
 `releases/latest/download/latest.json`; GitHub's latest-release pointer must
 select the intended release. A GitHub prerelease is not automatically selected
 by that pointer. Keep the preview status explicit in the release title and
 notes. Each uploaded asset must be smaller than 2 GiB.
+
+From 0.1.0.3, the optional signed `compactArchive` representation is the same
+versioned URL with `.7z`. Keep the canonical ZIP asset: installed 0.1.0.2 clients
+ignore the new descriptor, fetch that ZIP once, and upgrade their launcher.
+New launchers and online Setup prefer 7z. Both representations authenticate the
+same complete extracted inventory; the feed identity and pinned key are unchanged.
 
 The downloader follows HTTPS redirects only to the original host and
 `release-assets.githubusercontent.com`. A header-only check against an official

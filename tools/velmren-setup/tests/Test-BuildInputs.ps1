@@ -27,5 +27,38 @@ foreach ($name in @('../outside.zip', 'C:\outside.zip', 'inside\outside.zip', 'p
     @{ payload = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($payload)); signature = 'fixture-only' } | ConvertTo-Json | Set-Content -LiteralPath $manifestPath -Encoding utf8
     Assert-Rejected "Package rejected: $name" { & $builder -EnginePath $EnginePath -BundleDirectory $bundle -OutputDirectory $output }
 }
+Assert-Rejected 'Maintenance rejects feed payload' { & $builder -EnginePath $EnginePath -Feed 'https://example.test/manifest.json' -Name VelmrenMaintenance -OutputDirectory $output }
+$packagePath = Join-Path $bundle 'fixture.zip'
+function Write-FixtureZip([string[]]$Entries) {
+    $stream = [IO.File]::Create($packagePath)
+    $archive = [IO.Compression.ZipArchive]::new($stream, [IO.Compression.ZipArchiveMode]::Create)
+    try {
+        foreach ($entryName in $Entries) {
+            $entry = $archive.CreateEntry($entryName)
+            $entryStream = $entry.Open()
+            try {
+                $input = [IO.File]::OpenRead($EnginePath)
+                try { $input.CopyTo($entryStream) }
+                finally { $input.Dispose() }
+            }
+            finally { $entryStream.Dispose() }
+        }
+    }
+    finally { $archive.Dispose(); $stream.Dispose() }
+}
+$payload = @{ package = 'fixture.zip' } | ConvertTo-Json -Compress
+@{ payload = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($payload)); signature = 'fixture-only' } |
+    ConvertTo-Json | Set-Content -LiteralPath $manifestPath -Encoding utf8
+Write-FixtureZip @('browser/velmren.exe')
+Assert-Rejected 'Offline missing delivery engine rejected' { & $builder -EnginePath $EnginePath -BundleDirectory $bundle -OutputDirectory $output }
+Write-FixtureZip @('delivery/Velmren.exe', 'delivery/Velmren.exe')
+Assert-Rejected 'Offline duplicate delivery engine rejected' { & $builder -EnginePath $EnginePath -BundleDirectory $bundle -OutputDirectory $output }
+Write-FixtureZip @('delivery/Velmren.exe')
+$otherEngine = Join-Path $output 'changed-engine.exe'
+Copy-Item -LiteralPath $EnginePath -Destination $otherEngine
+$changed = [IO.File]::Open($otherEngine, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+try { $first = $changed.ReadByte(); $changed.Position = 0; $changed.WriteByte($first -bxor 1) }
+finally { $changed.Dispose() }
+Assert-Rejected 'Offline same-size engine SHA mismatch rejected' { & $builder -EnginePath $otherEngine -BundleDirectory $bundle -OutputDirectory $output }
 $checks | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $output 'build-input-results.json') -Encoding utf8
 Write-Output "PASS $($checks.Count) build input checks"

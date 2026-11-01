@@ -170,6 +170,7 @@ internal class SetupWindow : Form
         get
         {
             var parameters = base.CreateParams;
+            parameters.Style &= ~0x00C00000; // Never restore WS_CAPTION after a modal dialog.
             parameters.Style |= 0x00040000 | 0x00080000 | 0x00020000; // Sizing, system menu, minimize.
             return parameters;
         }
@@ -178,7 +179,7 @@ internal class SetupWindow : Form
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
-        if (OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000))
+        if (Environment.OSVersion.Version >= new Version(10, 0, 22000))
         {
             var rounded = 2; // DWMWCP_ROUND. DWM retains native shadow and corner clipping.
             _ = DwmSetWindowAttribute(Handle, 33, ref rounded, sizeof(int));
@@ -216,9 +217,14 @@ internal class SetupWindow : Form
 
     protected override void WndProc(ref Message message)
     {
-        if (message.Msg == 0x0083 && message.WParam != IntPtr.Zero) // WM_NCCALCSIZE: client covers native caption.
+        if (message.Msg == 0x0083 || message.Msg == 0x0085) // WM_NCCALCSIZE (both forms), WM_NCPAINT.
         {
             message.Result = IntPtr.Zero;
+            return;
+        }
+        if (message.Msg == 0x0086) // WM_NCACTIVATE: accept activation without repainting a native caption.
+        {
+            message.Result = (IntPtr)1;
             return;
         }
         if (message.Msg == 0x0084) // WM_NCHITTEST: signed coordinates support monitors left of the primary.

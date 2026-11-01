@@ -1,14 +1,15 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net10.0-windows</TargetFramework>
+    <TargetFramework>net472</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <Prefer32Bit>false</Prefer32Bit>
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AssemblyName>VelmrenSetup</AssemblyName>
     <RootNamespace>Velmren.Setup</RootNamespace>
-    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
-    <ApplicationDefaultFont>Segoe UI, 10pt</ApplicationDefaultFont>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>../../app/theme/brave/win/brave.ico</ApplicationIcon>
     <Company>Velmren</Company>
@@ -17,8 +18,12 @@
     <Version>1.0.0</Version>
     <DebugType>none</DebugType>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <DefaultItemExcludes>$(DefaultItemExcludes);tests/**;**/bin/**;**/obj/**</DefaultItemExcludes>
   </PropertyGroup>
   <ItemGroup>
+    <Reference Include="System.Web.Extensions" />
+    <Reference Include="System.IO.Compression" />
+    <Reference Include="System.Configuration" />
     <Compile Remove="tests/**/*.cs;bin/**/*.cs;obj/**/*.cs" />
     <EmbeddedResource Include="../../app/theme/velmren/logo-preview.png" LogicalName="Setup.Brand.Logo" />
     <EmbeddedResource Include="../../app/theme/brave/win/brave.ico" LogicalName="Setup.Brand.Icon" />
