@@ -45,7 +45,7 @@ internal static partial class Program
         return identity.User?.Value ?? throw new InvalidOperationException("Windows owner SID is unavailable.");
     }
 
-    static InstallOwnership ReadOwnership(string root)
+    static InstallOwnership ReadOwnership(string root, bool validateInventory = true)
     {
         root = CanonicalRoot(root);
         var path = SafePath(root, OwnershipFile);
@@ -56,7 +56,7 @@ internal static partial class Program
             || owner.Platform != Policy.Platform || owner.Mode != Policy.Mode || !Guid.TryParseExact(owner.Id, "N", out _)
             || owner.State is not ("installing" or "installed" or "retained") || owner.Files is null)
             throw new InvalidDataException("Installation root, owner, or product identity does not match this installer.");
-        foreach (var file in owner.Files)
+        if (validateInventory) foreach (var file in owner.Files)
         {
             ValidateRelativePath(file);
             if (file.Equals(OwnershipFile, StringComparison.OrdinalIgnoreCase) || file.Split('/')[0].Equals("profile", StringComparison.OrdinalIgnoreCase)
@@ -201,6 +201,7 @@ internal static partial class Program
 
     static async Task<string> CopyBundle(string root, string source, Manifest manifest, CancellationToken cancellationToken)
     {
+        Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(new { action = "bundle-verifying" }));
         NoLinks(source);
         if (new FileInfo(source).Length != manifest.Size || !Hash(source, cancellationToken).Equals(manifest.Sha256, StringComparison.OrdinalIgnoreCase))
             throw new CryptographicException("Bundle package size or SHA-256 rejected.");

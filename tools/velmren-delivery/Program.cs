@@ -65,7 +65,7 @@ internal static partial class Program
                 case "update": await Update(Root(options), token); break;
                 case "launch": await Launch(Root(options), false, options, token); break;
                 case "agents": await Launch(Root(options), true, options, token); break;
-                case "resolve": Resolve(Root(options), token); break;
+                case "resolve": case "verify": Resolve(Root(options), token); break;
                 case "status": Status(Root(options)); break;
                 case "serve": await Serve(Required(options, "directory"), Number(options, "port", 18773), Number(options, "truncate-first-package", 0), options.GetValueOrDefault("stall-first")); break;
                 case "synthetic-app": await Synthetic(options); break;
@@ -179,10 +179,23 @@ internal static partial class Program
     static void Event(string root, string action, string? version = null, string? detail = null)
     {
         var entry = new { time = DateTimeOffset.UtcNow, action, version, detail };
-        Console.WriteLine(JsonSerializer.Serialize(entry));
+        var line = JsonSerializer.Serialize(entry);
+        try { Console.WriteLine(line); } catch (IOException) { }
         var path = Path.Combine(root, "events.jsonl");
-        NoLinks(path);
-        File.AppendAllText(path, JsonSerializer.Serialize(entry) + Environment.NewLine);
+        // Launch no longer owns operation.lock. Diagnostic contention must not
+        // abandon an already started browser or release its activation lease.
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            try { NoLinks(path); File.AppendAllText(path, line + Environment.NewLine); return; }
+            catch (IOException) when (attempt < 2) { Thread.Sleep(5); }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidDataException) { return; }
+        }
+    }
+    static int TransferProgress(string action, long completed, long total, int previous)
+    {
+        var percent = total == 0 ? 100 : (int)Math.Clamp(completed * 100 / total, 0, 100);
+        if (percent != previous) Console.WriteLine(JsonSerializer.Serialize(new { action, percent }));
+        return percent;
     }
 
     static void Keygen(string directory)
@@ -326,7 +339,7 @@ internal static partial class Program
         NoLinks(root); NoLinks(Path.Combine(root, "installation.json"));
         if (File.Exists(Path.Combine(root, OwnershipFile)) || Policy.IsRelease)
         {
-            if (ReadOwnership(root).State == "retained") throw new InvalidOperationException("This installation was uninstalled; run install again to restore its program files.");
+            if (ReadOwnership(root, validateInventory: false).State == "retained") throw new InvalidOperationException("This installation was uninstalled; run install again to restore its program files.");
         }
         var settings = Read<Settings>(Path.Combine(root, "installation.json"));
         if (settings.Schema != 1 || settings.PollSeconds is < 1 or > 86400) throw new InvalidDataException("Invalid installation settings.");
@@ -359,7 +372,6 @@ internal static partial class Program
         if (current?.Version == manifest.Version)
         {
             SameRelease(ReadInstalledManifest(root, manifest.Version).Manifest, manifest);
-            VerifyInstalled(root, manifest.Version, cancellationToken);
             TryActivate(root, cancellationToken);
             Event(root, "up-to-date", manifest.Version); return;
         }
@@ -411,6 +423,7 @@ internal static partial class Program
         using (var input = await response.Content.ReadAsStreamAsync(idleTimeout.Token))
         {
             var buffer = new byte[1024 * 1024]; int count; long total = offset;
+            var progress = TransferProgress("downloading", total, manifest.Size, -1);
             while (true)
             {
                 idleTimeout.CancelAfter(NetworkIdleTimeout);
@@ -418,10 +431,12 @@ internal static partial class Program
                 if (count == 0) break;
                 total += count; if (total > manifest.Size) throw new InvalidDataException("Package exceeds signed length.");
                 await output.WriteAsync(buffer.AsMemory(0, count), cancellationToken);
+                progress = TransferProgress("downloading", total, manifest.Size, progress);
             }
             output.Flush(true);
             if (total != manifest.Size) throw new InvalidDataException("Package download incomplete; retry resumes it.");
         }
+        Console.WriteLine(JsonSerializer.Serialize(new { action = "bundle-verifying" }));
         if (!Hash(partial, cancellationToken).Equals(manifest.Sha256, StringComparison.OrdinalIgnoreCase))
         {
             var rejected = partial + ".rejected-" + Guid.NewGuid().ToString("N");
@@ -449,6 +464,8 @@ internal static partial class Program
             if (!seen.Add(entry.FullName) || !inventory.TryGetValue(entry.FullName, out var file) || entry.Length != file.Size || (unixType != 0 && unixType != 0x8000) || (entry.ExternalAttributes & (int)FileAttributes.ReparsePoint) != 0)
                 throw new InvalidDataException("Archive entry is unlisted, duplicate, linked, or has the wrong size.");
         }
+        long expanded = 0;
+        var progress = TransferProgress("extracting", 0, manifest.ExpandedSize, -1);
         foreach (var entry in archive.Entries)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -465,6 +482,8 @@ internal static partial class Program
             }
             output.Flush(true);
             if (total != entry.Length || !Convert.ToHexStringLower(hasher.GetHashAndReset()).Equals(inventory[entry.FullName].Sha256, StringComparison.OrdinalIgnoreCase)) throw new CryptographicException("Extracted file SHA-256 rejected.");
+            expanded += total;
+            progress = TransferProgress("extracting", expanded, manifest.ExpandedSize, progress);
         }
     }
     static void SameRelease(Manifest installed, Manifest offered)
@@ -606,20 +625,18 @@ internal static partial class Program
     {
         var launchTimer = Stopwatch.StartNew();
         var url = options.TryGetValue("url", out var requestedUrl) ? LaunchUrl(requestedUrl) : null;
-        var settings = GetSettings(root);
-        // Recovery needs a release first; ordinary launch must not wait on a feed.
-        if (Current(root) is null) await InitialUpdateCheck(root, cancellationToken);
-        Process process; FileStream lease;
-        using (var startupLockBudget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+        var prepared = await PrepareBrowserLaunch(root, cancellationToken);
+        var settings = prepared.Settings;
+        var pointer = prepared.Current;
+        var lease = prepared.Lease;
+        Process process;
+        try
         {
-        startupLockBudget.CancelAfter(StartupUpdateTimeout);
-        using (var operation = await Lock(root, startupLockBudget.Token))
-        {
-            TryActivate(root, cancellationToken);
-            var pointer = Current(root) ?? throw new InvalidOperationException("No active version.");
-            VerifyInstalled(root, pointer.Version, cancellationToken);
+            var phase = Stopwatch.StartNew();
+            if (agents) VerifyInstalled(root, pointer.Version, cancellationToken);
             var appRoot = Path.Combine(VersionDirectory(root, pointer.Version), "app");
-            var app = Read<AppConfig>(Path.Combine(appRoot, "delivery-app.json"));
+            var app = ReadBrowserLaunchConfiguration(root, pointer.Version);
+            var validationMs = phase.Elapsed.TotalMilliseconds;
             var browser = SafePath(appRoot, app.Browser);
             var start = new ProcessStartInfo { FileName = agents ? SafePath(appRoot, app.Agent ?? throw new InvalidOperationException("No agent runtime in package.")) : browser, WorkingDirectory = appRoot, UseShellExecute = false, CreateNoWindow = agents };
             string Expand(string arg) => arg.Replace("{browser}", browser, StringComparison.Ordinal).Replace("{agentStateDir}", SafePath(root, "agent-state"), StringComparison.Ordinal).Replace("{profile}", SafePath(root, "profile"), StringComparison.Ordinal);
@@ -635,13 +652,14 @@ internal static partial class Program
                 if (url is not null) start.ArgumentList.Add(url);
             }
             start.Environment["VELMREN_PROFILE_DIR"] = SafePath(root, "profile");
-            lease = new FileStream(SafePath(root, "run.lock"), FileMode.Open, FileAccess.Read, FileShare.Read);
-            try { process = Process.Start(start) ?? throw new InvalidOperationException("Application failed to start."); }
-            catch { lease.Dispose(); throw; }
+            phase.Restart();
+            process = Process.Start(start) ?? throw new InvalidOperationException("Application failed to start.");
+            var processStartMs = phase.Elapsed.TotalMilliseconds;
             Event(root, agents ? "agents-started" : "browser-started", pointer.Version, process.Id.ToString());
-            Event(root, "launch-timing", pointer.Version, JsonSerializer.Serialize(new { preparationMs = launchTimer.Elapsed.TotalMilliseconds }));
+            Event(root, "launch-timing", pointer.Version, JsonSerializer.Serialize(new { preparationMs = launchTimer.Elapsed.TotalMilliseconds,
+                settingsMs = prepared.SettingsMs, lockWaitMs = prepared.LockWaitMs, validationMs, processStartMs }));
         }
-        }
+        catch { lease.Dispose(); throw; }
         var interval = Number(options, "poll-seconds", settings.PollSeconds);
         if (interval is < 1 or > 86400) interval = settings.PollSeconds;
         using (process)

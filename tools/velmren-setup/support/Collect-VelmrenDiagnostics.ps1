@@ -152,8 +152,25 @@ function Get-SafeEvents {
                 $time = [DateTimeOffset]::Parse($entry.time, [Globalization.CultureInfo]::InvariantCulture)
                 $version = Get-CanonicalVersion $entry.version
                 if ($null -ne $entry.version -and -not $version) { throw 'Invalid version.' }
-                # Never serialize the original record, detail, exception, or path.
-                $records.Add([pscustomobject][ordered]@{ timeUtc = $time.UtcDateTime.ToString('o'); action = $entry.action; version = $version })
+                # Rebuild each record; only the explicit numeric timing fields may leave detail.
+                $safe = [ordered]@{ timeUtc = $time.UtcDateTime.ToString('o'); action = $entry.action; version = $version }
+                if ($entry.action -ceq 'launch-timing' -and $entry.PSObject.Properties['detail'] -and $entry.detail -is [string]) {
+                    try {
+                        $detail = Read-Json $entry.detail
+                        $timings = [ordered]@{}
+                        foreach ($name in @('preparationMs', 'settingsMs', 'lockWaitMs', 'validationMs', 'processStartMs')) {
+                            $property = $detail.PSObject.Properties[$name]
+                            if ($null -eq $property) { continue }
+                            $value = $property.Value
+                            if (($value -is [long] -or $value -is [int] -or $value -is [double] -or $value -is [decimal]) -and
+                                $value -ge 0 -and $value -le 86400000) {
+                                $timings[$name] = $value
+                            }
+                        }
+                        if ($timings.Count -gt 0) { $safe.timingsMs = [pscustomobject]$timings }
+                    } catch { } # Malformed detail must not discard the safe event metadata.
+                }
+                $records.Add([pscustomobject]$safe)
             } catch { $result.skippedRecords++ }
         }
         $result.records = @($records.ToArray())

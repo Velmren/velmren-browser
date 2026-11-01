@@ -14,7 +14,10 @@
     <Compile Include="../PayloadSession.cs" Link="PayloadSession.cs" />
     <Compile Include="../SetupOptions.cs" Link="SetupOptions.cs" />
     <Compile Include="../SetupForm.cs" Link="SetupForm.cs" />
+    <Compile Include="../SetupControls.cs" Link="SetupControls.cs" />
     <Compile Include="../MaintenanceRelocation.cs" Link="MaintenanceRelocation.cs" />
+    <EmbeddedResource Include="../../../app/theme/velmren/logo-preview.png" LogicalName="Setup.Brand.Logo" />
+    <EmbeddedResource Include="../../../app/theme/brave/win/brave.ico" LogicalName="Setup.Brand.Icon" />
   </ItemGroup>
   <Import Project="$(SetupPayloadProps)" Condition="'$(SetupPayloadProps)' != ''" />
 </Project>

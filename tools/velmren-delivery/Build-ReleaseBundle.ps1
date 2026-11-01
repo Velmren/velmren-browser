@@ -30,8 +30,12 @@ New-Item -ItemType Directory -Path $bundle | Out-Null
 Copy-Item -LiteralPath (Join-Path $feed "manifest-$Version.json") -Destination (Join-Path $bundle 'manifest.json')
 Copy-Item -LiteralPath (Join-Path $feed "velmren-$Version.zip") -Destination (Join-Path $bundle "velmren-$Version.zip")
 $setupDirectory = Join-Path $output 'setup'
-& $setupBuilder -EnginePath $engine -BundleDirectory $bundle -OutputDirectory $setupDirectory -Name VelmrenSetup -Version $Version
+$releasePolicy = Get-Content -LiteralPath $Policy -Raw | ConvertFrom-Json
+& $setupBuilder -EnginePath $engine -Feed $releasePolicy.feedUri -OutputDirectory $setupDirectory -Name VelmrenSetup -Version $Version
 $setup = Join-Path $setupDirectory 'VelmrenSetup.exe'
+$offlineDirectory = Join-Path $output 'offline-setup'
+& $setupBuilder -EnginePath $engine -BundleDirectory $bundle -OutputDirectory $offlineDirectory -Name VelmrenSetup -Version $Version
+$offlineSetup = Join-Path $offlineDirectory 'VelmrenSetup.exe'
 $support = Join-Path $PSScriptRoot '../velmren-setup/support'
 $supportFiles = @(foreach ($name in 'SECOND-PC-RU.md', 'Collect-VelmrenDiagnostics.ps1') {
   $destination = Join-Path $setupDirectory $name
@@ -41,7 +45,10 @@ $supportFiles = @(foreach ($name in 'SECOND-PC-RU.md', 'Collect-VelmrenDiagnosti
 [ordered]@{
   version = $Version
   setup = $setup
+  setupKind = 'online'
   setupSha256 = (Get-FileHash -LiteralPath $setup -Algorithm SHA256).Hash.ToLowerInvariant()
+  offlineSetup = $offlineSetup
+  offlineSetupSha256 = (Get-FileHash -LiteralPath $offlineSetup -Algorithm SHA256).Hash.ToLowerInvariant()
   supportFiles = $supportFiles
   engineSha256 = (Get-FileHash -LiteralPath $engine -Algorithm SHA256).Hash.ToLowerInvariant()
   maintenanceSha256 = (Get-FileHash -LiteralPath (Join-Path $maintenanceDirectory 'VelmrenMaintenance.exe') -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -49,7 +56,7 @@ $supportFiles = @(foreach ($name in 'SECOND-PC-RU.md', 'Collect-VelmrenDiagnosti
   packageSha256 = (Get-FileHash -LiteralPath (Join-Path $bundle "velmren-$Version.zip") -Algorithm SHA256).Hash.ToLowerInvariant()
   registryInspection = (Get-Content -LiteralPath (Join-Path $engineDirectory 'registry-inspection.json') -Raw | ConvertFrom-Json)
   feedDirectory = $feed
-  policy = (Get-Content -LiteralPath $Policy -Raw | ConvertFrom-Json)
+  policy = $releasePolicy
   publicKeySha256 = (Get-FileHash -LiteralPath $PublicKey -Algorithm SHA256).Hash.ToLowerInvariant()
   authenticodeSigned = $false
   published = $false

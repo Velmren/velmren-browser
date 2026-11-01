@@ -83,6 +83,26 @@ foreach ($event in $report.events.records) { Assert (($event.PSObject.Properties
 $after = @(Get-ChildItem -LiteralPath $root -Recurse -File | ForEach-Object { (Get-FileHash -LiteralPath $_.FullName).Hash }) -join ','
 Assert ($before -ceq $after) 'Collector modified synthetic installation files.'
 
+$timingDetails = @(
+    (@{ preparationMs = 120; settingsMs = 2.5; lockWaitMs = 0; validationMs = 90; processStartMs = 20; path = $script:Secret; exception = $script:Secret } | ConvertTo-Json -Compress),
+    (@{ preparationMs = -1; settingsMs = '123'; lockWaitMs = $true; validationMs = 86400001; processStartMs = @{ secret = $script:Secret } } | ConvertTo-Json -Compress),
+    ('invalid-json-' + $script:Secret)
+)
+$timingJournal = New-Object Text.StringBuilder
+foreach ($detail in $timingDetails) {
+    [void]$timingJournal.AppendLine((@{ time = '2026-11-02T12:13:14Z'; action = 'launch-timing'; version = $version; detail = $detail } | ConvertTo-Json -Compress))
+}
+[void]$timingJournal.AppendLine((@{ time = '2026-11-02T12:13:14Z'; action = 'browser-started'; version = $version; detail = $timingDetails[0] } | ConvertTo-Json -Compress))
+Write-Utf8 (Join-Path $root 'events.jsonl') $timingJournal.ToString()
+$timed = Collect $root $reports
+Assert ($timed.events.records.Count -eq 4) 'Malformed timing details must preserve safe event metadata.'
+$timing = $timed.events.records[0].timingsMs
+Assert (($timing.PSObject.Properties.Name -join ',') -eq 'preparationMs,settingsMs,lockWaitMs,validationMs,processStartMs') 'Timing whitelist changed or private properties leaked.'
+Assert ($timing.preparationMs -eq 120 -and $timing.settingsMs -eq 2.5 -and $timing.lockWaitMs -eq 0 -and $timing.validationMs -eq 90 -and $timing.processStartMs -eq 20) 'Safe numeric timing measurements were lost.'
+foreach ($event in $timed.events.records[1..3]) {
+    Assert (($event.PSObject.Properties.Name -join ',') -eq 'timeUtc,action,version') 'Invalid timing values or unrelated event details were exported.'
+}
+
 $shortEvent = '{"time":"2026-10-31T12:13:14Z","action":"activated","version":"156.1.98.0"}'
 Write-Utf8 (Join-Path $root 'events.jsonl') (($shortEvent + "`n") * 250)
 $limited = Collect $root $reports

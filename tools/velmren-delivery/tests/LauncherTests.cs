@@ -119,6 +119,16 @@ internal static partial class Program
             Check(Hash(stable) == Hash(engineA) && !File.Exists(Path.Combine(root, LauncherJournal)), "Crash before ReplaceFile leaves the old stable launcher usable");
         }
         Check(TryActivate(root) && Current(root)?.Version == versionB, "Activation retries successfully after rollback");
+        ResetA();
+        using (var operation = await Lock(root))
+        using (var lease = new FileStream(Path.Combine(root, "run.lock"), FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            _ = PrepareLauncher(root, new Pointer(versionA), new Pointer(versionB), default);
+        using (var budget = new CancellationTokenSource(TimeSpan.FromSeconds(15)))
+        {
+            var prepared = await PrepareBrowserLaunch(root, budget.Token);
+            using (prepared.Lease)
+                Check(prepared.Current.Version == versionB && !File.Exists(Path.Combine(root, LauncherJournal)), "Normal launch releases its shared lease before interrupted transaction recovery");
+        }
 #if !HOST_FILE_TESTS
         var testId = Guid.NewGuid().ToString("N");
         var previousId = Environment.GetEnvironmentVariable("VELMREN_DELIVERY_TEST_ID");

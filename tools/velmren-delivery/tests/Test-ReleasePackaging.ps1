@@ -105,14 +105,20 @@ try {
   $engineHash = (Get-FileHash -LiteralPath (Join-Path $release 'engine/VelmrenDelivery.exe') -Algorithm SHA256).Hash.ToLowerInvariant()
   Assert ($record.engineSha256 -eq $engineHash -and $record.registryInspection.engineSha256 -eq $engineHash -and !$record.registryInspection.registryRenamePresent -and !$record.registryInspection.registryFlushPresent) 'exact engine passes static registry gate'
   Assert ((Get-FileHash -LiteralPath (Join-Path $release 'payload/delivery/Velmren.exe') -Algorithm SHA256).Hash.ToLowerInvariant() -eq $engineHash) 'signed launcher matches fresh engine'
-  foreach ($pair in @(@('maintenance', 'VelmrenMaintenance'), @('setup', 'VelmrenSetup'))) {
-    $assembly = Join-Path $work ($pair[1] + '.bundled.dll')
+  foreach ($pair in @(@('maintenance', 'VelmrenMaintenance'), @('setup', 'VelmrenSetup'), @('offline-setup', 'VelmrenSetup'))) {
+    $assembly = Join-Path $work ($pair[0] + '.bundled.dll')
     & (Join-Path $delivery 'Export-BundleAssembly.ps1') -Bundle (Join-Path $release "$($pair[0])/$($pair[1]).exe") -AssemblyName ($pair[1] + '.dll') -Destination $assembly
     $resources = Resource-Hashes $assembly
     Assert ($resources['Setup.Payload.Engine'] -eq $engineHash) "$($pair[1]) embeds exact fresh engine"
+    Assert ($resources['Setup.Brand.Logo'] -eq (Get-FileHash -LiteralPath (Join-Path $delivery '../../app/theme/velmren/logo-preview.png') -Algorithm SHA256).Hash.ToLowerInvariant() -and $resources['Setup.Brand.Icon'] -eq (Get-FileHash -LiteralPath (Join-Path $delivery '../../app/theme/brave/win/brave.ico') -Algorithm SHA256).Hash.ToLowerInvariant()) "$($pair[0]) embeds the checked-in Velmren branding"
     if ($pair[0] -eq 'setup') {
+      Assert ($record.setupKind -eq 'online' -and $resources.Count -eq 4 -and !$resources.ContainsKey('Setup.Payload.Package') -and !$resources.ContainsKey('Setup.Payload.Manifest')) 'primary setup embeds engine public configuration and two branding resources without browser payload'
+      Assert ((Get-Item -LiteralPath $record.setup).Length -lt (Get-Item -LiteralPath $record.offlineSetup).Length) 'online setup is smaller than the optional offline installer'
+    }
+    if ($pair[0] -eq 'offline-setup') {
       Assert ($resources['Setup.Payload.Manifest'] -eq $record.manifestSha256 -and $resources['Setup.Payload.Package'] -eq $record.packageSha256) 'setup embeds exact signed offline bundle'
-      Assert ($resources.Count -eq 4) 'setup embeds only engine manifest package and public configuration'
+      Assert ($resources.Count -eq 6) 'offline setup embeds engine manifest package public configuration and two branding resources'
+      Assert ((Get-FileHash -LiteralPath $record.offlineSetup -Algorithm SHA256).Hash.ToLowerInvariant() -eq $record.offlineSetupSha256) 'offline setup hash recorded'
     }
   }
   Assert-Rejected 'existing release output retained' { & (Join-Path $delivery 'Build-ReleaseBundle.ps1') -BrowserDirectory $browser -AgentDirectory $agent -NodeExecutable $node -PublicKey $publicKey -PrivateKey $privateKey -Policy (Join-Path $delivery 'ReleasePolicy.example.json') -Version $version -OutputDirectory $release }

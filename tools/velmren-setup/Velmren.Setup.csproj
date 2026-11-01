@@ -20,6 +20,8 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Remove="tests/**/*.cs;bin/**/*.cs;obj/**/*.cs" />
+    <EmbeddedResource Include="../../app/theme/velmren/logo-preview.png" LogicalName="Setup.Brand.Logo" />
+    <EmbeddedResource Include="../../app/theme/brave/win/brave.ico" LogicalName="Setup.Brand.Icon" />
   </ItemGroup>
   <Import Project="$(SetupPayloadProps)" Condition="'$(SetupPayloadProps)' != ''" />
 </Project>

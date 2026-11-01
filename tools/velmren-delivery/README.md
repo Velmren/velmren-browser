@@ -209,8 +209,15 @@ It always supplies `--user-data-dir=<root>/profile`, `--no-first-run`, and
   Signed inventory limits are 30,000 files and 16 GiB compressed/expanded.
 - Successful extraction is moved into `versions/<version>/app`. The signed
   manifest is retained alongside it. Version directories are never overwritten
-  or removed by the updater. Every launch and `resolve` verifies their complete
-  inventory and file hashes before execution. Hashing reuses a pooled buffer;
+  or removed by the updater. Installation, activation, agent startup and explicit
+  `resolve`/`verify` audits verify the complete inventory and file hashes.
+  Ordinary browser startup verifies the signed manifest and the hash of the
+  small signed launch configuration, validates executable paths/presence, and
+  opens the committed installation without rereading the entire payload.
+  Consequently ordinary launch does not detect arbitrary post-install changes
+  to every local resource before execution; use `verify` for a full audit.
+  This is an explicit installed-code trust boundary, not a size/mtime hash cache.
+  Unchanged-release polling also avoids a full payload audit. Hashing reuses a pooled buffer;
   manifest path syntax validation does not probe unrelated temporary paths.
   Actual installed and extraction paths retain reparse-point checks. No file
   hashes are cached using size, timestamp, or a persisted verification marker.
@@ -223,13 +230,17 @@ It always supplies `--user-data-dir=<root>/profile`, `--no-first-run`, and
   browser QA installation. The updater grants no write permission and preserves
   all existing ACEs and inheritance settings. Only the version's `app` DACL is
   modified; profile, agent-state, installation root and parent directories are
-  untouched. Verified launch/resolve idempotently repair older installations
+  untouched. Launch/resolve idempotently repair older installations
   missing these capability entries. No broad ALL APPLICATION PACKAGES or
   ALL RESTRICTED APPLICATION PACKAGES grant is added, and sandboxing stays enabled.
 - `current.json` is an atomically replaced pointer. Downloads and staging do
   not alter it. A shared launcher lease plus installed-browser process checks
   defer activation until the application exits. Concurrent installer/updater
-  operations are serialized. No running browser is terminated for an update.
+  operations are serialized. Ordinary launch takes only the shared run lease,
+  so a download holding operation.lock cannot delay a committed browser. It
+  rereads ownership/current under that lease; unfinished launcher transactions
+  release it before serialized recovery. Pending updates activate after exit.
+  No running browser is terminated for an update.
 - Older signed versions and same-version package rebinding are rejected.
   A pending newer release prevents replaying an older one. Interrupted staging
   leaves the current release intact; a later attempt uses a fresh staging path.
@@ -247,7 +258,8 @@ It always supplies `--user-data-dir=<root>/profile`, `--no-first-run`, and
   substitute for Windows code signing. A holder of that key can authorize code.
 
 `events.jsonl` records downloads, staging, activation/defer decisions and launcher
-events. `launch-timing` records preparation time through process creation; it
+events. `launch-timing` records total preparation and numeric settings, lease-wait,
+validation and process-creation timings. It excludes runtime initialization and
 does not measure first paint or window readiness.
 `current.json`, `pending.json`, `installation.json`, and the retained
 version manifests make an interrupted operation inspectable. An interrupted

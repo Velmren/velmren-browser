@@ -195,10 +195,19 @@ try {
     [IO.File]::WriteAllBytes($installedMarker, $changed)
     [IO.File]::SetLastWriteTimeUtc($installedMarker, $originalTimestamp)
     Run-Delivery @('resolve','--root',$installRoot) $false
-    Run-Delivery @('launch','--root',$installRoot) $false
-    Assert (@(Get-Content -LiteralPath (Join-Path $installRoot 'events.jsonl') | Where-Object { $_.Contains('browser-started') }).Count -eq $startCount) 'Tampered payload started a browser.'
+    Run-Delivery @('verify','--root',$installRoot) $false
   } finally { [IO.File]::WriteAllBytes($installedMarker, $originalMarker); [IO.File]::SetLastWriteTimeUtc($installedMarker, $originalTimestamp) }
-  $checks.Add('same-size same-timestamp payload tampering rejected by resolve and launch before execution')
+  $checks.Add('same-size same-timestamp payload tampering rejected by full resolve and verify audits')
+  foreach ($target in (Join-Path $currentApp 'delivery-app.json'), (Join-Path $installRoot 'versions/1.0.0.1/manifest.json')) {
+    $original = [IO.File]::ReadAllBytes($target)
+    try {
+      $changed = [byte[]]$original.Clone(); $changed[25] = $changed[25] -bxor 1
+      [IO.File]::WriteAllBytes($target, $changed)
+      Run-Delivery @('launch','--root',$installRoot) $false
+    } finally { [IO.File]::WriteAllBytes($target, $original) }
+  }
+  Assert (@(Get-Content -LiteralPath (Join-Path $installRoot 'events.jsonl') | Where-Object { $_.Contains('browser-started') }).Count -eq $startCount) 'Changed launch metadata started a browser.'
+  $checks.Add('normal launch rejects modified signed manifest and launch configuration before execution')
   $extraFile = Join-Path $currentApp 'unlisted.txt'
   try {
     [IO.File]::WriteAllText($extraFile, 'not signed')
@@ -255,6 +264,35 @@ try {
     }
   } finally { [IO.File]::WriteAllBytes($settingsPath, $originalSettings) }
   Select-Release '1.0.0.1'
+  $operationLease = [IO.File]::Open((Join-Path $installRoot 'operation.lock'), [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+  $eventLease = [IO.File]::Open((Join-Path $installRoot 'events.jsonl'), [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+  try {
+    $runningMarker = Join-Path $profile 'synthetic-running.txt'
+    $oldPid = Get-Content -LiteralPath $runningMarker -Raw
+    $timer = [Diagnostics.Stopwatch]::StartNew()
+    $stallLauncher = Start-Process -FilePath (Join-Path $installRoot 'Velmren.exe') -ArgumentList @('launch','--root',('"' + $installRoot + '"')) -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $work 'busy-update-launch.stdout.log') -RedirectStandardError (Join-Path $work 'busy-update-launch.stderr.log')
+    Wait-For { (Get-Content -LiteralPath $runningMarker -Raw) -ne $oldPid } 4
+    $startupSeconds['busyUpdater'] = [Math]::Round($timer.Elapsed.TotalSeconds, 2)
+    Assert ($timer.Elapsed.TotalSeconds -lt 4) 'Updater operation lock blocked a committed browser launch.'
+    $checks.Add('normal launch starts while another updater owns operation.lock')
+    $leaseProtected = $false
+    try { $probe = [IO.File]::Open((Join-Path $installRoot 'run.lock'), [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None); $probe.Dispose() }
+    catch [IO.IOException] { $leaseProtected = $true }
+    Assert $leaseProtected 'Log contention released supervision of a running browser.'
+    $checks.Add('busy diagnostic log does not abort launch or release the shared activation lease')
+  } finally { $eventLease.Dispose(); $operationLease.Dispose() }
+  Wait-For { $stallLauncher.HasExited } 25
+  Assert ($stallLauncher.ExitCode -eq 0) 'Concurrent launch failed after the updater lease was released.'
+  $stallLauncher.Dispose(); $stallLauncher = $null
+
+  $currentPath = Join-Path $installRoot 'current.json'
+  $previousCurrent = [IO.File]::ReadAllBytes($currentPath)
+  try {
+    [IO.File]::Delete($currentPath)
+    Run-Delivery @('launch','--root',$installRoot)
+    Assert ((Current-Version) -eq '1.0.0.1') 'Missing-current startup recovery failed.'
+    $checks.Add('missing-current recovery releases shared launch lease before full activation')
+  } finally { if (!(Test-Path -LiteralPath $currentPath)) { [IO.File]::WriteAllBytes($currentPath, $previousCurrent) } }
   $result = [pscustomobject]@{passed=$true;checks=$checks;startupSeconds=$startupSeconds;installation=$installRoot;trust='test-only signed manifests; unsigned Windows binaries';syntheticProfileOnly=$true}
   $result | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $work 'result.json') -Encoding utf8NoBOM
   $result | ConvertTo-Json -Depth 5
