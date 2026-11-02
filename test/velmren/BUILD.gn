@@ -14,15 +14,29 @@ if (is_win) {
       "//testing/gtest",
     ]
   }
+
   # Reuse Chromium's unchanged password tests and complete component test
   # initialization without building unrelated component test suites.
   test("velmren_password_unittests") {
     testonly = true
 
+    sources = [ "imported_google_credentials_unittest.cc" ]
+
     deps = [
       "//base",
+      "//base/test:test_support",
+      "//components/affiliations/core/browser:affiliations",
+      "//components/affiliations/core/browser:test_support",
+      "//components/password_manager/core/browser",
+      "//components/password_manager/core/browser:test_support",
       "//components/password_manager/core/browser:unit_tests",
+      "//components/password_manager/core/browser/affiliation:affiliation_match_helper",
+      "//components/password_manager/core/browser/password_store:password_store_impl",
+      "//components/password_manager/core/browser/password_store:test_support",
       "//components/test:run_all_unittests",
+      "//testing/gmock",
+      "//testing/gtest",
+      "//url",
     ]
 
     data = [ "//components/test/data/password_manager/" ]

@@ -1049,10 +1049,9 @@ Or change later at <ph name="SETTINGS_EXTENIONS_LINK">$2<ex>brave://settings/ext
         Looking in the Archive
       </message>
 
-      <!-- Brave's copyright statement -->
-      <message name="IDS_BRAVE_VERSION_UI_LICENSE" desc="The label below the copyright message, containing the URLs.">
-        Brave is made available to you under the <ph name="BEGIN_LINK_MPL">&lt;a target="_blank" href="$1"&gt;</ph>Mozilla Public License 2.0<ph name="END_LINK_MPL">&lt;/a&gt;</ph> (MPL) and includes <ph name="BEGIN_LINK_OSS">&lt;a target="_blank" href="$2"&gt;</ph>open source software<ph name="END_LINK_OSS">&lt;/a&gt;</ph> under a variety of other licenses.
-        You can read <ph name="BEGIN_LINK_BUILD_INSTRUCTIONS">&lt;a target="_blank" href="$3"&gt;</ph>instructions on how to download and build for yourself<ph name="END_LINK_BUILD_INSTRUCTIONS">&lt;/a&gt;</ph> the specific <ph name="BEGIN_LINK_SOURCE_CODE">&lt;a target="_blank" href="$4"&gt;</ph>source code used to create this copy<ph name="END_LINK_SOURCE_CODE">&lt;/a&gt;</ph>.
+      <!-- About page license statement -->
+      <message name="IDS_BRAVE_VERSION_UI_LICENSE" desc="About page description crediting Brave and Chromium, with links to MPL 2.0, third-party licenses and credits, the Velmren Windows build recipe, and the Velmren source repository. The repository link is not a claim of an exact build revision.">
+        Velmren Browser is based on Brave and Chromium. It includes code under the <ph name="BEGIN_LINK_MPL">&lt;a target="_blank" href="$1"&gt;</ph>Mozilla Public License 2.0<ph name="END_LINK_MPL">&lt;/a&gt;</ph> and other open source licenses. See <ph name="BEGIN_LINK_OSS">&lt;a target="_blank" href="$2"&gt;</ph>third-party licenses and credits<ph name="END_LINK_OSS">&lt;/a&gt;</ph>, <ph name="BEGIN_LINK_BUILD_INSTRUCTIONS">&lt;a target="_blank" href="$3"&gt;</ph>Windows build instructions<ph name="END_LINK_BUILD_INSTRUCTIONS">&lt;/a&gt;</ph>, and the <ph name="BEGIN_LINK_SOURCE_CODE">&lt;a target="_blank" href="$4"&gt;</ph>Velmren source code<ph name="END_LINK_SOURCE_CODE">&lt;/a&gt;</ph>.
       </message>
 
       <!-- Brave's tab context menu -->

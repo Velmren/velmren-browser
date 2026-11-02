@@ -1,6 +1,7 @@
 <?xml version="1.0" ?>
 <!DOCTYPE translationbundle>
 <translationbundle lang="ru">
+<translation id="2071894922560583746">Velmren Browser создан на основе Brave и Chromium. Он включает код под <ph name="BEGIN_LINK_MPL"/>Mozilla Public License 2.0<ph name="END_LINK_MPL"/> и другими лицензиями открытого программного обеспечения. См. <ph name="BEGIN_LINK_OSS"/>лицензии сторонних компонентов и сведения об их авторах<ph name="END_LINK_OSS"/>, <ph name="BEGIN_LINK_BUILD_INSTRUCTIONS"/>инструкцию по сборке для Windows<ph name="END_LINK_BUILD_INSTRUCTIONS"/> и <ph name="BEGIN_LINK_SOURCE_CODE"/>исходный код Velmren<ph name="END_LINK_SOURCE_CODE"/>.</translation>
 <translation id="1751249301761991853">Личное</translation>
 <translation id="3333887201479867589">Вознаграждения Brave</translation>
 <translation id="8507663778530179003">Показывать кнопку «Все закладки»</translation>

@@ -13,6 +13,7 @@ const path = require('node:path')
 const vm = require('node:vm')
 const { pathToFileURL } = require('node:url')
 const { spawnSync } = require('node:child_process')
+const { createHash } = require('node:crypto')
 const ts = require('typescript')
 const { JSDOM } = require('jsdom')
 
@@ -82,19 +83,52 @@ async function runCase(installed, locale) {
   const litModule = { ...lit, CrLitElement }
   const parseXml = source => new dom.window.DOMParser()
     .parseFromString(source, 'text/xml')
-  const english = parseXml(fs.readFileSync(path.join(brave,
-    'app/brave_settings_strings.grdp'), 'utf8'))
-    .querySelector('[name="IDS_SETTINGS_VELMREN_ABOUT_UPDATES"]')
-    .textContent.trim()
-  const russian = parseXml(fs.readFileSync(path.join(brave,
-    'app/resources/brave_generated_resources_ru.xtb'), 'utf8'))
-    .querySelector('[id="6293525090265146150"]').textContent
-  const guidance = locale === 'ru' ? russian : english
+  const localized = (name, sourceFile = 'brave_settings_strings.grdp',
+    bundle = 'brave_generated_resources') => {
+    const english = parseXml(fs.readFileSync(
+      path.join(brave, 'app', sourceFile), 'utf8'))
+    const translated = locale === 'en' ? null : parseXml(fs.readFileSync(
+      path.join(brave, `app/resources/${bundle}_${locale}.xtb`), 'utf8'))
+    const source = english.querySelector(`[name="${name}"]`)
+    assert.ok(source, `Missing source string ${name}`)
+    const parts = (element, placeholder) => Array.from(element.childNodes)
+      .map(node => node.nodeType === 3 ? node.textContent : placeholder(node))
+      .join('').trim().replace(/\s+/g, ' ')
+    // GRIT IDs hash presentable content: placeholders use their names.
+    const presentable = parts(source, node => node.getAttribute('name'))
+    const digest = createHash('md5').update(presentable).digest('hex')
+    const id = String(BigInt(`0x${digest.slice(0, 16)}`) & 0x7fffffffffffffffn)
+    const translation = translated?.querySelector(`[id="${id}"]`)
+    if (locale === 'ru') assert.ok(translation, `Missing Russian ${name}`)
+    if (locale === 'fr') assert.equal(translation, null, `Expected fallback ${name}`)
+    const placeholders = Object.fromEntries(Array.from(source.children)
+      .filter(node => node.tagName === 'ph')
+      .map(node => [node.getAttribute('name'), parts(node, () => '')]))
+    return parts(translation ?? source, node => placeholders[node.getAttribute('name')])
+  }
+  const guidance = localized('IDS_SETTINGS_VELMREN_ABOUT_UPDATES')
+  const sourceUrl = 'https://github.com/Velmren/velmren-browser/tree/velmren-preview'
+  const buildUrl = 'https://github.com/Velmren/velmren-browser/blob/velmren-preview/'
+    + 'tools/velmren-delivery/BUILD-WINDOWS.md'
+  const helpUrl = 'https://github.com/Velmren/velmren-browser/blob/velmren-preview/'
+    + 'tools/velmren-setup/support/SECOND-PC-RU.md'
+  const licenseUrls = ['https://mozilla.org/MPL/2.0/', 'chrome://credits/',
+    buildUrl, sourceUrl]
   const strings = {
     isVelmrenRelease: installed,
     velmrenProductVersion: installed ? '0.1.0.4' : 'Development build',
     velmrenChromiumVersion: '156.0.8111.0',
     velmrenAboutUpdates: guidance,
+    velmrenHelpUrl: helpUrl,
+    aboutProductTitle: 'Velmren Browser',
+    aboutProductCopyright: localized('IDS_ABOUT_VERSION_COPYRIGHT',
+      'brave_strings.grd', 'brave_strings')
+      .replace('{0,date,y}', '2026'),
+    aboutProductLicense: localized('IDS_BRAVE_VERSION_UI_LICENSE',
+      'brave_generated_resources.grd')
+      .replace(/\$(\d)/g, (_, number) => licenseUrls[Number(number) - 1]),
+    aboutGetHelpUsingChrome: localized('IDS_SETTINGS_GET_HELP_USING_CHROME',
+      'settings_brave_strings.grdp', 'brave_strings'),
     isManaged: false,
     managedByIcon: '',
     aboutObsoleteNowOrSoon: false,
@@ -117,6 +151,8 @@ async function runCase(installed, locale) {
     }
   }
   const messages = []
+  const opened = []
+  dom.window.open = (...args) => opened.push(args)
   const listeners = new Map()
   globalThis.chrome = { send: message => messages.push(message) }
   const proxy = loadTs(path.join(chromium,
@@ -182,7 +218,23 @@ async function runCase(installed, locale) {
     const element = page.shadowRoot.querySelector(selector)
     return element && !element.closest('[hidden]')
   }
+  const assertIdentity = () => {
+    const info = page.shadowRoot.querySelector('.info-sections')
+    assert.ok(info.textContent.includes(strings.aboutProductCopyright))
+    assert.ok(info.textContent.includes('Brave'))
+    assert.ok(info.textContent.includes('Chromium'))
+    assert.ok(!info.textContent.includes('Brave Software Inc'))
+    assert.deepEqual(Array.from(info.querySelectorAll('a'), a => a.href),
+      licenseUrls)
+    assert.equal(page.shadowRoot.querySelector('.product-title').textContent,
+      'Velmren Browser')
+    assert.equal(page.shadowRoot.querySelector('#help').getAttribute('label'),
+      locale === 'ru' ? 'Справка Velmren' : 'Velmren help')
+    assert.equal(page.shadowRoot.querySelector('#updateStatusMessage a').href,
+      helpUrl)
+  }
   const assertInstalled = () => {
+    assertIdentity()
     assert.ok(visible('#updateStatusMessage'))
     assert.equal(page.shadowRoot.querySelector('#updateStatusMessage [role="alert"]')
       .textContent, guidance)
@@ -200,6 +252,9 @@ async function runCase(installed, locale) {
   document.body.append(page)
   if (installed) assertInstalled() // CrLitElement renders synchronously on connect.
   await page.updateComplete
+  assertIdentity()
+  page.shadowRoot.querySelector('#help').click()
+  assert.deepEqual(opened, [[helpUrl, '_blank', 'noopener']])
   if (installed) {
     assertInstalled()
     for (const status of Object.values(proxy.UpdateStatus)) {
@@ -224,6 +279,7 @@ async function runCase(installed, locale) {
       .textContent, 'Actual development updater failure')
     assert.equal(page.shadowRoot.querySelector('#release-notes').textContent,
       'Velmren Browser Development build')
+    assertIdentity()
   }
   console.log(`PASS ${installed ? 'installed' : 'development'} ${locale}`)
   dom.window.close()
@@ -271,6 +327,7 @@ if (process.argv[2] === '--typecheck') {
   })
 } else {
   for (const [mode, locale] of [['installed', 'en'], ['installed', 'ru'],
+    ['installed', 'fr'],
     ['development', 'en']]) {
     const result = spawnSync(process.execPath,
       ['--conditions=browser', __filename, '--case', mode, locale],

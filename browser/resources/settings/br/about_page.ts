@@ -59,15 +59,7 @@ const modifyAboutPage = (root: ShadowRoot) => {
   const updateStatusMessageLink =
     root.querySelector<HTMLAnchorElement>('#updateStatusMessage a')
   if (updateStatusMessageLink) {
-    // <if expr="is_win">
-    updateStatusMessageLink.href =
-      'https://support.brave.app/hc/en-us/articles/360042816611-Why-isn-t-Brave-updating-automatically-on-Windows-'
-    // </if>
-
-    // <if expr="not is_win">
-      updateStatusMessageLink.href =
-        'https://community.brave.app?p=update_error'
-    // </if>
+    updateStatusMessageLink.href = loadTimeData.getString('velmrenHelpUrl')
   }
 }
 
@@ -75,6 +67,7 @@ const modifyAboutPage = (root: ShadowRoot) => {
 const proto = SettingsAboutPageElement.prototype as unknown as {
   firstUpdated?: (changedProperties: PropertyValues) => void
   willUpdate: (changedProperties: PropertyValues) => void
+  onHelpClick_: () => void
   startListening_: () => void
   getUpdateStatusMessage_: () => TrustedHTML
   shouldShowLearnMoreLink_: () => boolean
@@ -83,6 +76,10 @@ const proto = SettingsAboutPageElement.prototype as unknown as {
   showUpdateStatus_: boolean
   showRelaunch_: boolean
   showButtonContainer_: boolean
+}
+
+proto.onHelpClick_ = () => {
+  window.open(loadTimeData.getString('velmrenHelpUrl'), '_blank', 'noopener')
 }
 
 // <if expr="not is_chromeos">

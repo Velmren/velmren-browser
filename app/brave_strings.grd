@@ -505,16 +505,16 @@ New bookmarks can’t be saved in your account until you delete some. If you sig
           <message name="IDS_ABOUT_VERSION_COMPANY_NAME" desc="Company name on the about pages">
             Brave LLC
           </message>
-          <message name="IDS_ABOUT_VERSION_COPYRIGHT" desc="Copyright information on the about pages">
-            Copyright © <ph name="YEAR">{0,date,y}<ex>2016</ex></ph> The Brave Authors. All rights reserved.
+          <message name="IDS_ABOUT_VERSION_COPYRIGHT" desc="Copyright line on the About page, limited to the modifications made by the Velmren authors rather than the upstream browser code.">
+            Velmren modifications © <ph name="YEAR">{0,date,y}<ex>2026</ex></ph> The Velmren Authors.
           </message>
         </then>
         <else>
           <message name="IDS_ABOUT_VERSION_COMPANY_NAME" desc="Company name on the about pages">
             Brave Software Inc
           </message>
-          <message name="IDS_ABOUT_VERSION_COPYRIGHT" desc="Copyright information on the about pages">
-            Copyright © <ph name="YEAR">{0,date,y}<ex>2016</ex></ph> The Brave Authors. All rights reserved.
+          <message name="IDS_ABOUT_VERSION_COPYRIGHT" desc="Copyright line on the About page, limited to the modifications made by the Velmren authors rather than the upstream browser code.">
+            Velmren modifications © <ph name="YEAR">{0,date,y}<ex>2026</ex></ph> The Velmren Authors.
           </message>
         </else>
       </if>

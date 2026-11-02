@@ -37,7 +37,6 @@
 #include "brave/components/request_otr/common/buildflags/buildflags.h"
 #include "brave/components/tor/buildflags/buildflags.h"
 #include "brave/components/traffic_control/buildflags/buildflags.h"
-#include "brave/components/version_info/version_info.h"
 #include "brave/components/web_discovery/buildflags/buildflags.h"
 #include "brave/grit/brave_generated_resources.h"
 #include "brave/grit/brave_generated_resources_webui_strings.h"
@@ -111,11 +110,15 @@ namespace {
 constexpr char16_t kWebRTCLearnMoreURL[] =
     u"https://support.brave.app/hc/en-us/articles/"
     u"360017989132-How-do-I-change-my-Privacy-Settings-#webrtc";
-constexpr char16_t kBraveBuildInstructionsUrl[] =
-    u"https://github.com/brave/brave-browser/wiki";
-constexpr char16_t kBraveLicenseUrl[] = u"https://mozilla.org/MPL/2.0/";
-constexpr char16_t kBraveReleaseTagPrefix[] =
-    u"https://github.com/brave/brave-browser/releases/tag/v";
+constexpr char16_t kVelmrenBuildInstructionsUrl[] =
+    u"https://github.com/Velmren/velmren-browser/blob/velmren-preview/"
+    u"tools/velmren-delivery/BUILD-WINDOWS.md";
+constexpr char16_t kVelmrenLicenseUrl[] = u"https://mozilla.org/MPL/2.0/";
+constexpr char16_t kVelmrenSourceUrl[] =
+    u"https://github.com/Velmren/velmren-browser/tree/velmren-preview";
+constexpr char kVelmrenHelpUrl[] =
+    "https://github.com/Velmren/velmren-browser/blob/velmren-preview/"
+    "tools/velmren-setup/support/SECOND-PC-RU.md";
 #if BUILDFLAG(ENABLE_CONTAINERS)
 constexpr char16_t kContainersLearnMoreURL[] =
     u"https://support.brave.app/hc/en-us/articles/39077103885325";
@@ -1340,12 +1343,12 @@ void BraveAddAboutStrings(content::WebUIDataSource* html_source,
                           Profile* profile) {
   html_source->AddLocalizedString("velmrenAboutUpdates",
                                  IDS_SETTINGS_VELMREN_ABOUT_UPDATES);
+  html_source->AddString("aboutProductTitle", "Velmren Browser");
+  html_source->AddString("velmrenHelpUrl", kVelmrenHelpUrl);
   std::u16string license = l10n_util::GetStringFUTF16(
-      IDS_BRAVE_VERSION_UI_LICENSE, kBraveLicenseUrl,
-      chrome::kChromeUICreditsURL16, kBraveBuildInstructionsUrl,
-      kBraveReleaseTagPrefix +
-          base::UTF8ToUTF16(
-              version_info::GetBraveVersionWithoutChromiumMajorVersion()));
+      IDS_BRAVE_VERSION_UI_LICENSE, kVelmrenLicenseUrl,
+      chrome::kChromeUICreditsURL16, kVelmrenBuildInstructionsUrl,
+      kVelmrenSourceUrl);
   html_source->AddString("aboutProductLicense", license);
 }
 
