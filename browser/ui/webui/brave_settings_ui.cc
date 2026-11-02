@@ -51,6 +51,7 @@
 #include "brave/components/search_engines/brave_prepopulated_engines.h"
 #include "brave/components/speedreader/common/buildflags/buildflags.h"
 #include "brave/components/tor/buildflags/buildflags.h"
+#include "brave/components/version_info/velmren_version_info.h"
 #include "brave/components/version_info/version_info.h"
 #include "brave/ui/webui/brave_color_change_listener/brave_color_change_handler.h"
 #include "build/build_config.h"
@@ -212,6 +213,12 @@ void BraveSettingsUI::AddResources(content::WebUIDataSource* html_source,
   html_source->AddString(
       "braveProductVersion",
       version_info::GetBraveVersionWithoutChromiumMajorVersion());
+  html_source->AddString("velmrenProductVersion",
+                         version_info::GetVelmrenProductVersionForDisplay());
+  html_source->AddString("velmrenChromiumVersion",
+                         version_info::GetBraveChromiumVersionNumber());
+  html_source->AddBoolean("isVelmrenRelease",
+                          version_info::GetVelmrenReleaseVersion().has_value());
   html_source->AddBoolean(
       "isIdleDetectionFeatureEnabled",
       base::FeatureList::IsEnabled(features::kIdleDetection));

@@ -3,7 +3,9 @@ using System.Text;
 
 namespace Velmren.Setup;
 
-internal sealed record EngineEvent(string Action, int? Percent);
+internal sealed record EngineEvent(string Action, int? Percent, string? Phase = null,
+    long? Completed = null, long? Total = null, long? ElapsedMs = null,
+    string? Version = null, long? Bytes = null, long? Files = null, bool? Succeeded = null);
 internal sealed record EngineResult(int ExitCode, string Error);
 
 internal sealed class EngineRunner
@@ -75,15 +77,58 @@ internal sealed class EngineRunner
             if (value is null || !value.TryGetValue("action", out var action) || action is not string actionText)
                 return null;
             int? percent = null;
-            if (value.TryGetValue("percent", out var p))
+            if (value.TryGetValue("percent", out var p) && p is not null)
             {
                 if (p is not int number) return null;
                 percent = Math.Max(0, Math.Min(number, 100));
             }
-            return new EngineEvent(actionText, percent);
+            string? phase = null;
+            if (value.TryGetValue("phase", out var phaseValue) && phaseValue is not null)
+            {
+                if (phaseValue is not string phaseText || !KnownPhase(phaseText)) return null;
+                phase = phaseText;
+            }
+            if (actionText is "phase-started" or "phase-completed" && phase is null) return null;
+            const long maximumBytes = 1024L * 1024 * 1024 * 1024;
+            if (!ReadCount(value, "completed", maximumBytes, out var completed) ||
+                !ReadCount(value, "total", maximumBytes, out var total) ||
+                !ReadCount(value, "elapsedMs", int.MaxValue, out var elapsed) ||
+                !ReadCount(value, "bytes", maximumBytes, out var bytes) ||
+                !ReadCount(value, "files", 10000000, out var files) ||
+                completed > total) return null;
+            if (actionText == "verifying-files" && (completed > 10000000 || total > 10000000)) return null;
+            string? version = null;
+            if (value.TryGetValue("version", out var versionValue) && versionValue is not null)
+            {
+                if (versionValue is not string versionText || versionText.Length > 64) return null;
+                version = versionText;
+            }
+            bool? succeeded = null;
+            if (value.TryGetValue("succeeded", out var succeededValue) && succeededValue is not null)
+            {
+                if (succeededValue is not bool success) return null;
+                succeeded = success;
+            }
+            return new EngineEvent(actionText, percent, phase, completed, total, elapsed, version, bytes, files, succeeded);
         }
         catch (ArgumentException) { return null; }
         catch (InvalidOperationException) { return null; }
+    }
+
+    private static bool KnownPhase(string phase) => phase is
+        "check-update" or "download" or "archive-verify" or "install" or "prepare-release" or
+        "archive-preflight" or "extract" or "extract-files" or "sandbox-permissions" or
+        "verify-installed" or "launcher-probe" or "activate" or "register" or "retention";
+
+    private static bool ReadCount(Dictionary<string, object> value, string name, long maximum, out long? result)
+    {
+        result = null;
+        if (!value.TryGetValue(name, out var item) || item is null) return true;
+        if (item is not int && item is not long) return false;
+        var number = item is int small ? small : (long)item;
+        if (number < 0 || number > maximum) return false;
+        result = number;
+        return true;
     }
 
     private static async Task ReadErrorAsync(StreamReader reader, StringBuilder error)

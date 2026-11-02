@@ -64,6 +64,7 @@ internal static partial class Program
                 case "policy": Console.WriteLine(JsonSerializer.Serialize(Policy, Json)); break;
                 case "launcher-probe": LauncherProbe(); break;
                 case "update": await Update(Root(options), token); break;
+                case "monitor": await MonitorNativeBrowser(Root(options), Number(options, "browser-pid", 0), token); break;
                 case "launch": await Launch(Root(options), false, options, token); break;
                 case "agents": await Launch(Root(options), true, options, token); break;
                 case "resolve": case "verify": Resolve(Root(options), token); break;
@@ -121,17 +122,20 @@ internal static partial class Program
 
     static void NoLinks(string path)
     {
-        var current = Path.GetFullPath(path);
-        while (current is not null)
+        var ancestors = new Stack<string>();
+        for (string? current = Path.GetFullPath(path); current is not null; current = Path.GetDirectoryName(current))
+            ancestors.Push(current);
+        while (ancestors.TryPop(out var current))
         {
             try
             {
                 if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
                     throw new InvalidDataException($"Reparse point is forbidden: {current}");
             }
-            catch (FileNotFoundException) { }
-            catch (DirectoryNotFoundException) { }
-            current = Path.GetDirectoryName(current);
+            // Descendants cannot exist below the first absent ancestor. Every
+            // existing ancestor was checked; actual file operations check again.
+            catch (FileNotFoundException) { return; }
+            catch (DirectoryNotFoundException) { return; }
         }
     }
     static void ValidateRelativePath(string relative)
@@ -181,7 +185,8 @@ internal static partial class Program
     {
         var entry = new { time = DateTimeOffset.UtcNow, action, version, detail };
         var line = JsonSerializer.Serialize(entry);
-        try { Console.WriteLine(line); } catch (IOException) { }
+        try { Console.WriteLine(line); }
+        catch (Exception error) when (error is IOException or ObjectDisposedException) { }
         var path = Path.Combine(root, "events.jsonl");
         // Launch no longer owns operation.lock. Diagnostic contention must not
         // abandon an already started browser or release its activation lease.
@@ -195,7 +200,11 @@ internal static partial class Program
     static int TransferProgress(string action, long completed, long total, int previous)
     {
         var percent = total == 0 ? 100 : (int)Math.Clamp(completed * 100 / total, 0, 100);
-        if (percent != previous) Console.WriteLine(JsonSerializer.Serialize(new { action, percent }));
+        if (percent != previous)
+        {
+            try { Console.WriteLine(JsonSerializer.Serialize(new { action, percent, completed, total })); }
+            catch (Exception error) when (error is IOException or ObjectDisposedException) { }
+        }
         return percent;
     }
 
@@ -372,7 +381,12 @@ internal static partial class Program
         cancellationToken = budget.Token;
         var settings = GetSettings(root);
         using var operation = await Lock(root, cancellationToken);
-        var verified = await Latest(FeedUri(settings.Feed), cancellationToken);
+        Verified verified;
+        using (var checkPhase = StartPhase(root, "check-update"))
+        {
+            verified = await Latest(FeedUri(settings.Feed), cancellationToken);
+            checkPhase.Complete();
+        }
         await ApplyRelease(root, verified, ct => Download(root, FeedUri(settings.Feed), SelectArchive(verified.Manifest), ct), cancellationToken);
     }
     static async Task ApplyRelease(string root, Verified verified, Func<CancellationToken, Task<string>> archiveSource, CancellationToken cancellationToken)
@@ -393,18 +407,26 @@ internal static partial class Program
         {
             var archive = await archiveSource(cancellationToken);
             var stage = SafePath(root, "staging/" + manifest.Version + "-" + Guid.NewGuid().ToString("N"));
-            TrackReleaseFiles(root, stage, verified.Manifest);
-            TrackReleaseFiles(root, versionPath, verified.Manifest);
-            DirectorySafe(stage);
-            Extract(archive, Path.Combine(stage, "app"), manifest, cancellationToken);
-            Atomic(Path.Combine(stage, "manifest.json"), verified.Envelope);
-            ValidateApp(Path.Combine(stage, "app"), Read<AppConfig>(Path.Combine(stage, "app", "delivery-app.json")));
-            Directory.Move(stage, versionPath);
+            using (var preparePhase = StartPhase(root, "prepare-release", manifest.Version, files: manifest.Files.Length))
+            {
+                TrackReleaseFiles(root, stage, verified.Manifest);
+                TrackReleaseFiles(root, versionPath, verified.Manifest);
+                DirectorySafe(stage);
+                preparePhase.Complete();
+            }
+            using (var extractPhase = StartPhase(root, "extract", manifest.Version, manifest.ExpandedSize, manifest.Files.Length))
+            {
+                Extract(archive, Path.Combine(stage, "app"), manifest, cancellationToken, root);
+                Atomic(Path.Combine(stage, "manifest.json"), verified.Envelope);
+                ValidateApp(Path.Combine(stage, "app"), Read<AppConfig>(Path.Combine(stage, "app", "delivery-app.json")));
+                Directory.Move(stage, versionPath);
+                extractPhase.Complete();
+            }
             Event(root, "staged", manifest.Version);
         }
         else SameRelease(ReadInstalledManifest(root, manifest.Version).Manifest, manifest);
         cancellationToken.ThrowIfCancellationRequested();
-        EnsureSandboxReadAccess(Path.Combine(versionPath, "app"));
+        EnsureSandboxReadAccess(Path.Combine(versionPath, "app"), root);
         RememberHighWater(root, verified);
         Atomic(Path.Combine(root, "pending.json"), Bytes(new Pointer(manifest.Version)));
         TryActivate(root, cancellationToken, cleanupRetired: true);
@@ -412,11 +434,16 @@ internal static partial class Program
     static async Task<string> Download(string root, Uri feed, Manifest manifest, CancellationToken cancellationToken,
         DeliveryTransport? transport = null, DeliveryPolicy? policy = null)
     {
+        using var downloadPhase = StartPhase(root, "download", manifest.Version, manifest.Size);
         var complete = ArchiveCachePath(root, manifest);
         DirectorySafe(SafePath(root, "downloads"));
         var partial = complete + ".part"; NoLinks(partial);
         TrackOwned(root, [Path.GetRelativePath(root, complete), Path.GetRelativePath(root, partial)]);
-        if (File.Exists(complete) && new FileInfo(complete).Length == manifest.Size && Hash(complete, cancellationToken).Equals(manifest.Sha256, StringComparison.OrdinalIgnoreCase)) return complete;
+        if (File.Exists(complete) && new FileInfo(complete).Length == manifest.Size && Hash(complete, cancellationToken).Equals(manifest.Sha256, StringComparison.OrdinalIgnoreCase))
+        {
+            downloadPhase.Complete();
+            return complete;
+        }
         var offset = File.Exists(partial) ? new FileInfo(partial).Length : 0;
         if (offset >= manifest.Size) { using var reset = new FileStream(partial, FileMode.Create); offset = 0; }
         using var idleTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -450,7 +477,7 @@ internal static partial class Program
             output.Flush(true);
             if (total != manifest.Size) throw new InvalidDataException("Package download incomplete; retry resumes it.");
         }
-        Console.WriteLine(JsonSerializer.Serialize(new { action = "bundle-verifying" }));
+        using var verifyPhase = StartPhase(root, "archive-verify", manifest.Version, manifest.Size);
         if (!Hash(partial, cancellationToken).Equals(manifest.Sha256, StringComparison.OrdinalIgnoreCase))
         {
             var rejected = partial + ".rejected-" + Guid.NewGuid().ToString("N");
@@ -459,17 +486,21 @@ internal static partial class Program
             throw new CryptographicException("Package SHA-256 rejected.");
         }
         File.Move(partial, complete, true);
+        verifyPhase.Complete();
+        downloadPhase.Complete();
         Event(root, "downloaded", manifest.Version);
         return complete;
     }
-    static void Extract(string archivePath, string destination, Manifest manifest, CancellationToken cancellationToken)
+    static void Extract(string archivePath, string destination, Manifest manifest, CancellationToken cancellationToken,
+        string? diagnosticRoot = null)
     {
         if (Path.GetExtension(archivePath) == ".7z")
         {
             if (manifest.CompactArchive is null) throw new InvalidDataException("Unsigned compact archive representation.");
-            ExtractCompactArchive(archivePath, destination, manifest, cancellationToken);
+            ExtractCompactArchive(archivePath, destination, manifest, cancellationToken, diagnosticRoot);
             return;
         }
+        using var preflightPhase = diagnosticRoot is null ? null : StartPhase(diagnosticRoot, "archive-preflight", manifest.Version, files: manifest.Files.Length);
         DirectorySafe(destination);
         using var archive = ZipFile.OpenRead(archivePath);
         if (archive.Entries.Count != manifest.Files.Length) throw new InvalidDataException("Archive inventory count mismatch.");
@@ -484,27 +515,39 @@ internal static partial class Program
             if (!seen.Add(entry.FullName) || !inventory.TryGetValue(entry.FullName, out var file) || entry.Length != file.Size || (unixType != 0 && unixType != 0x8000) || (entry.ExternalAttributes & (int)FileAttributes.ReparsePoint) != 0)
                 throw new InvalidDataException("Archive entry is unlisted, duplicate, linked, or has the wrong size.");
         }
+        preflightPhase?.Complete();
+        preflightPhase?.Dispose();
+        // Children inherit these exact capability ACEs as they are created.
+        // The final installed-tree check remains in place after the move.
+        EnsureSandboxReadAccess(destination, diagnosticRoot);
+        using var filesPhase = diagnosticRoot is null ? null : StartPhase(diagnosticRoot, "extract-files", manifest.Version, manifest.ExpandedSize, manifest.Files.Length);
         long expanded = 0;
         var progress = TransferProgress("extracting", 0, manifest.ExpandedSize, -1);
-        foreach (var entry in archive.Entries)
+        var buffer = ArrayPool<byte>.Shared.Rent(1024 * 1024);
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            var destinationFile = SafePath(destination, entry.FullName);
-            DirectorySafe(Path.GetDirectoryName(destinationFile)!);
-            using var input = entry.Open(); using var output = new FileStream(destinationFile, FileMode.CreateNew, FileAccess.Write, FileShare.None);
-            using var hasher = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-            var buffer = new byte[1024 * 1024]; int count; long total = 0;
-            while ((count = input.Read(buffer)) > 0)
+            foreach (var entry in archive.Entries)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                total += count; if (total > entry.Length) throw new InvalidDataException("Expanded file exceeds signed length.");
-                output.Write(buffer, 0, count); hasher.AppendData(buffer, 0, count);
+                var destinationFile = SafePath(destination, entry.FullName);
+                DirectorySafe(Path.GetDirectoryName(destinationFile)!);
+                using var input = entry.Open(); using var output = new FileStream(destinationFile, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+                using var hasher = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+                int count; long total = 0;
+                while ((count = input.Read(buffer)) > 0)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    total += count; if (total > entry.Length) throw new InvalidDataException("Expanded file exceeds signed length.");
+                    output.Write(buffer, 0, count); hasher.AppendData(buffer, 0, count);
+                }
+                output.Flush(true);
+                if (total != entry.Length || !Convert.ToHexStringLower(hasher.GetHashAndReset()).Equals(inventory[entry.FullName].Sha256, StringComparison.OrdinalIgnoreCase)) throw new CryptographicException("Extracted file SHA-256 rejected.");
+                expanded += total;
+                progress = TransferProgress("extracting", expanded, manifest.ExpandedSize, progress);
             }
-            output.Flush(true);
-            if (total != entry.Length || !Convert.ToHexStringLower(hasher.GetHashAndReset()).Equals(inventory[entry.FullName].Sha256, StringComparison.OrdinalIgnoreCase)) throw new CryptographicException("Extracted file SHA-256 rejected.");
-            expanded += total;
-            progress = TransferProgress("extracting", expanded, manifest.ExpandedSize, progress);
+            filesPhase?.Complete();
         }
+        finally { ArrayPool<byte>.Shared.Return(buffer); }
     }
     static void SameRelease(Manifest installed, Manifest offered)
     {
@@ -521,25 +564,31 @@ internal static partial class Program
         if (verified.Manifest.Version != version) throw new InvalidDataException("Installed version metadata mismatch.");
         return verified;
     }
-    static Verified VerifyInstalled(string root, string version, CancellationToken cancellationToken = default)
+    static Verified VerifyInstalled(string root, string version, CancellationToken cancellationToken = default, bool measure = false)
     {
+        using var verifyPhase = measure ? StartPhase(root, "verify-installed", version) : null;
         var verified = ReadInstalledManifest(root, version);
         var directory = VersionDirectory(root, version);
         var app = Path.Combine(directory, "app");
         var all = Walk(app, cancellationToken).Select(path => Path.GetRelativePath(app, path).Replace('\\', '/')).ToHashSet(StringComparer.Ordinal);
         if (!all.SetEquals(verified.Manifest.Files.Select(f => f.Path))) throw new InvalidDataException("Installed payload inventory mismatch.");
+        var progress = measure ? TransferProgress("verifying-files", 0, verified.Manifest.Files.Length, -1) : -1;
+        var completed = 0;
         foreach (var file in verified.Manifest.Files)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var path = SafePath(app, file.Path);
             if (new FileInfo(path).Length != file.Size || !Hash(path, cancellationToken).Equals(file.Sha256, StringComparison.OrdinalIgnoreCase)) throw new CryptographicException($"Installed file hash rejected: {file.Path}");
+            if (measure) progress = TransferProgress("verifying-files", ++completed, verified.Manifest.Files.Length, progress);
         }
         ValidateApp(app, Read<AppConfig>(Path.Combine(app, "delivery-app.json")));
-        EnsureSandboxReadAccess(app);
+        EnsureSandboxReadAccess(app, measure ? root : null);
+        verifyPhase?.Complete();
         return verified;
     }
-    static void EnsureSandboxReadAccess(string appDirectory)
+    static void EnsureSandboxReadAccess(string appDirectory, string? diagnosticRoot = null)
     {
+        using var sandboxPhase = diagnosticRoot is null ? null : StartPhase(diagnosticRoot, "sandbox-permissions");
         if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("Windows sandbox ACLs are required.");
         NoLinks(appDirectory);
         var directory = new DirectoryInfo(appDirectory);
@@ -564,6 +613,7 @@ internal static partial class Program
         // Applying the inheritable DACL propagates to existing unprotected children.
         // Never reset inheritance or replace the ACL on profile/state/ancestor paths.
         if (changed) directory.SetAccessControl(security);
+        sandboxPhase?.Complete();
     }
     static void ValidateApp(string root, AppConfig config)
     {
@@ -614,16 +664,22 @@ internal static partial class Program
         catch (IOException) { Event(root, "activation-deferred", pending?.Version, "Launcher session is running."); return false; }
         using (lease)
         {
+            using var activationPhase = StartPhase(root, "activate", pending?.Version);
             if (BrowserRunning(root)) { Event(root, "activation-deferred", pending?.Version, "Installed browser process is running."); return false; }
             RecoverLauncher(root);
             RetryRegistrationRefresh(root, cancellationToken);
             if (pending is null) return false;
             var current = Current(root);
             if (current is not null && VersionOf(pending.Version) < VersionOf(current.Version)) throw new InvalidDataException("Pending downgrade rejected.");
-            VerifyInstalled(root, pending.Version, cancellationToken);
+            VerifyInstalled(root, pending.Version, cancellationToken, measure: true);
             cancellationToken.ThrowIfCancellationRequested();
             LauncherTransaction? transaction;
-            try { transaction = PrepareLauncher(root, current, pending, cancellationToken); }
+            try
+            {
+                using var probePhase = StartPhase(root, "launcher-probe", pending.Version);
+                transaction = PrepareLauncher(root, current, pending, cancellationToken);
+                probePhase.Complete();
+            }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 RecoverLauncher(root);
@@ -644,6 +700,7 @@ internal static partial class Program
             }
             catch { RecoverLauncher(root); throw; }
             Event(root, "activated", pending.Version);
+            activationPhase.Complete();
             return true;
         }
     }
@@ -651,6 +708,8 @@ internal static partial class Program
     {
         var launchTimer = Stopwatch.StartNew();
         var url = options.TryGetValue("url", out var requestedUrl) ? LaunchUrl(requestedUrl) : null;
+        var profile = BrowserProfile(root, agents ? null : options.GetValueOrDefault("user-data-dir"));
+        var profileDirectory = agents ? null : BrowserProfileDirectory(options.GetValueOrDefault("profile-directory"));
         var prepared = await PrepareBrowserLaunch(root, cancellationToken);
         var settings = prepared.Settings;
         var pointer = prepared.Current;
@@ -665,7 +724,7 @@ internal static partial class Program
             var validationMs = phase.Elapsed.TotalMilliseconds;
             var browser = SafePath(appRoot, app.Browser);
             var start = new ProcessStartInfo { FileName = agents ? SafePath(appRoot, app.Agent ?? throw new InvalidOperationException("No agent runtime in package.")) : browser, WorkingDirectory = appRoot, UseShellExecute = false, CreateNoWindow = agents };
-            string Expand(string arg) => arg.Replace("{browser}", browser, StringComparison.Ordinal).Replace("{agentStateDir}", SafePath(root, "agent-state"), StringComparison.Ordinal).Replace("{profile}", SafePath(root, "profile"), StringComparison.Ordinal);
+            string Expand(string arg) => arg.Replace("{browser}", browser, StringComparison.Ordinal).Replace("{agentStateDir}", SafePath(root, "agent-state"), StringComparison.Ordinal).Replace("{profile}", profile, StringComparison.Ordinal);
             foreach (var argument in (agents ? app.AgentArguments : app.BrowserArguments) ?? []) start.ArgumentList.Add(Expand(argument));
             if (agents)
             {
@@ -673,11 +732,14 @@ internal static partial class Program
             }
             else
             {
-                start.ArgumentList.Add("--user-data-dir=" + SafePath(root, "profile"));
+                start.ArgumentList.Add("--user-data-dir=" + profile);
+                if (profileDirectory is not null) start.ArgumentList.Add("--profile-directory=" + profileDirectory);
+                if (Boolean(options, "incognito", false)) start.ArgumentList.Add("--incognito");
+                if (Boolean(options, "new-window", false)) start.ArgumentList.Add("--new-window");
                 start.ArgumentList.Add("--no-first-run"); start.ArgumentList.Add("--no-default-browser-check");
                 if (url is not null) start.ArgumentList.Add(url);
             }
-            start.Environment["VELMREN_PROFILE_DIR"] = SafePath(root, "profile");
+            start.Environment["VELMREN_PROFILE_DIR"] = profile;
             phase.Restart();
             process = Process.Start(start) ?? throw new InvalidOperationException("Application failed to start.");
             var processStartMs = phase.Elapsed.TotalMilliseconds;
@@ -691,17 +753,8 @@ internal static partial class Program
         using (process)
         using (lease)
         {
-            await InitialUpdateCheck(root, cancellationToken);
-            var next = DateTime.UtcNow.AddSeconds(interval);
-            while (!process.HasExited || BrowserRunning(root))
-            {
-                await Task.Delay(250, cancellationToken);
-                if (DateTime.UtcNow < next) continue;
-                try { await Update(root, cancellationToken); }
-                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
-                catch (Exception ex) { Event(root, "update-check-failed", detail: SafeError(ex)); }
-                next = DateTime.UtcNow.AddSeconds(interval);
-            }
+            await SuperviseUpdates(root, interval,
+                () => !process.HasExited || BrowserRunning(root), cancellationToken);
         }
         using (var operation = await Lock(root, cancellationToken)) TryActivate(root, cancellationToken, cleanupRetired: true);
         Event(root, agents ? "agents-exited" : "browser-exited", Current(root)?.Version);

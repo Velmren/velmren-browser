@@ -1,5 +1,6 @@
 bin/
 obj/
+!native/7zr-26.05-win-x64.exe
 *.pem
 !preview-public.pem
 *.zip

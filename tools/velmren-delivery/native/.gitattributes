@@ -1,0 +1,2 @@
+# Preserve the upstream SDK license verbatim, including its original whitespace.
+LZMA-SDK-26.05.txt -text -whitespace

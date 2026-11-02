@@ -36,7 +36,7 @@ internal static partial class Program
 {
     const string OwnershipFile = ".velmren-owner.json";
     static readonly string[] RegistrationValues = ["VelmrenOwner", "InstallLocation", "DisplayName", "DisplayVersion", "Publisher", "DisplayIcon", "UninstallString", "NoModify", "NoRepair"];
-    static readonly string[] CoreFiles = ["Velmren.exe", "Velmren.exe.installing", "installation.json", "current.json", "pending.json", "events.jsonl", "operation.lock", "run.lock"];
+    static readonly string[] CoreFiles = ["Velmren.exe", "Velmren.exe.installing", "installation.json", "current.json", "pending.json", "events.jsonl", "operation.lock", "run.lock", UpdateMonitorFile];
     static string CanonicalRoot(string root) => Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
     static string OwnerSid()
     {
@@ -90,8 +90,8 @@ internal static partial class Program
         foreach (var item in files)
         {
             var relative = item.Replace('\\', '/');
-            _ = SafePath(root, relative);
-            if (!combined.Contains(relative) && File.Exists(SafePath(root, relative)))
+            var path = SafePath(root, relative);
+            if (!combined.Contains(relative) && File.Exists(path))
                 throw new InvalidDataException("Refusing to overwrite a file outside the installation ownership inventory.");
             combined.Add(relative);
         }
@@ -138,6 +138,7 @@ internal static partial class Program
         }
         cancellationToken.ThrowIfCancellationRequested();
         _ = ClaimRoot(root);
+        using var installPhase = StartPhase(root, "install");
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         budget.CancelAfter(TimeSpan.FromMinutes(20)); cancellationToken = budget.Token;
         using (var operation = await Lock(root, cancellationToken))
@@ -184,10 +185,11 @@ internal static partial class Program
                 await ApplyRelease(root, bundle, ct => CopyBundle(root, source, selected, ct), cancellationToken);
             }
             var current = Current(root) ?? throw new InvalidOperationException("Initial installation did not activate.");
-            VerifyInstalled(root, current.Version, cancellationToken);
+            VerifyInstalled(root, current.Version, cancellationToken, measure: true);
             cancellationToken.ThrowIfCancellationRequested();
             WriteOwnership(root, ReadOwnership(root) with { State = "installed" });
             Event(root, "installed", current.Version);
+            installPhase.Complete();
         }
     }
 
@@ -247,13 +249,15 @@ internal static partial class Program
         if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException();
         root = CanonicalRoot(root);
         _ = ReadOwnership(root); _ = GetSettings(root);
+        using var registerPhase = StartPhase(root, "register");
         using var operation = await Lock(root, cancellationToken);
         var owner = ReadOwnership(root);
         if (owner.State != "installed") throw new InvalidOperationException("Complete the installation before registration.");
         var pointer = Current(root) ?? throw new InvalidOperationException("No verified installation.");
-        var verified = VerifyInstalled(root, pointer.Version, cancellationToken);
+        var verified = VerifyInstalled(root, pointer.Version, cancellationToken, measure: true);
         var appRoot = Path.Combine(VersionDirectory(root, pointer.Version), "app");
         var app = Read<AppConfig>(SafePath(appRoot, "delivery-app.json"));
+        Event(root, "registering", pointer.Version);
         var maintenance = await EnsureMaintenance(root, appRoot, verified, app, cancellationToken);
         owner = ReadOwnership(root);
         var testId = Environment.GetEnvironmentVariable("VELMREN_DELIVERY_TEST_ID");
@@ -303,6 +307,7 @@ internal static partial class Program
         }
         PublishRegistration(root, pointer.Version, maintenance, app.Setup is not null, cancellationToken);
         Event(root, "registered", pointer.Version);
+        registerPhase.Complete();
     }
 
     static Dictionary<string, RegistrationValue> RegistrationPlanValues(InstallOwnership owner, RegistryWritePlan plan)

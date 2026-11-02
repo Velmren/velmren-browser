@@ -261,7 +261,7 @@ try {
       Assert ($timer.Elapsed.TotalSeconds -lt 4) "Stalled $mode blocked browser startup."
       Wait-For { (Get-Content -Raw -LiteralPath $stallLog).Contains("Stalling $mode body after headers and 1 byte.") } 8
       $launcherLog = Join-Path $work "stalled-$mode-launcher.stdout.log"
-      Wait-For { (Get-Content -Raw -LiteralPath $launcherLog).Contains('Initial update check exceeded') } 8
+      Wait-For { (Get-Content -Raw -LiteralPath $launcherLog).Contains('update-check-failed') } 14
       Assert ((Current-Version) -eq '1.0.0.1') "Stalled $mode changed active release."
       $lockProbe = [IO.File]::Open((Join-Path $installRoot 'operation.lock'), [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
       $lockProbe.Dispose()
@@ -271,7 +271,7 @@ try {
         $partial = Join-Path $installRoot "downloads/$($offered.sha256).zip.part"
         Assert ((Test-Path -LiteralPath $partial) -and (Get-Item -LiteralPath $partial).Length -eq 1) 'Stalled archive did not retain the resumable partial body.'
       }
-      $checks.Add("browser starts before stalled $mode request; background timeout releases operation lock")
+      $checks.Add("browser starts before stalled $mode request; network idle timeout releases operation lock")
       foreach ($process in @($stallLauncher, $stallServer)) { if (!$process.HasExited) { $process.Kill($true); $process.WaitForExit() }; $process.Dispose() }
       $stallLauncher = $null; $stallServer = $null
     }

@@ -32,6 +32,10 @@ internal static class Smoke
             Render(output, false, "online", online: true);
             Render(output, false, "options", "options", online: true);
             Render(output, false, "download", "download", online: true);
+            Render(output, false, "preparing", "preparing");
+            Render(output, false, "extraction", "extraction");
+            Render(output, false, "verification", "verification");
+            Render(output, false, "archive-verification", "archive-verification");
             Render(output, false, "retry", "retry", online: true);
             Render(output, false, "complete", "complete", online: true);
             Render(output, false, "options-scaled", "options", online: true, scale: 1.5F);
@@ -61,7 +65,32 @@ internal static class Smoke
         Check(EngineRunner.ParseEvent("not json") is null, "non-JSON output ignored");
         Check(EngineRunner.ParseEvent("{\"action\":\"extracting\",\"percent\":140}")?.Percent == 100, "progress clamped");
         Check(EngineRunner.ParseEvent("{\"action\":\"extracting\",\"percent\":\"bad\"}") is null, "malformed progress ignored");
-        using var payload = await PayloadSession.ExtractAsync(CancellationToken.None, Path.Combine(output, "extracted"));
+        var measured = EngineRunner.ParseEvent("{\"action\":\"extracting\",\"percent\":55,\"completed\":5500000000,\"total\":10000000000}");
+        Check(measured is { Completed: 5500000000, Total: 10000000000 }, "64-bit byte progress accepted");
+        var phaseEvent = EngineRunner.ParseEvent("{\"action\":\"phase-completed\",\"phase\":\"extract-files\",\"elapsedMs\":125,\"version\":\"1.0.0.0\",\"bytes\":10000000000,\"files\":42,\"succeeded\":true}");
+        Check(phaseEvent is { Phase: "extract-files", ElapsedMs: 125, Version: "1.0.0.0", Bytes: 10000000000, Files: 42, Succeeded: true }, "phase diagnostics retained");
+        Check(EngineRunner.ParseEvent("{\"action\":\"phase-started\",\"phase\":\"archive-verify\",\"percent\":null,\"bytes\":null,\"elapsedMs\":0}") is { Phase: "archive-verify", ElapsedMs: 0 }, "nullable metadata preserves known phase");
+        foreach (var invalid in new[] {
+            "{\"action\":\"phase-started\",\"phase\":\"unknown\"}",
+            "{\"action\":\"phase-started\"}",
+            "{\"action\":\"downloading\",\"completed\":-1}",
+            "{\"action\":\"downloading\",\"total\":1099511627777}",
+            "{\"action\":\"downloading\",\"completed\":2,\"total\":1}",
+            "{\"action\":\"downloading\",\"completed\":1.5}",
+            "{\"action\":\"downloading\",\"total\":\"200\"}",
+            "{\"action\":\"verifying-files\",\"total\":10000001}",
+            "{\"action\":\"phase-completed\",\"phase\":\"extract\",\"elapsedMs\":-1}",
+            "{\"action\":\"phase-completed\",\"phase\":\"extract\",\"succeeded\":\"true\"}" })
+            Check(EngineRunner.ParseEvent(invalid) is null, "invalid phase/counter ignored: " + invalid);
+        var preparation = new List<EngineEvent>();
+        var callerThread = Environment.CurrentManagedThreadId;
+        var preparationThread = callerThread;
+        using var payload = await PayloadSession.ExtractAsync(CancellationToken.None, Path.Combine(output, "extracted"),
+            progress: new SynchronousProgress(value => { if (preparation.Count == 0) preparationThread = Environment.CurrentManagedThreadId; preparation.Add(value); }));
+        Check(preparationThread != callerThread, "payload preparation starts off the caller/UI thread");
+        Check(preparation.First().Action == "preparing-installer", "payload preparation announces its first stage");
+        CheckCopyProgress(preparation, "reading-package", new FileInfo(Path.Combine(payload.BundleDirectory!, "velmren-1.0.0.0.zip")).Length);
+        CheckCopyProgress(preparation, "preparing-engine", new FileInfo(payload.EnginePath).Length);
         var extractedPath = payload.DirectoryPath;
         Check(File.Exists(payload.EnginePath), "embedded engine extracted");
         Check(payload.BundleDirectory is not null && File.Exists(Path.Combine(payload.BundleDirectory, "manifest.json")), "embedded manifest extracted");
@@ -86,7 +115,9 @@ internal static class Smoke
         var progress = new SynchronousProgress(events.Add);
         var result = await EngineRunner.RunAsync(payload.EnginePath,
             ["install-bundle", "--root", root, "--bundle-directory", payload.BundleDirectory!], payload.CancelPath, progress, CancellationToken.None);
-        Check(result.ExitCode == 0 && events.Select(e => e.Percent).SequenceEqual(new int?[] { 10, 55, 100 }), "real process JSON progress");
+        Check(result.ExitCode == 0 && events.Where(e => e.Action == "extracting").Select(e => e.Percent).SequenceEqual(new int?[] { 10, 55, 100 }), "real process JSON progress");
+        Check(events.First() is { Action: "phase-started", Phase: "extract-files" } &&
+            events.Last() is { Action: "phase-completed", Succeeded: true, Bytes: 10000000000, Files: 42 }, "real process phase events and bounded counters");
         var arguments = JsonCodec.Deserialize<string[]>(File.ReadAllText(Path.Combine(root, "arguments-install-bundle.json")))!;
         Check(arguments[2] == root && arguments[4] == payload.BundleDirectory, "argument boundaries with Unicode and shell characters");
         var tricky = new[] { "register", "--root", root, "--empty", "", "--quoted", "prefix\\\"quoted\"", "--trailing", "C:\\trailing folder\\" };
@@ -148,8 +179,10 @@ internal static class Smoke
         var installed = Path.Combine(root, "Velmren.exe");
         File.Copy(fakeEngine, installed, false);
         var cache = Path.Combine(output, "private-cache");
-        using (var payload = await PayloadSession.ExtractAsync(CancellationToken.None, cache, root))
+        var preparation = new List<EngineEvent>();
+        using (var payload = await PayloadSession.ExtractAsync(CancellationToken.None, cache, root, new SynchronousProgress(preparation.Add)))
         {
+            CheckCopyProgress(preparation, "preparing-engine", configuration.EngineSize);
             using var hash = SHA256.Create();
             using var engine = File.OpenRead(payload.EnginePath);
             var actual = BitConverter.ToString(hash.ComputeHash(engine)).Replace("-", "").ToLowerInvariant();
@@ -184,6 +217,16 @@ internal static class Smoke
             catch (InvalidDataException) { checks.Add("maintenance requires explicit installed root"); }
             await CheckRetainedEnginesAsync(output, fakeEngine, root, installed, cache);
         }
+    }
+
+    private static void CheckCopyProgress(List<EngineEvent> events, string action, long size)
+    {
+        var samples = events.Where(value => value.Action == action).ToArray();
+        Check(samples.Length >= 2 && samples.First().Completed == 0 && samples.Last().Completed == size && samples.Last().Percent == 100,
+            action + " reports actual copied bytes from zero to complete");
+        Check(samples.All(value => value.Total == size && value.Completed >= 0 && value.Completed <= size) &&
+            samples.Select(value => value.Completed).SequenceEqual(samples.Select(value => value.Completed).OrderBy(value => value)),
+            action + " reports stable totals and monotonic byte counts");
     }
 
     private static async Task CheckRetainedEnginesAsync(string output, string fakeEngine, string root, string installed, string cache)
@@ -325,20 +368,41 @@ internal static class Smoke
             destination.SelectionLength = 0;
             primary.Focus();
         }
-        if (state is "download" or "retry")
+        var workingState = state is "download" or "preparing" or "extraction" or "verification" or "archive-verification";
+        if (workingState || state == "retry")
         {
             Invoke(form, "ShowWorking");
             Check(!primary.Visible && !destination.Enabled && cancel.Enabled, name + " only cancellation available while working");
             using var cancellation = new CancellationTokenSource();
             SetField(form, "running", true);
             SetField(form, "cancellation", cancellation);
-            Invoke(form, "OnEngineEvent", new EngineEvent("downloading", 43));
+            Invoke(form, "OnEngineEvent", new EngineEvent("downloading", 43, Completed: 450887680, Total: 1048576000));
             Check(Field<ProgressBar>(form, "progress").Value == 43 && Field<Label>(form, "status").Text.Contains("43 %"), name + " actual download percentage shown");
+            Check(Field<Label>(form, "progressDetails").Text == "430,0 из 1 000,0 МБ", name + " actual downloaded and total megabytes shown");
+            Invoke(form, "OnEngineEvent", new EngineEvent("phase-completed", null, "prepare-release", Succeeded: true));
+            Check(Field<ProgressBar>(form, "progress").Value == 43 && Field<Label>(form, "progressDetails").Visible, name + " nested phase completion does not reset measured progress");
             Invoke(form, "OnEngineEvent", new EngineEvent("unknown", 99));
             Check(Field<ProgressBar>(form, "progress").Value == 43, name + " unknown event does not falsify progress");
+            Invoke(form, "OnEngineEvent", new EngineEvent("phase-started", null, "unknown"));
+            Check(Field<ProgressBar>(form, "progress").Value == 43, name + " unknown phase does not falsify progress");
+            Invoke(form, "OnEngineEvent", new EngineEvent("phase-started", null, "download"));
+            Check(Field<ProgressBar>(form, "progress").Value == 43 && Field<Label>(form, "progressDetails").Visible, name + " repeated phase start preserves measured progress");
             Invoke(form, "OnEngineEvent", new EngineEvent("verifying", null));
             Check(Field<Label>(form, "status").Text == "Проверка файлов браузера" && Field<ProgressBar>(form, "progress").Style == ProgressBarStyle.Marquee, name + " verification has no fabricated percentage");
-            Invoke(form, "OnEngineEvent", new EngineEvent("downloading", 43));
+            Check(!Field<Label>(form, "progressDetails").Visible, name + " next phase clears unrelated byte counts");
+            Invoke(form, "OnEngineEvent", new EngineEvent("phase-started", null, "archive-verify"));
+            Check(Field<Label>(form, "status").Text == "Проверка подлинности пакета", name + " authenticity check has a distinct human-readable stage");
+            Invoke(form, "OnEngineEvent", new EngineEvent("verifying-files", 25, Completed: 42, Total: 168));
+            Check(Field<ProgressBar>(form, "progress").Value == 25 && Field<Label>(form, "progressDetails").Text == "Проверено файлов: 42 из 168", name + " verification counts files rather than bytes");
+            var displayed = state switch
+            {
+                "preparing" => new EngineEvent("reading-package", 62, Completed: 650117120, Total: 1048576000),
+                "extraction" => new EngineEvent("extracting", 55, Completed: 1181116006, Total: 2147483648),
+                "verification" => new EngineEvent("verifying-files", 25, Completed: 42, Total: 168),
+                "archive-verification" => new EngineEvent("phase-started", null, "archive-verify"),
+                _ => new EngineEvent("downloading", 43, Completed: 450887680, Total: 1048576000)
+            };
+            Invoke(form, "OnEngineEvent", displayed);
             SetField(form, "running", false);
             SetField(form, "cancellation", null);
             if (state == "retry")
@@ -365,7 +429,7 @@ internal static class Smoke
         using var bitmap = new Bitmap(form.Width, form.Height);
         form.DrawToBitmap(bitmap, new Rectangle(Point.Empty, form.Size));
         bitmap.Save(Path.Combine(output, name + "-native-render.png"));
-        Check(state == "download" || form.AcceptButton is Button { Enabled: true }, name + " default keyboard action");
+        Check(workingState || form.AcceptButton is Button { Enabled: true }, name + " default keyboard action");
         Check(form.CancelButton is Button, name + " escape action");
         Check(form.AutoScaleMode == AutoScaleMode.Dpi, name + " DPI scaling");
         var actionBounds = form.RectangleToClient(primary.RectangleToScreen(primary.ClientRectangle));
@@ -373,6 +437,8 @@ internal static class Smoke
         var inputBounds = options.RectangleToClient(destination.RectangleToScreen(destination.ClientRectangle));
         Check(!options.Visible || options.ClientRectangle.Contains(inputBounds), name + " folder input fits expanded settings");
         Check(form.ClientRectangle.Contains(form.RectangleToClient(closeWindow.RectangleToScreen(closeWindow.ClientRectangle))), name + " close action fits window");
+        var details = Field<Label>(form, "progressDetails");
+        Check(!details.Visible || form.ClientRectangle.Contains(form.RectangleToClient(details.RectangleToScreen(details.ClientRectangle))), name + " measured progress details fit window");
         if (state == "download")
         {
             using var cancellation = new CancellationTokenSource();

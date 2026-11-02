@@ -128,8 +128,10 @@ function Get-SafeEvents {
     $result = [ordered]@{ status = 'missing'; byteLimit = 65536; recordLimit = 200; truncated = $false; skippedRecords = 0; records = @() }
     $allowedActions = @(
         'up-to-date', 'staged', 'download-resumed', 'downloaded',
-        'activation-deferred', 'launcher-update-rejected', 'activated',
-        'agents-started', 'browser-started', 'launch-timing', 'update-check-failed',
+        'activation-deferred', 'activation-rejected', 'launcher-update-rejected', 'activated',
+        'agents-started', 'browser-started', 'launch-timing', 'update-check-failed', 'update-check-started',
+        'native-monitor-started', 'native-monitor-exited', 'update-monitor-acquired',
+        'phase-started', 'phase-completed',
         'agents-exited', 'browser-exited', 'installed', 'registered',
         'registration-refreshed', 'registration-refresh-failed',
         'launcher-bootstrap-updated', 'launcher-replaced', 'launcher-update-complete',
@@ -154,6 +156,20 @@ function Get-SafeEvents {
                 if ($null -ne $entry.version -and -not $version) { throw 'Invalid version.' }
                 # Rebuild each record; only the explicit numeric timing fields may leave detail.
                 $safe = [ordered]@{ timeUtc = $time.UtcDateTime.ToString('o'); action = $entry.action; version = $version }
+                if ($entry.action -ceq 'phase-started' -or $entry.action -ceq 'phase-completed') {
+                    $phases = @('check-update','download','archive-verify','install','prepare-release','archive-preflight',
+                        'extract','extract-files','sandbox-permissions','verify-installed','launcher-probe','activate','register','retention')
+                    if ($entry.phase -isnot [string] -or $phases -cnotcontains $entry.phase) { throw 'Unknown phase.' }
+                    $safe.phase = $entry.phase
+                    foreach ($name in @('elapsedMs', 'bytes', 'files')) {
+                        $property = $entry.PSObject.Properties[$name]
+                        if ($null -eq $property -or $null -eq $property.Value) { continue }
+                        $value = $property.Value
+                        $maximum = if ($name -ceq 'elapsedMs') { 86400000 } elseif ($name -ceq 'files') { 10000000 } else { 17179869184 }
+                        if (($value -is [long] -or $value -is [int]) -and $value -ge 0 -and $value -le $maximum) { $safe[$name] = $value }
+                    }
+                    if ($entry.PSObject.Properties['succeeded'] -and $entry.succeeded -is [bool]) { $safe.succeeded = $entry.succeeded }
+                }
                 if ($entry.action -ceq 'launch-timing' -and $entry.PSObject.Properties['detail'] -and $entry.detail -is [string]) {
                     try {
                         $detail = Read-Json $entry.detail

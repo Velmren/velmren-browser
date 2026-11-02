@@ -108,6 +108,21 @@ Write-Utf8 (Join-Path $root 'events.jsonl') (($shortEvent + "`n") * 250)
 $limited = Collect $root $reports
 Assert ($limited.events.records.Count -eq 200 -and $limited.events.truncated) 'Record limit did not retain the last 200 records.'
 
+$phaseJournal = New-Object Text.StringBuilder
+foreach ($entry in @(
+    @{ time = '2026-11-02T12:13:14Z'; action = 'phase-completed'; phase = 'extract-files'; version = $version; elapsedMs = 1234; bytes = 684000000; files = 4058; succeeded = $true; detail = $script:Secret },
+    @{ time = '2026-11-02T12:13:14Z'; action = 'phase-started'; phase = 'download'; version = $null; elapsedMs = -1; bytes = $script:Secret; files = 10000001; succeeded = $script:Secret },
+    @{ time = '2026-11-02T12:13:14Z'; action = 'phase-completed'; phase = $script:Secret; version = $version },
+    @{ time = '2026-11-02T12:13:14Z'; action = 'native-monitor-started'; version = $null; detail = $script:Secret }
+)) { [void]$phaseJournal.AppendLine(($entry | ConvertTo-Json -Compress)) }
+Write-Utf8 (Join-Path $root 'events.jsonl') $phaseJournal.ToString()
+$phases = Collect $root $reports
+Assert ($phases.events.records.Count -eq 3 -and $phases.events.skippedRecords -eq 1) 'Unknown phase must be excluded; monitor metadata must survive.'
+$phase = $phases.events.records[0]
+Assert ($phase.phase -eq 'extract-files' -and $phase.elapsedMs -eq 1234 -and $phase.bytes -eq 684000000 -and $phase.files -eq 4058 -and $phase.succeeded) 'Safe phase metrics were lost.'
+Assert (($phases.events.records[1].PSObject.Properties.Name -join ',') -eq 'timeUtc,action,version,phase') 'Invalid phase metrics or private fields leaked.'
+Assert (($phases.events.records[2].PSObject.Properties.Name -join ',') -eq 'timeUtc,action,version') 'Monitor process details leaked.'
+
 $missing = Collect (Join-Path $base 'does-not-exist') $reports
 Assert ($missing.installation.status -eq 'missing' -and $missing.events.status -eq 'missing') 'Missing installation must be reported without failure.'
 Write-Utf8 (Join-Path $root 'current.json') ('x' * 4097)

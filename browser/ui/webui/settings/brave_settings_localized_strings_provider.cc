@@ -1338,6 +1338,8 @@ void BraveAddResources(content::WebUIDataSource* html_source,
 
 void BraveAddAboutStrings(content::WebUIDataSource* html_source,
                           Profile* profile) {
+  html_source->AddLocalizedString("velmrenAboutUpdates",
+                                 IDS_SETTINGS_VELMREN_ABOUT_UPDATES);
   std::u16string license = l10n_util::GetStringFUTF16(
       IDS_BRAVE_VERSION_UI_LICENSE, kBraveLicenseUrl,
       chrome::kChromeUICreditsURL16, kBraveBuildInstructionsUrl,

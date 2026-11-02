@@ -21,6 +21,7 @@
 #include "base/task/thread_pool.h"
 #include "base/win/shortcut.h"
 #include "base/win/windows_version.h"
+#include "brave/browser/velmren_delivery_win.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_attributes_entry.h"
@@ -28,6 +29,8 @@
 #include "chrome/browser/profiles/profile_shortcut_manager_win.h"
 #include "chrome/browser/shell_integration_win.h"
 #include "chrome/browser/win/taskbar_manager.h"
+#include "chrome/common/chrome_constants.h"
+#include "chrome/common/chrome_paths.h"
 #include "chrome/installer/util/install_util.h"
 #include "chrome/installer/util/shell_util.h"
 #include "chrome/installer/util/taskbar_util.h"
@@ -117,6 +120,20 @@ bool PinToTaskbarImpl(const base::FilePath& profile_path,
   ShellUtil::ShortcutProperties properties(ShellUtil::CURRENT_USER);
   ShellUtil::AddDefaultShortcutProperties(chrome_exe, &properties);
 
+  base::FilePath launch_profile_path = profile_path;
+  if (launch_profile_path.empty()) {
+    base::FilePath user_data_directory;
+    if (base::PathService::Get(chrome::DIR_USER_DATA, &user_data_directory)) {
+      launch_profile_path = user_data_directory.AppendASCII(chrome::kInitialProfile);
+    }
+  }
+  auto delivery_command =
+      velmren::delivery::MakeBrowserCommand(chrome_exe, launch_profile_path);
+  if (delivery_command) {
+    properties.set_target(delivery_command->GetProgram());
+    properties.set_icon(delivery_command->GetProgram(), 0);
+  }
+
   const bool pin_profile_specific_shortcut = !profile_path.empty();
   if (pin_profile_specific_shortcut) {
     properties.set_arguments(
@@ -132,6 +149,9 @@ bool PinToTaskbarImpl(const base::FilePath& profile_path,
   }
 
   // Generate shortcut file to use for pin to taskbar.
+  if (delivery_command) {
+    properties.set_arguments(delivery_command->GetArgumentsString());
+  }
   std::optional<ScopedShortcutFile> shortcut_path =
       GetShortcutPath(ExtractShortcutNameFromProperties(properties));
   if (!shortcut_path) {

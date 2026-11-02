@@ -23,3 +23,12 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
+
+LZMA SDK 26.05 / 7zr.exe (x64)
+Copyright (c) Igor Pavlov
+https://github.com/ip7z/7zip/releases/tag/26.05
+
+The LZMA SDK source code and SDK binaries, including the embedded 7zr decoder,
+are placed in the public domain. Original SDK sources, license, download URL,
+and exact SHA-256 hashes are retained in tools/velmren-delivery/native.
+The native decoder is used only during compact package extraction.

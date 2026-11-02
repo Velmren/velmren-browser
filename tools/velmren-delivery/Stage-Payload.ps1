@@ -59,7 +59,7 @@ New-Item -ItemType Directory -Path $browser, $agent, $runtime -Force | Out-Null
 if (!(Test-Path -LiteralPath (Join-Path $BrowserDirectory 'velmren.exe'))) { throw 'Browser velmren.exe is missing.' }
 foreach ($file in Get-ChildItem -LiteralPath $BrowserDirectory -File) {
   # These are build/test diagnostics, excluded by Chromium's Windows release manifest.
-  if ($file.Name -in 'VkLayer_khronos_validation.dll', 'VkICD_mock_icd.dll', 'dbghelp.dll', 'dbgcore.dll', 'msdia140.dll', 'symsrv.dll') { continue }
+  if ($file.Name -in 'VkLayer_khronos_validation.dll', 'VkICD_mock_icd.dll', 'dbghelp.dll', 'dbgcore.dll', 'msdia140.dll', 'symsrv.dll', 'test_trace_processor.dll') { continue }
   if ($file.Extension -in '.dll', '.pak', '.bin', '.dat', '.manifest' -or $file.Name -in 'velmren.exe', 'chrome_proxy.exe', 'chrome_pwa_launcher.exe', 'notification_helper.exe', 'vulkan-1.dll', 'vk_swiftshader_icd.json') {
     Copy-TreeSafe $file.FullName (Join-Path $browser $file.Name)
   }
@@ -108,6 +108,7 @@ Copy-TreeSafe (Join-Path $repo '../LICENSE') (Join-Path $licenses 'Chromium-LICE
 Copy-TreeSafe $NodeLicense (Join-Path $licenses 'Node-LICENSE.txt')
 if ($DeliveryEngine) {
   Copy-TreeSafe (Join-Path $PSScriptRoot 'THIRD-PARTY-NOTICES.txt') (Join-Path $licenses 'Delivery-THIRD-PARTY-NOTICES.txt')
+  Copy-TreeSafe (Join-Path $PSScriptRoot 'native/LZMA-SDK-26.05.txt') (Join-Path $licenses 'LZMA-SDK-26.05.txt')
 }
 $config | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $target 'delivery-app.json') -Encoding utf8NoBOM
 $files = @(Get-ChildItem -LiteralPath $target -File -Recurse)

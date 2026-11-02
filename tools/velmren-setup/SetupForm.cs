@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 
 namespace Velmren.Setup;
 
@@ -19,6 +20,7 @@ internal class SetupForm : SetupWindow
     private readonly CheckBox desktop = new();
     private readonly Label status = new();
     private readonly ProgressBar progress = new();
+    private readonly Label progressDetails = new();
     private readonly SetupButton primary = new() { Emphasized = true };
     private readonly SetupButton cancel = new() { Quiet = true };
     private readonly ErrorProvider errors = new();
@@ -30,6 +32,7 @@ internal class SetupForm : SetupWindow
     private bool cleaningUp;
     private bool launchOnFinish = true;
     private string selectedRoot;
+    private string? activePhase;
 
     internal SetupForm(SetupOptions options, SetupPayload? configuration = null)
     {
@@ -171,8 +174,9 @@ internal class SetupForm : SetupWindow
         optionsPanel.SetColumnSpan(desktop, 2);
         layout.Controls.Add(optionsPanel, 0, 2);
 
-        var statusPanel = new TableLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, Margin = new Padding(0, 20, 0, 20) };
+        var statusPanel = new TableLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3, Margin = new Padding(0, 20, 0, 20) };
         statusPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        statusPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         statusPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         statusPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         status.Text = uninstall ? "Закройте Velmren перед удалением." : "";
@@ -187,6 +191,12 @@ internal class SetupForm : SetupWindow
         progress.Visible = false;
         progress.AccessibleName = "Ход установки";
         statusPanel.Controls.Add(progress, 0, 1);
+        progressDetails.AutoSize = true;
+        progressDetails.Dock = DockStyle.Fill;
+        progressDetails.Margin = new Padding(0, 8, 0, 0);
+        progressDetails.AccessibleRole = AccessibleRole.StaticText;
+        progressDetails.Visible = false;
+        statusPanel.Controls.Add(progressDetails, 0, 2);
         layout.Controls.Add(statusPanel, 0, 3);
 
         var buttons = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, WrapContents = false, Margin = Padding.Empty };
@@ -242,6 +252,7 @@ internal class SetupForm : SetupWindow
         introduction.ForeColor = SetupPalette.Muted;
         locationCaption.ForeColor = SetupPalette.Muted;
         status.ForeColor = SetupPalette.Muted;
+        progressDetails.ForeColor = SetupPalette.Muted;
         changeOptions.LinkColor = highContrast ? SystemColors.HotTrack : ink;
         changeOptions.ActiveLinkColor = highContrast ? SystemColors.HotTrack : Color.FromArgb(18, 66, 77);
         changeOptions.VisitedLinkColor = changeOptions.LinkColor;
@@ -311,9 +322,9 @@ internal class SetupForm : SetupWindow
         var token = cancellation.Token;
         try
         {
-            payload ??= await PayloadSession.ExtractAsync(token, MaintenanceRelocation.CacheRootFor(selectedRoot), selectedRoot);
-            payload.ResetCancellation();
             var notifications = new Progress<EngineEvent>(OnEngineEvent);
+            payload ??= await PayloadSession.ExtractAsync(token, MaintenanceRelocation.CacheRootFor(selectedRoot), selectedRoot, notifications);
+            payload.ResetCancellation();
             var arguments = new List<string> { uninstall ? "uninstall" : payload.BundleDirectory is null ? "install" : "install-bundle", "--root", selectedRoot };
             if (!uninstall)
             {
@@ -324,7 +335,7 @@ internal class SetupForm : SetupWindow
             if (result.ExitCode != 0) throw new EngineFailure(result.Error);
             if (!uninstall)
             {
-                SetStatus("Создание ярлыков…");
+                OnEngineEvent(new EngineEvent("phase-started", null, "register"));
                 result = await EngineRunner.RunAsync(payload.EnginePath, ["register", "--root", selectedRoot, "--desktop", desktop.Checked ? "true" : "false"], payload.CancelPath, notifications, token);
                 if (result.ExitCode != 0) throw new EngineFailure(result.Error);
             }
@@ -371,9 +382,12 @@ internal class SetupForm : SetupWindow
         cancel.Enabled = true;
         progress.Visible = true;
         progress.Style = ProgressBarStyle.Marquee;
+        activePhase = null;
+        progressDetails.Visible = false;
+        progressDetails.Text = "";
         heading.Text = uninstall ? "Удаляем Velmren" : "Установка Velmren";
-        introduction.Text = uninstall ? "Ваш профиль и данные агентов останутся на компьютере." : "Это окно можно оставить открытым.";
-        SetStatus("Подготовка файлов…");
+        introduction.Text = uninstall ? "Ваш профиль и данные агентов останутся на компьютере." : "Можно продолжать работу на компьютере.";
+        SetStatus(uninstall ? "Подготовка удаления…" : "Подготовка установщика…");
     }
 
     private void ShowComplete()
@@ -383,6 +397,7 @@ internal class SetupForm : SetupWindow
         introduction.Text = uninstall ? "Профиль браузера и данные агентов сохранены." : "Velmren установлен. Можно открывать браузер.";
         SetStatus(uninstall ? "Удаление завершено." : "Ярлык Velmren доступен в меню «Пуск».");
         progress.Visible = false;
+        progressDetails.Visible = false;
         progress.Style = ProgressBarStyle.Continuous;
         progress.Value = 100;
         locationPanel.Visible = false;
@@ -401,6 +416,7 @@ internal class SetupForm : SetupWindow
         progress.Style = ProgressBarStyle.Continuous;
         progress.Value = 0;
         progress.Visible = false;
+        progressDetails.Visible = false;
         locationPanel.Visible = true;
         primary.Text = "&Повторить";
         primary.Visible = true;
@@ -413,24 +429,64 @@ internal class SetupForm : SetupWindow
     private void OnEngineEvent(EngineEvent value)
     {
         if (!running || cancellation?.IsCancellationRequested != false) return;
-        var text = value.Action switch
+        // Parent phases can finish after a more specific phase has already reported progress.
+        if (value.Action == "phase-completed") return;
+        var phase = value.Action switch
         {
-            "download-started" or "downloading" or "download-resumed" => "Скачивание браузера",
-            "downloaded" or "verifying" or "bundle-verifying" or "verified" => "Проверка файлов браузера",
-            "extracting" or "bundle-extracting" => "Установка браузера",
-            "staged" or "activating" or "activation-started" => "Завершение установки…",
-            "installed" or "activated" => "Подготовка к запуску…",
-            "registering" or "registered" => "Создание ярлыков…",
+            "phase-started" => value.Phase,
+            "preparing-installer" or "preparing-engine" or "reading-package" => value.Action,
+            "download-started" or "downloading" or "download-resumed" => "download",
+            "downloaded" or "bundle-verifying" => "archive-verify",
+            "verifying" or "verified" or "verifying-files" => "verify-installed",
+            "extracting" or "bundle-extracting" => "extract-files",
+            "staged" or "activating" or "activation-started" => "activate",
+            "installed" or "activated" => "launcher-probe",
+            "registering" or "registered" => "register",
+            "uninstalling" or "uninstalled" => value.Action,
+            _ => null
+        };
+        var text = phase switch
+        {
+            "preparing-installer" or "preparing-engine" => uninstall ? "Подготовка удаления" : "Подготовка установщика",
+            "reading-package" => "Чтение установочного пакета",
+            "check-update" => "Поиск новой версии",
+            "download" => "Скачивание браузера",
+            "archive-verify" => "Проверка подлинности пакета",
+            "install" or "prepare-release" => "Подготовка папки установки",
+            "archive-preflight" => "Проверка установочного пакета",
+            "extract" or "extract-files" => "Распаковка файлов браузера",
+            "sandbox-permissions" => "Настройка защиты браузера",
+            "verify-installed" => "Проверка файлов браузера",
+            "launcher-probe" => "Проверка готовности к запуску",
+            "activate" => "Применение новой версии",
+            "register" => "Создание ярлыков",
+            "retention" => "Завершение установки",
             "uninstalling" => "Удаление программы…",
             "uninstalled" => "Завершение удаления…",
             _ => null
         };
         if (text is null) return;
-        SetStatus(value.Percent is int current ? $"{text} · {current} %" : text);
-        if (value.Percent is int percent)
+        if (phase == activePhase && value.Action == "phase-started") return;
+        activePhase = phase;
+        var percent = value.Percent;
+        if (percent is null && value.Completed is long done && value.Total is long size && size > 0)
+            percent = (int)(done * 100.0 / size);
+        SetStatus(percent is int current ? $"{text} · {current} %" : text);
+        var details = "";
+        if (value.Completed is long completed && value.Total is long total && total > 0)
+        {
+            var culture = CultureInfo.GetCultureInfo("ru-RU");
+            details = phase == "verify-installed"
+                ? $"Проверено файлов: {completed.ToString("N0", culture)} из {total.ToString("N0", culture)}"
+                : $"{(completed / 1048576.0).ToString("N1", culture)} из {(total / 1048576.0).ToString("N1", culture)} МБ";
+        }
+        progressDetails.Text = details;
+        progressDetails.AccessibleName = details;
+        progressDetails.Visible = details.Length > 0;
+        if (percent is int amount)
         {
             progress.Style = ProgressBarStyle.Continuous;
-            progress.Value = percent;
+            progress.Value = Math.Max(0, Math.Min(amount, 100));
         }
         else progress.Style = ProgressBarStyle.Marquee;
     }

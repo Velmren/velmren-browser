@@ -4,6 +4,23 @@ namespace Velmren.Delivery;
 
 internal static partial class Program
 {
+    static string BrowserProfile(string root, string? requested)
+    {
+        if (requested is null) return SafePath(root, "profile");
+        if (!Path.IsPathFullyQualified(requested)) throw new InvalidDataException("Browser profile must be an absolute path.");
+        var profile = Path.GetFullPath(requested);
+        NoLinks(profile);
+        return profile;
+    }
+
+    static string? BrowserProfileDirectory(string? requested)
+    {
+        if (requested is null) return null;
+        ValidateRelativePath(requested);
+        if (requested.Contains('/') || requested.Contains('\\')) throw new InvalidDataException("Profile directory must be a single folder name.");
+        return requested;
+    }
+
     internal sealed record LaunchPreparation(FileStream Lease, Settings Settings, Pointer Current,
         double LockWaitMs, double SettingsMs);
 
@@ -36,7 +53,8 @@ internal static partial class Program
                 settingsMs += timer.Elapsed.TotalMilliseconds;
                 var current = Current(root);
                 var transaction = File.Exists(SafePath(root, LauncherJournal));
-                if (current is not null && !transaction)
+                var pending = File.Exists(SafePath(root, "pending.json"));
+                if (current is not null && !transaction && (!pending || recovered))
                     return new(lease, settings, current, lockWaitMs, settingsMs);
 
                 // Never wait for recovery while retaining our own shared lease.
@@ -46,10 +64,25 @@ internal static partial class Program
                 if (current is null) await InitialUpdateCheck(root, token);
                 else
                 {
-                    using var budget = CancellationTokenSource.CreateLinkedTokenSource(token);
-                    budget.CancelAfter(StartupUpdateTimeout);
-                    using var operation = await Lock(root, budget.Token);
-                    TryActivate(root, token);
+                    try
+                    {
+                        using var budget = CancellationTokenSource.CreateLinkedTokenSource(token);
+                        budget.CancelAfter(StartupUpdateTimeout);
+                        using var operation = await Lock(root, budget.Token);
+                        TryActivate(root, token);
+                    }
+                    catch (OperationCanceledException) when (!token.IsCancellationRequested && !transaction)
+                    {
+                        // A pending update can wait for the next exit if another
+                        // operation is busy; the committed version remains usable.
+                    }
+                    catch (Exception error) when (error is not OperationCanceledException && !transaction &&
+                        !File.Exists(SafePath(root, LauncherJournal)) && Current(root)?.Version == current.Version)
+                    {
+                        // A rejected pending payload must not strand the independently
+                        // validated committed browser. Never bypass recovery of a swap.
+                        Event(root, "activation-rejected", detail: SafeError(error));
+                    }
                 }
             }
             catch { lease.Dispose(); throw; }

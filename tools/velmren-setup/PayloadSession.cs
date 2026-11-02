@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Diagnostics;
 using System.IO.Compression;
 using System.Security.AccessControl;
 using System.Security.Cryptography;
@@ -36,8 +37,15 @@ internal sealed class PayloadSession : IDisposable
         return payload;
     }
 
-    internal static async Task<PayloadSession> ExtractAsync(CancellationToken cancellationToken, string? cacheDirectory = null, string? installRoot = null)
+    internal static Task<PayloadSession> ExtractAsync(CancellationToken cancellationToken, string? cacheDirectory = null,
+        string? installRoot = null, IProgress<EngineEvent>? progress = null) =>
+        Task.Run(() => ExtractCoreAsync(cancellationToken, cacheDirectory, installRoot, progress), cancellationToken);
+
+    private static async Task<PayloadSession> ExtractCoreAsync(CancellationToken cancellationToken, string? cacheDirectory,
+        string? installRoot, IProgress<EngineEvent>? progress)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+        progress?.Report(new EngineEvent("preparing-installer", null));
         var directory = CreatePrivateDirectory(cacheDirectory);
         var session = new PayloadSession(directory);
         try
@@ -56,13 +64,13 @@ internal sealed class PayloadSession : IDisposable
                 session.BundleDirectory = Path.Combine(directory, "bundle");
                 Directory.CreateDirectory(session.BundleDirectory);
                 await session.CopyResourceAsync(assembly, "Setup.Payload.Manifest", Path.Combine(session.BundleDirectory, "manifest.json"), cancellationToken);
-                await session.CopyResourceAsync(assembly, "Setup.Payload.Package", Path.Combine(session.BundleDirectory, payload.Package), cancellationToken);
+                await session.CopyResourceAsync(assembly, "Setup.Payload.Package", Path.Combine(session.BundleDirectory, payload.Package), cancellationToken, progress);
             }
             if (payload.EngineSource == "installed")
             {
                 if (installRoot is null || payload.Feed is not null || payload.Package is not null)
                     throw new InvalidDataException("Maintenance requires an installed root.");
-                await session.CopyInstalledEngineAsync(installRoot, payload, cancellationToken);
+                await session.CopyInstalledEngineAsync(installRoot, payload, cancellationToken, progress);
             }
             else if (payload.EngineSource == "package")
             {
@@ -72,13 +80,13 @@ internal sealed class PayloadSession : IDisposable
                 var entries = archive.Entries.Where(entry => entry.FullName == "delivery/Velmren.exe").ToArray();
                 if (entries.Length != 1 || entries[0].Length != payload.EngineSize) throw new InvalidDataException("Invalid package engine.");
                 using var input = entries[0].Open();
-                await session.CopyVerifiedEngineAsync(input, payload, cancellationToken);
+                await session.CopyVerifiedEngineAsync(input, payload, cancellationToken, progress);
             }
             else
             {
                 using var resource = assembly.GetManifestResourceStream("Setup.Payload.Engine") ?? throw new InvalidDataException("Missing embedded engine.");
                 using var input = new GZipStream(resource, CompressionMode.Decompress);
-                await session.CopyVerifiedEngineAsync(input, payload, cancellationToken);
+                await session.CopyVerifiedEngineAsync(input, payload, cancellationToken, progress);
             }
             return session;
         }
@@ -103,18 +111,30 @@ internal sealed class PayloadSession : IDisposable
         return directory;
     }
 
-    private async Task CopyResourceAsync(Assembly assembly, string resource, string destination, CancellationToken cancellationToken)
+    private async Task CopyResourceAsync(Assembly assembly, string resource, string destination, CancellationToken cancellationToken,
+        IProgress<EngineEvent>? progress = null)
     {
         using var input = assembly.GetManifestResourceStream(resource) ?? throw new InvalidDataException("Missing embedded file.");
         using var output = new FileStream(destination, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1024 * 1024, true);
         files.Add(destination);
-        await input.CopyToAsync(output, 1024 * 1024, cancellationToken);
+        var reporting = new CopyProgress(progress, "reading-package", input.Length);
+        var buffer = new byte[1024 * 1024];
+        long length = 0;
+        int count;
+        while ((count = await input.ReadAsync(buffer, 0, buffer.Length, cancellationToken)) > 0)
+        {
+            await output.WriteAsync(buffer, 0, count, cancellationToken);
+            length += count;
+            reporting.Report(length);
+        }
+        reporting.Report(length, final: true);
     }
 
-    internal async Task CopyInstalledEngineAsync(string installRoot, SetupPayload payload, CancellationToken cancellationToken)
+    internal async Task CopyInstalledEngineAsync(string installRoot, SetupPayload payload, CancellationToken cancellationToken,
+        IProgress<EngineEvent>? progress = null)
     {
         var root = SetupOptions.ValidateRoot(installRoot);
-        if (await TryCopyInstalledEngineAsync(Path.Combine(root, "Velmren.exe"), payload, cancellationToken)) return;
+        if (await TryCopyInstalledEngineAsync(Path.Combine(root, "Velmren.exe"), payload, cancellationToken, progress)) return;
 
         // An update may replace the root launcher after this maintenance window opens.
         // Only the exact pinned engine in a canonical retained version is eligible.
@@ -132,12 +152,13 @@ internal sealed class PayloadSession : IDisposable
             if (!Version.TryParse(name, out var version) || version.Revision < 0 || version.ToString() != name) continue;
             EnsureNoLinks(entry);
             var candidate = Path.Combine(entry, "app", "delivery", "Velmren.exe");
-            if (await TryCopyInstalledEngineAsync(candidate, payload, cancellationToken)) return;
+            if (await TryCopyInstalledEngineAsync(candidate, payload, cancellationToken, progress)) return;
         }
         throw new InvalidDataException("No installed engine matches this maintenance version.");
     }
 
-    private async Task<bool> TryCopyInstalledEngineAsync(string source, SetupPayload payload, CancellationToken cancellationToken)
+    private async Task<bool> TryCopyInstalledEngineAsync(string source, SetupPayload payload, CancellationToken cancellationToken,
+        IProgress<EngineEvent>? progress)
     {
         cancellationToken.ThrowIfCancellationRequested();
         EnsureNoLinks(source);
@@ -151,7 +172,7 @@ internal sealed class PayloadSession : IDisposable
             if (input.Length != payload.EngineSize) return false;
             try
             {
-                await CopyVerifiedEngineAsync(input, payload, cancellationToken);
+                await CopyVerifiedEngineAsync(input, payload, cancellationToken, progress);
                 return true;
             }
             catch (InvalidDataException)
@@ -164,11 +185,13 @@ internal sealed class PayloadSession : IDisposable
         }
     }
 
-    private async Task CopyVerifiedEngineAsync(Stream input, SetupPayload payload, CancellationToken cancellationToken)
+    private async Task CopyVerifiedEngineAsync(Stream input, SetupPayload payload, CancellationToken cancellationToken,
+        IProgress<EngineEvent>? progress)
     {
         using var output = new FileStream(EnginePath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1024 * 1024, true);
         files.Add(EnginePath);
         using var hash = SHA256.Create();
+        var reporting = new CopyProgress(progress, "preparing-engine", payload.EngineSize);
         var buffer = new byte[1024 * 1024];
         long length = 0;
         int count;
@@ -178,10 +201,36 @@ internal sealed class PayloadSession : IDisposable
             if (length > payload.EngineSize) throw new InvalidDataException("Engine exceeds expected size.");
             hash.TransformBlock(buffer, 0, count, buffer, 0);
             await output.WriteAsync(buffer, 0, count, cancellationToken);
+            if (length < payload.EngineSize) reporting.Report(length);
         }
         hash.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
         var actual = BitConverter.ToString(hash.Hash!).Replace("-", "").ToLowerInvariant();
         if (length != payload.EngineSize || actual != payload.EngineSha256) throw new InvalidDataException("Engine identity mismatch.");
+        reporting.Report(length, final: true);
+    }
+
+    private sealed class CopyProgress
+    {
+        private readonly IProgress<EngineEvent>? progress;
+        private readonly string action;
+        private readonly long total;
+        private readonly Stopwatch throttle = Stopwatch.StartNew();
+
+        internal CopyProgress(IProgress<EngineEvent>? progress, string action, long total)
+        {
+            this.progress = progress;
+            this.action = action;
+            this.total = total;
+            Report(0, final: true);
+        }
+
+        internal void Report(long completed, bool final = false)
+        {
+            if (progress is null || (!final && throttle.ElapsedMilliseconds < 100)) return;
+            progress.Report(new EngineEvent(action, total > 0 ? (int)(completed * 100.0 / total) : (int?)null,
+                Completed: completed, Total: total));
+            throttle.Restart();
+        }
     }
 
     internal void ResetCancellation()

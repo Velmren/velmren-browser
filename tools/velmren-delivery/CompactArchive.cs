@@ -10,8 +10,10 @@ namespace Velmren.Delivery;
 internal static partial class Program
 {
     // The caller verifies the signed manifest and archive SHA-256 before opening it.
-    static void ExtractCompactArchive(string archivePath, string destination, Manifest manifest, CancellationToken cancellationToken)
+    static void ExtractCompactArchive(string archivePath, string destination, Manifest manifest, CancellationToken cancellationToken,
+        string? diagnosticRoot = null)
     {
+        using var preflightPhase = diagnosticRoot is null ? null : StartPhase(diagnosticRoot, "archive-preflight", manifest.Version, files: manifest.Files.Length);
         cancellationToken.ThrowIfCancellationRequested();
         Validate(manifest);
         var inventory = manifest.Files.ToDictionary(f => f.Path, StringComparer.Ordinal);
@@ -38,7 +40,8 @@ internal static partial class Program
         var entries = new Dictionary<string, bool>(StringComparer.Ordinal);
         var fileCount = 0;
         long expandedSize = 0;
-        foreach (var entry in archive.Entries)
+        var orderedEntries = archive.Entries.ToArray();
+        foreach (var entry in orderedEntries)
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (entry is not SevenZipArchiveEntry sevenZip || !sevenZip.IsComplete || sevenZip.IsAnti)
@@ -65,10 +68,21 @@ internal static partial class Program
         }
         if (fileCount != manifest.Files.Length || expandedSize != manifest.ExpandedSize)
             throw new InvalidDataException("Compact archive inventory mismatch.");
+        preflightPhase?.Complete();
+        preflightPhase?.Dispose();
 
         // The complete directory is checked before creating any output. A single reader
         // preserves the decoder between files in a solid block (no repeated decompression).
         DirectorySafe(destination);
+        EnsureSandboxReadAccess(destination, diagnosticRoot);
+        using var filesPhase = diagnosticRoot is null ? null : StartPhase(diagnosticRoot, "extract-files", manifest.Version, manifest.ExpandedSize, manifest.Files.Length);
+        using var native = NativeArchiveDecoder.TryStart(fileStream.Name, cancellationToken);
+        if (native is not null)
+        {
+            ExtractNativeCompactFiles(native, orderedEntries.Cast<SevenZipArchiveEntry>(), inventory, destination, manifest, cancellationToken);
+            filesPhase?.Complete();
+            return;
+        }
         using var reader = archive.ExtractAllEntries();
         var buffer = ArrayPool<byte>.Shared.Rent(1024 * 1024);
         var extracted = new HashSet<string>(StringComparer.Ordinal);
@@ -126,11 +140,58 @@ internal static partial class Program
             cancellationToken.ThrowIfCancellationRequested();
             if (extracted.Count != entries.Count || expanded != manifest.ExpandedSize)
                 throw new InvalidDataException("Compact archive extraction is incomplete.");
+            filesPhase?.Complete();
         }
         catch
         {
             reader.Cancel();
             throw;
+        }
+        finally { ArrayPool<byte>.Shared.Return(buffer); }
+    }
+
+    static void ExtractNativeCompactFiles(NativeArchiveDecoder decoder, IEnumerable<SevenZipArchiveEntry> entries,
+        Dictionary<string, PayloadFile> inventory, string destination, Manifest manifest, CancellationToken cancellationToken)
+    {
+        // Both pinned decoders enumerate 7z file indexes in header order. Signed per-file
+        // lengths and hashes also reject any change in the native stdout framing.
+        var buffer = ArrayPool<byte>.Shared.Rent(1024 * 1024);
+        long expanded = 0;
+        var files = 0;
+        var progress = TransferProgress("extracting", 0, manifest.ExpandedSize, -1);
+        try
+        {
+            foreach (var entry in entries)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (entry.IsDirectory) continue;
+                var path = CompactEntryPath(entry);
+                var expected = inventory[path];
+                var destinationFile = SafePath(destination, path);
+                DirectorySafe(Path.GetDirectoryName(destinationFile)!);
+                using var output = new FileStream(destinationFile, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+                using var hasher = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+                long total = 0;
+                while (total < expected.Size)
+                {
+                    var count = (int)Math.Min(buffer.Length, expected.Size - total);
+                    decoder.ReadExactly(buffer.AsSpan(0, count));
+                    cancellationToken.ThrowIfCancellationRequested();
+                    output.Write(buffer, 0, count);
+                    hasher.AppendData(buffer, 0, count);
+                    total = checked(total + count);
+                }
+                if (!Convert.ToHexStringLower(hasher.GetHashAndReset()).Equals(expected.Sha256, StringComparison.OrdinalIgnoreCase))
+                    throw new CryptographicException("Extracted compact file SHA-256 rejected.");
+                cancellationToken.ThrowIfCancellationRequested();
+                output.Flush(true);
+                expanded = checked(expanded + total);
+                files++;
+                progress = TransferProgress("extracting", expanded, manifest.ExpandedSize, progress);
+            }
+            decoder.Complete();
+            if (files != manifest.Files.Length || expanded != manifest.ExpandedSize)
+                throw new InvalidDataException("Compact archive extraction is incomplete.");
         }
         finally { ArrayPool<byte>.Shared.Return(buffer); }
     }

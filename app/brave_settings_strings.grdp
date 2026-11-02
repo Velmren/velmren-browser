@@ -4,6 +4,11 @@
 
   <!--Add new items to the appropriate sections below -->
 
+  <!-- Settings / About -->
+  <message name="IDS_SETTINGS_VELMREN_ABOUT_UPDATES" desc="Neutral explanatory text on the About page for an installed Velmren release. It describes background updates and how to finish installing a downloaded update, without claiming the browser is up to date.">
+    Velmren downloads available updates in the background. To finish installing a downloaded update, close all Velmren windows and reopen the browser. This page does not check for new versions.
+  </message>
+
   <!-- Strings not associated with a particular section-->
   <message name="IDS_SETTINGS_RESTART_NOTICE" desc="Notifies the user that they need to relaunch Brave">
     Your changes will take effect the next time you relaunch Brave.

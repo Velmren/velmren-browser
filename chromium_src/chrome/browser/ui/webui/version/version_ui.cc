@@ -3,9 +3,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "brave/components/version_info/version_info.h"
+#include "brave/components/version_info/velmren_version_info.h"
 #include "components/version_info/version_info.h"
 
-#define GetVersionNumber GetBraveVersionNumberForDisplay
+#define GetVersionNumber GetVelmrenVersionNumberForDisplay
 #include <chrome/browser/ui/webui/version/version_ui.cc>
 #undef GetVersionNumber

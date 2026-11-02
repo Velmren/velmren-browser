@@ -186,8 +186,8 @@ then checks every configured interval while the browser is running.
 Publishing N+1 to `latest.json` is sufficient; no manual
 copy or `update` invocation is needed. `--poll-seconds 2` can shorten checks for
 QA. Feed errors are logged and do not prevent launching the verified installed
-version. The initial background update has a five-second budget; a larger download
-is resumed by a later background check. An incomplete initial installation with
+version. The first background update has the same transfer budget as later
+checks. An incomplete initial installation with
 no active release still checks the feed before launch. Closing the browser lets the launcher
 activate the staged release and exit. Stop the feed terminal after QA; no
 installed background helper remains.
@@ -224,16 +224,18 @@ It always supplies `--user-data-dir=<root>/profile`, `--no-first-run`, and
 - Cancellation covers HTTP headers, response streams, package writes, hashes,
   extraction, and operation-lock waits. Manifest responses have a ten-second
   overall limit; archive requests and body reads have a ten-second inactivity
-  limit, with a twenty-minute overall update budget. Startup imposes a shorter
-  five-second budget for the initial check, after starting an existing verified
-  release, and retains any partial archive for a later poll.
+  limit, with a twenty-minute overall update budget. The browser opens before
+  the first background check, which uses the same budget as later checks.
+  Failed checks retry within thirty seconds and retain resumable downloads.
+  Only recovery without a committed installation has a five-second startup budget.
 - Extraction checks the complete ZIP directory before writing files. It rejects
   traversal, absolute/ADS/Windows device paths, duplicate case-folded names,
   file/directory collisions, extra files, ZIP symlinks and reparse destinations.
   Signed inventory limits are 30,000 files and 16 GiB compressed/expanded.
 - Successful extraction is moved into `versions/<version>/app`. The signed
-  manifest is retained alongside it. Version directories are never overwritten
-  or removed by the updater. Installation, activation, agent startup and explicit
+  manifest is retained alongside it. Version directories are never overwritten;
+  owned obsolete releases are retired under the retention policy below.
+  Installation, activation, agent startup and explicit
   `resolve`/`verify` audits verify the complete inventory and file hashes.
   Ordinary browser startup verifies the signed manifest and the hash of the
   small signed launch configuration, validates executable paths/presence, and
@@ -248,7 +250,8 @@ It always supplies `--user-data-dir=<root>/profile`, `--no-first-run`, and
 - The installed `app` directory receives inheritable read/execute ACEs for
   Chromium's exact `chromeInstallFiles` and `lpacChromeInstallFiles` capability
   SIDs, matching `chrome/installer/setup/configure_app_container_sandbox.cc`.
-  Windows propagates these ACEs to the extracted executable, DLLs, and resources.
+  The ACEs are applied after archive validation and before payload files are
+  created, so the executable, DLLs, and resources inherit them directly.
   This is necessary for AppContainer/LPAC subprocesses to open the executable;
   missing permissions caused a delayed sandbox access-denied crash in the full
   browser QA installation. The updater grants no write permission and preserves
@@ -263,8 +266,19 @@ It always supplies `--user-data-dir=<root>/profile`, `--no-first-run`, and
   operations are serialized. Ordinary launch takes only the shared run lease,
   so a download holding operation.lock cannot delay a committed browser. It
   rereads ownership/current under that lease; unfinished launcher transactions
-  release it before serialized recovery. Pending updates activate after exit.
+  release it before serialized recovery. Pending updates activate after exit
+  or before the next launch if an earlier supervisor exited unexpectedly.
   No running browser is terminated for an update.
+- Native Windows browser startup also launches an independent monitor outside
+  the UI thread. One installation-wide monitor lease prevents duplicate update
+  transfers; a standby takes over if the owner exits. A native watchdog recovers
+  a terminated monitor. Agent, headless, automation, and test processes do not
+  start this watchdog. Taskbar/profile relaunch commands retain the actual
+  user-data directory and profile, including profiles outside the installation.
+- Installer output includes numeric phase timings, transfer byte counts and
+  verification file counts. Diagnostic output failures cannot abort a transfer
+  or abandon an already running browser. The support collector exports only
+  explicitly allowed numeric timing fields and phase names.
 - Older signed versions and same-version package rebinding are rejected.
   A pending newer release prevents replaying an older one. Interrupted staging
   leaves the current release intact; a later attempt uses a fresh staging path.

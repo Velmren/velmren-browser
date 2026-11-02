@@ -385,7 +385,10 @@ RegisterPolymerTemplateModifications({
 
     const versionEl = document.createElement('span')
     versionEl.setAttribute('class', 'brave-about-item brave-about-menu-version')
-    versionEl.textContent = `v ${loadTimeData.getString('braveProductVersion')}`
+    const productVersion = loadTimeData.getString('velmrenProductVersion')
+    versionEl.textContent = loadTimeData.getBoolean('isVelmrenRelease')
+      ? `v ${productVersion}`
+      : productVersion
 
     parent.appendChild(newAboutEl)
     newAboutEl.appendChild(graphicsEl)

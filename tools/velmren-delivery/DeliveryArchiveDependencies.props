@@ -2,6 +2,9 @@
   <ItemGroup>
     <PackageReference Include="SharpCompress" Version="0.50.7" />
     <EmbeddedResource Include="$(MSBuildThisFileDirectory)THIRD-PARTY-NOTICES.txt" LogicalName="Velmren.ThirdPartyNotices" />
+    <EmbeddedResource Include="$(MSBuildThisFileDirectory)native/7zr-26.05-win-x64.exe" LogicalName="Velmren.NativeArchiveDecoder" />
+    <EmbeddedResource Include="$(MSBuildThisFileDirectory)native/LZMA-SDK-26.05.txt" LogicalName="Velmren.NativeArchiveDecoderLicense" />
+    <EmbeddedResource Include="$(MSBuildThisFileDirectory)native/README.md" LogicalName="Velmren.NativeArchiveDecoderProvenance" />
     <None Include="$(MSBuildThisFileDirectory)THIRD-PARTY-NOTICES.txt" Link="THIRD-PARTY-NOTICES.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

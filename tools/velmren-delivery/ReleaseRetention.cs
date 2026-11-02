@@ -2,7 +2,7 @@ namespace Velmren.Delivery;
 
 internal static partial class Program
 {
-    sealed record RetentionRelease(Manifest Manifest, string Metadata, string[] Payload);
+    sealed record RetentionRelease(Manifest Manifest, string Metadata, string[] Payload, HashSet<string> StagePayload);
 
     // Caller holds operation.lock, but no run.lock. Preparation only reads files;
     // cleanup obtains its own short exclusive lease after verification finishes.
@@ -10,6 +10,7 @@ internal static partial class Program
     // Cleanup is best effort: an interrupted pass must not undo an activation.
     static void CleanupRetiredArtifacts(string root, CancellationToken token)
     {
+        using var retentionPhase = StartPhase(root, "retention");
         InstallOwnership? owner = null;
         FileStream? deletionLease = null;
         var removed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -31,7 +32,7 @@ internal static partial class Program
             if (owner.State != "installed") throw new InvalidDataException("Retention requires a completed installation.");
             // Polling an in-use installation must not hash the rollback payload.
             // Release this probe before preparation so a new browser can start.
-            using (var probe = OpenRetentionLease(root)) { if (probe is null) return; }
+            using (var probe = OpenRetentionLease(root)) { if (probe is null) { retentionPhase.Complete(); return; } }
             var owned = owner.Files.ToHashSet(StringComparer.OrdinalIgnoreCase);
             var current = RetentionPointer(root, "current.json")
                 ?? throw new InvalidDataException("Retention requires an active release.");
@@ -52,7 +53,9 @@ internal static partial class Program
                 if (releases.Count >= 64 || metadataBytes > 64L * 1024 * 1024)
                     throw new InvalidDataException("Retention metadata exceeds its per-pass limit.");
                 var manifest = ReadInstalledManifest(root, version).Manifest;
-                release = new(manifest, metadata, manifest.Files.Select(file => "versions/" + version + "/app/" + file.Path).ToArray());
+                release = new(manifest, metadata,
+                    manifest.Files.Select(file => "versions/" + version + "/app/" + file.Path).ToArray(),
+                    manifest.Files.Select(file => "app/" + file.Path).ToHashSet(StringComparer.Ordinal));
                 releases.Add(version, release);
                 return release;
             }
@@ -146,7 +149,7 @@ internal static partial class Program
             // operation.lock kept pointers and updater-owned files stable while
             // hashing. A launch may have acquired a shared lease in the meantime.
             deletionLease = OpenRetentionLease(root);
-            if (deletionLease is null) return;
+            if (deletionLease is null) { retentionPhase.Complete(); return; }
             var deletionTimer = System.Diagnostics.Stopwatch.StartNew();
             var cleanupTimer = System.Diagnostics.Stopwatch.StartNew();
             var attempts = 0;
@@ -240,6 +243,7 @@ internal static partial class Program
             }
             Event(root, budgetExpired ? "retention-deferred" : "retention-cleaned", current.Version,
                 $"Deleted {deleted.Count} files; retired {removed.Count} inventory entries; deferred {failures.Count} files." + (budgetExpired ? " Cleanup yielded to a launch or its time limit; a later pass retries the remainder." : ""));
+            retentionPhase.Complete();
         }
         catch (OperationCanceledException) { Event(root, "retention-cancelled", detail: "Completed deletions are retained; a later pass retries the remainder."); }
         catch (Exception error) { Event(root, "retention-skipped", detail: SafeError(error)); }
@@ -312,7 +316,7 @@ internal static partial class Program
         var separator = parts[1].LastIndexOf('-');
         if (separator <= 0 || !Guid.TryParseExact(parts[1][(separator + 1)..], "N", out _)
             || !releases.TryGetValue(parts[1][..separator], out var release)
-            || parts[2] != "manifest.json" && !release.Manifest.Files.Any(file => "app/" + file.Path == parts[2])) return false;
+            || parts[2] != "manifest.json" && !release.StagePayload.Contains(parts[2])) return false;
         var path = SafePath(root, relative);
         return !File.Exists(path) && !Directory.Exists(path);
     }

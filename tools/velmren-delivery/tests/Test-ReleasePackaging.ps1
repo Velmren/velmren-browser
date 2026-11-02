@@ -54,7 +54,7 @@ foreach ($path in @(
   'browser/velmren.exe', 'browser/156.1.98.0.manifest', 'browser/chrome.dll', 'browser/resources.pak',
   'browser/icudtl.dat', 'browser/v8_context_snapshot.bin', 'browser/vk_swiftshader_icd.json',
   'browser/locales/en-US.pak', 'browser/locales/ru.pak', 'browser/locales/en-US.pak.info', 'browser/resources/resource.pak', 'browser/chrome_proxy.exe',
-  'browser/VkLayer_khronos_validation.dll', 'browser/VkICD_mock_icd.dll', 'browser/dbghelp.dll', 'browser/dbgcore.dll', 'browser/msdia140.dll', 'browser/symsrv.dll',
+  'browser/VkLayer_khronos_validation.dll', 'browser/VkICD_mock_icd.dll', 'browser/dbghelp.dll', 'browser/dbgcore.dll', 'browser/msdia140.dll', 'browser/symsrv.dll', 'browser/test_trace_processor.dll',
   'browser/dxcompiler.dll', 'browser/dxil.dll', 'browser/vulkan-1.dll', 'browser/vk_swiftshader.dll',
   'browser/chrome.exe', 'browser/test.exe', 'browser/debug.pdb', 'browser/ignored.obj',
   'agent/broker.mjs', 'agent/package.json', 'agent/README.md', 'agent/public/index.html',
@@ -116,7 +116,7 @@ try {
     Assert ($paths -ccontains $required) "signed inventory includes $required"
   }
   Assert (!($paths -match 'private\.pem|\.pdb$|\.obj$|browser/(chrome|test)\.exe$')) 'build artifacts and private key excluded'
-  Assert (!($paths -match '\.pak\.info$|browser/(VkLayer_khronos_validation|VkICD_mock_icd|dbghelp|dbgcore|msdia140|symsrv)\.dll$')) 'GRIT metadata and build-only DLLs excluded'
+  Assert (!($paths -match '\.pak\.info$|browser/(VkLayer_khronos_validation|VkICD_mock_icd|dbghelp|dbgcore|msdia140|symsrv|test_trace_processor)\.dll$')) 'GRIT metadata and build-only DLLs excluded'
   foreach ($required in 'browser/locales/ru.pak', 'browser/dxcompiler.dll', 'browser/dxil.dll', 'browser/vulkan-1.dll', 'browser/vk_swiftshader.dll', 'licenses/Delivery-THIRD-PARTY-NOTICES.txt') {
     Assert ($paths -ccontains $required) "runtime or license preserved: $required"
   }

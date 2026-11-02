@@ -11,6 +11,7 @@ import("//brave/ui/webui/custom_profile_image/buildflags/buildflags.gni")
 import("//build/buildflag_header.gni")
 import("//build/config/features.gni")
 import("//chrome/common/features.gni")
+import("//testing/test.gni")
 
 buildflag_header("sparkle_buildflags") {
   header = "sparkle_buildflags.h"
@@ -119,6 +120,31 @@ group("browser") {
   public_deps = [ "//chrome/browser" ]
 }
 
+if (is_win) {
+  source_set("velmren_delivery_win") {
+    sources = [
+      "velmren_delivery_win.cc",
+      "velmren_delivery_win.h",
+    ]
+    public_deps = [ "//base" ]
+  }
+
+  test("velmren_delivery_native_tests") {
+    sources = [
+      "//base/test/run_all_unittests.cc",
+      "//brave/components/version_info/velmren_version_info_unittest.cc",
+      "velmren_delivery_win_unittest.cc",
+    ]
+    deps = [
+      ":velmren_delivery_win",
+      "//base",
+      "//base/test:test_support",
+      "//brave/components/version_info",
+      "//testing/gtest",
+    ]
+  }
+}
+
 source_set("unit_tests") {
   testonly = true
 
@@ -126,7 +152,10 @@ source_set("unit_tests") {
   deps = []
 
   if (is_win) {
-    sources += [ "default_protocol_handler_utils_win_unittest.cc" ]
+    sources += [
+      "default_protocol_handler_utils_win_unittest.cc",
+      "velmren_delivery_win_unittest.cc",
+    ]
 
     deps += [
       "//base",

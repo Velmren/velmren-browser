@@ -782,6 +782,10 @@ brave_chrome_browser_public_deps = [
   "//brave/components/variations",
 ]
 
+if (is_win) {
+  brave_chrome_browser_public_deps += [ "//brave/browser:velmren_delivery_win" ]
+}
+
 if (is_mac) {
   brave_chrome_framework_public_deps = [ "//brave:framework_bundle_data" ]
   brave_chrome_framework_bundle_deps = [ "//brave:framework_bundle_data" ]

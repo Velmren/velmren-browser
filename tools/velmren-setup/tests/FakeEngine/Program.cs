@@ -14,11 +14,13 @@ switch (command)
     case "install":
     case "install-bundle":
         Console.WriteLine("Not an event");
+        Console.WriteLine(JsonSerializer.Serialize(new { action = "phase-started", phase = "extract-files", elapsedMs = 0, version = "1.0.0.0" }));
         foreach (var percent in new[] { 10, 55, 100 })
         {
-            Console.WriteLine(JsonSerializer.Serialize(new { action = "extracting", percent }));
+            Console.WriteLine(JsonSerializer.Serialize(new { action = "extracting", percent, completed = percent * 100000000L, total = 10000000000L }));
             await Task.Delay(40);
         }
+        Console.WriteLine(JsonSerializer.Serialize(new { action = "phase-completed", phase = "extract-files", elapsedMs = 120, version = "1.0.0.0", bytes = 10000000000L, files = 42, succeeded = true }));
         break;
     case "register": Console.WriteLine("{\"action\":\"registered\"}"); break;
     case "uninstall": Console.WriteLine("{\"action\":\"uninstalled\"}"); break;
