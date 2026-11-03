@@ -20,7 +20,10 @@ if (is_win) {
   test("velmren_password_unittests") {
     testonly = true
 
-    sources = [ "imported_google_credentials_unittest.cc" ]
+    sources = [
+      "imported_google_credentials_unittest.cc",
+      "selected_account_suggestions_unittest.cc",
+    ]
 
     deps = [
       "//base",
