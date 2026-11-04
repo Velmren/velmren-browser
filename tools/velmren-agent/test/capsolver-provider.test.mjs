@@ -39,15 +39,16 @@ async function rejectsSafe(promise, code) {
   })
 }
 
-test('async solutions poll the same task, retain the operation key and expose only private solution fields', async () => {
+test('async solutions poll the same task, retain the operation key and expose only the private token', async () => {
   for (const type of ['ReCaptchaV2TaskProxyLess', 'ReCaptchaV2EnterpriseTaskProxyLess', 'AntiTurnstileTaskProxyLess']) {
     let reads = 0, dispatched = 0
     const { client, calls } = mockClient([
       created({ status: 'idle' }), json({ errorId: 0, status: 'processing' }),
-      ready(type, { userAgent: 'Synthetic Browser/1.0', 'recaptcha-ca-e': 'PrivateCookie', extra: fixtureKey })
+      ready(type, { userAgent: 'Synthetic Browser/1.0', secChUa: 'PrivateClientHints', createTime: 1671615324290,
+        'recaptcha-ca-e': 'PrivateCookie', 'recaptcha-ca-t': 'PrivateSessionCookie', extra: fixtureKey })
     ], { readKey: () => { reads++; return fixtureKey } })
     const result = await client.solve(task(type), { onDispatch: () => { dispatched++; assert.equal(calls.length, 0) } })
-    assert.deepEqual(result, { token: fixtureToken, userAgent: 'Synthetic Browser/1.0' })
+    assert.deepEqual(result, { token: fixtureToken })
     assert.equal(reads, 1)
     assert.equal(dispatched, 1)
     assert.deepEqual(calls.map(call => call.url), [
@@ -68,9 +69,14 @@ test('async solutions poll the same task, retain the operation key and expose on
 })
 
 test('a valid immediate ready response returns without polling', async () => {
-  const { client, calls } = mockClient([ready()])
-  assert.deepEqual(await client.solve(task()), { token: fixtureToken })
-  assert.equal(calls.length, 1)
+  for (const type of ['ReCaptchaV2TaskProxyLess', 'ReCaptchaV2EnterpriseTaskProxyLess', 'AntiTurnstileTaskProxyLess']) {
+    for (const fields of [{}, { userAgent: 'Synthetic Browser/1.0', secChUa: 'PrivateClientHints',
+      'recaptcha-ca-e': 'PrivateCookie', 'recaptcha-ca-t': 'PrivateSessionCookie', extra: fixtureKey }]) {
+      const { client, calls } = mockClient([ready(type, fields)])
+      assert.deepEqual(await client.solve(task(type)), { token: fixtureToken })
+      assert.equal(calls.length, 1)
+    }
+  }
 })
 
 test('documented per-type optional fields are copied and page fragments are removed', async () => {
@@ -95,6 +101,8 @@ test('invalid and undeclared task fields cannot dispatch or read a key', async (
     task(undefined, { cookies: 'PrivateCookie' }), task(undefined, { callbackUrl: 'https://evil.test/' }),
     task(undefined, { proxy: 'secret:proxy' }), task(undefined, { appId: 'developer-key' }),
     task(undefined, { isSession: true }), task(undefined, { clientKey: 'OverrideKey' }),
+    task(undefined, { userAgent: 'OverrideBrowser' }), task(undefined, { secChUa: 'OverrideHints' }),
+    task('AntiTurnstileTaskProxyLess', { metadata: { pagedata: 'UnsupportedChallenge' } }),
     task(undefined, { enterprisePayload: { s: 'wrong-type' } }),
     task('ReCaptchaV2EnterpriseTaskProxyLess', { enterprisePayload: { s: 'value', extra: 'hidden' } }),
     task('AntiTurnstileTaskProxyLess', { metadata: { action: 'a'.repeat(33) } }),
@@ -199,21 +207,29 @@ test('poll failure never creates another task', async () => {
   }
 })
 
-test('malformed tokens and user agents are rejected before native delivery', async () => {
+test('malformed tokens are rejected before native delivery', async () => {
   const values = [undefined, null, {}, '', 'white space', '<script>', 'token\nvalue', 'a'.repeat(32769)]
   for (const token of values) {
-    for (const type of ['ReCaptchaV2TaskProxyLess', 'AntiTurnstileTaskProxyLess']) {
+    for (const type of ['ReCaptchaV2TaskProxyLess', 'ReCaptchaV2EnterpriseTaskProxyLess', 'AntiTurnstileTaskProxyLess']) {
       const field = type === 'AntiTurnstileTaskProxyLess' ? 'token' : 'gRecaptchaResponse'
       const { client } = mockClient([created(), ready(type, { [field]: token })])
       await rejectsSafe(client.solve(task(type)), 'CAPTCHA_PROVIDER_ERROR')
     }
   }
-  for (const userAgent of [null, {}, '', 'bad\r\nheader', 'a'.repeat(1025)]) {
-    const { client } = mockClient([created(), ready(undefined, { userAgent })])
-    await rejectsSafe(client.solve(task()), 'CAPTCHA_PROVIDER_ERROR')
-  }
   const { client } = mockClient([ready(undefined, { gRecaptchaResponse: '<invalid>' })])
   await rejectsSafe(client.solve(task()), 'CAPTCHA_DELIVERY_UNCERTAIN')
+})
+
+test('unused provider metadata cannot reject a valid token or cross the adapter boundary', async () => {
+  for (const type of ['ReCaptchaV2TaskProxyLess', 'ReCaptchaV2EnterpriseTaskProxyLess', 'AntiTurnstileTaskProxyLess']) {
+    for (const userAgent of [null, {}, '', 'bad\r\nheader', 'a'.repeat(1025)]) {
+      const { client, calls } = mockClient([created(), ready(type, {
+        userAgent, secChUa: { untrusted: true }, cookies: [{ name: 'private', value: fixtureKey }]
+      })])
+      assert.deepEqual(await client.solve(task(type)), { token: fixtureToken })
+      assert.equal(calls.length, 2)
+    }
+  }
 })
 
 test('redirects are rejected even if an injected transport follows one', async () => {

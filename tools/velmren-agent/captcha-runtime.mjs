@@ -39,9 +39,8 @@ export function startCaptchaJob({ service, task, page, challengeId, stillActive,
     } })
     try {
       if (!active()) throw failure('CAPTCHA_CANCELLED')
-      // A provider-specific User-Agent cannot safely replace this live page's
-      // browser identity after navigation; do not apply such a bound result.
-      if (solution.userAgent) throw failure('CAPTCHA_UNSUPPORTED')
+      // Apply only the token through the original document/widget binding.
+      // Provider metadata never changes this live page's browser identity.
       return await deliver(async () => {
         if (!active()) throw failure('CAPTCHA_CANCELLED')
         return page.captcha.apply(prepared.binding, solution.token, active)

@@ -127,12 +127,9 @@ function solution(response, type) {
   if (!record(response.solution)) fail()
   const token = response.solution[type === 'AntiTurnstileTaskProxyLess' ? 'token' : 'gRecaptchaResponse']
   if (!text(token, 32768, /^[A-Za-z0-9._~+\/-]+=*$/)) fail()
-  const result = { token }
-  if (Object.hasOwn(response.solution, 'userAgent')) {
-    if (!text(response.solution.userAgent, 1024, /^[\x20-\x7e]+$/)) fail()
-    result.userAgent = response.solution.userAgent
-  }
-  return result
+  // These token APIs also return solver metadata. It neither requires nor
+  // authorizes changing the recipient page's identity or importing cookies.
+  return { token }
 }
 
 export class CapSolverClient {

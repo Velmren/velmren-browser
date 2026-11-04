@@ -54,12 +54,22 @@ also limits simultaneous provider requests.
 Supported variants are visible reCAPTCHA v2, visible reCAPTCHA v2 Enterprise,
 and standalone Turnstile widgets with an unambiguous response field or captured
 completion callback. Open shadow roots and ordinary frames are supported.
-Invisible widgets, hCaptcha, Cloudflare interstitials, closed-shadow-only
-widgets, and results requiring a different User-Agent are rejected. Enabling
+Invisible widgets, hCaptcha, Cloudflare interstitials, and closed-shadow-only
+widgets are rejected. Session, cookie-import and identity-changing modes are
+outside this token-delivery contract and cannot be requested. Enabling
 before navigation captures explicit anonymous render callbacks; callbacks
 already registered before enabling may be unavailable. Provider requests carry
 only the site origin, site key, and supported widget metadata, never cookies or
 page content. Origin-only requests may be insufficient on some sites.
+
+The provider adapter returns only the validated token. Optional result metadata
+such as `userAgent`, `secChUa` and cookies is discarded, never applied to the
+live browser or included in public results. Its presence does not make an
+otherwise valid token unsupported. This follows the documented token-only
+examples for [reCAPTCHA v2](https://docs.capsolver.com/en/guide/captcha/ReCaptchaV2/)
+and [Turnstile](https://docs.capsolver.com/en/guide/captcha/cloudflare_turnstile/).
+Sites requiring additional cookies or a different browser identity may still
+reject the delivered token; those flows are not implemented here.
 
 Solutions remain inside the broker and are bound to the original page session,
 document, widget, response field and callback. Changes invalidate delivery.
