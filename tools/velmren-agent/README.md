@@ -29,6 +29,41 @@ Its sign-ins and site storage survive task completion and browser restarts.
 Tasks share that profile's origin storage while retaining separate page ownership.
 The default `"isolated"` mode remains available for disposable, independent sessions.
 
+### Ordinary manual profile sign-in
+
+`request_human(showWindow: true)` shows the same task page but keeps the debugging
+connection. Some identity providers, including Google, can reject sign-in in a
+programmatically controlled browser. Showing that window does not establish
+compatibility with a real account.
+
+When the user requests initial sign-in, finish or cancel only your own completed
+or abandoned tasks, then call `profile_login_start` with the authorized sign-in
+URL and `userConfirmed: true`. The broker refuses while any client's task, action,
+download or cleanup remains active. This mode requires a persistent profile with
+`allowWeb: true` and no `allowedOrigins` restriction; ordinary manual browsing
+cannot enforce the agent's request filter.
+
+The automated browser exits, and an ordinary visible browser opens the same
+dedicated agent profile without CDP, agent, headless or automation switches.
+No personal profile is copied. The user controls this window; agents must not
+inspect credentials or drive its login. `profile_login_status` reports only the
+phase and whether the window is open. After the user closes it and explicitly
+confirms completion, the initiating client calls `profile_login_finish` with its
+current `loginId` and `userConfirmed: true`. Automation reconnects, and a new task
+can use persistent sign-ins. Native window closure alone never resumes automation.
+Keep the initiating MCP connection open; an administrator can recover its finish
+operation if that client disconnects. Ordinary Show/Resume still supports manual
+steps which need the exact existing page, transient form state or sessionStorage.
+
+Profile sign-in restarts the browser and cannot preserve task pages or unfinished
+forms. The broker keeps its endpoint, credentials and state lock during login;
+client EOF or idle retirement cannot close the user's window. A private
+`manual-profile.json` receipt blocks unattended startup after a crash. Ambiguous
+process identity or an incomplete receipt requires explicit recovery; never delete
+it merely to bypass the guard. This initial implementation verifies processes on
+Windows. Do not claim Google or another provider accepted the account until the
+user actually completes the real sign-in.
+
 ## Start locally
 
 Run the following from this directory in PowerShell 7. `npm ci` installs the
@@ -182,6 +217,9 @@ model selection, approvals, or other tools.
 
 | MCP tool | CLI / RPC method | Arguments |
 |---|---|---|
+| `velmren_profile_login_start` | `profile_login_start` | authorized `url`, `userConfirmed: true`; all tasks must have ended |
+| `velmren_profile_login_status` | `profile_login_status` | `{}`; does not inspect sign-in state |
+| `velmren_profile_login_finish` | `profile_login_finish` | current `loginId`, `userConfirmed: true`; ordinary browser must be closed |
 | `velmren_create_task` | `task_create` | `url`, optional `label` |
 | `velmren_list_tasks` | `task_list` | `{}` |
 | `velmren_observe` | `task_observe` | `taskId`, optional `query`, `offset`, `limit`, `textOffset`, `textLimit` |
@@ -319,8 +357,10 @@ button and explicit disconnected state. Filters, empty states, inline action
 errors, keyboard focus, and reduced-motion settings are supported.
 
 An agent can also request a visible manual step with
-`request_human(showWindow: true)`. The same page appears for sign-in, 2FA or QR
-scanning; automatic actions pause. After the user says the step is complete,
+`request_human(showWindow: true)`. The same page appears for a manual step such as
+2FA or QR scanning; automatic actions pause, but the debugging connection stays
+attached. For initial account sign-in use the ordinary profile workflow above.
+After the user says the step is complete,
 `resume` hides the existing pages and returns control to the agent. It requires
 the current handoff ID and explicit confirmation; old handoffs cannot resume a
 new request. The operator can alternatively choose **Resume** in the panel.

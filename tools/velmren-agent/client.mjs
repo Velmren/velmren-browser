@@ -6,7 +6,8 @@ export const CLIENTS = ['codex', 'claude', 'scripts']
 export const METHODS = [
   'task_create', 'task_list', 'task_observe', 'task_act', 'task_navigate',
   'task_wait', 'task_screenshot', 'task_request_human', 'task_resume', 'task_finish', 'task_cancel', 'task_upload_files',
-  'task_list_pages', 'task_list_frames', 'task_list_options', 'task_select_page', 'task_close_page', 'task_handle_dialog', 'client_release', 'client_heartbeat'
+  'task_list_pages', 'task_list_frames', 'task_list_options', 'task_select_page', 'task_close_page', 'task_handle_dialog', 'client_release', 'client_heartbeat',
+  'profile_login_start', 'profile_login_status', 'profile_login_finish'
 ]
 
 export class BrokerError extends Error {
@@ -85,7 +86,8 @@ export function validateArguments(method, args) {
     task_request_human: ['taskId', 'pageId', 'reason', 'showWindow'], task_resume: ['taskId', 'handoffId', 'userConfirmed'], task_finish: ['taskId'], task_cancel: ['taskId'],
     task_list_pages: ['taskId'], task_list_frames: ['taskId', 'pageId'], task_list_options: ['taskId', 'pageId', 'frameId', 'observationId', 'ref', 'query', 'offset', 'limit'], task_select_page: ['taskId', 'pageId'], task_close_page: ['taskId', 'pageId'],
     task_handle_dialog: ['taskId', 'pageId', 'accept', 'promptText'], client_release: [], client_heartbeat: [],
-    task_upload_files: ['taskId', 'pageId', 'frameId', 'observationId', 'ref', 'chooserId', 'files']
+    task_upload_files: ['taskId', 'pageId', 'frameId', 'observationId', 'ref', 'chooserId', 'files'],
+    profile_login_start: ['url', 'userConfirmed'], profile_login_status: [], profile_login_finish: ['loginId', 'userConfirmed']
   }
   if (!METHODS.includes(method)) throw new BrokerError('Unsupported task method', 'UNKNOWN_METHOD')
   object(args, keys[method])
@@ -142,6 +144,10 @@ export function validateArguments(method, args) {
     string(args.handoffId, 'handoffId', 256)
     if (args.userConfirmed !== true) throw new BrokerError('Resume requires the user to confirm that the manual step is complete', 'INVALID_ARGUMENTS')
   }
+  if (['profile_login_start', 'profile_login_finish'].includes(method)) {
+    if (args.userConfirmed !== true) throw new BrokerError('Profile login requires explicit user confirmation of the requested transition', 'INVALID_ARGUMENTS')
+    if (method === 'profile_login_finish') string(args.loginId, 'loginId', 256)
+  }
   if (method === 'task_wait') {
     if ((args.text === undefined) === (args.predicate === undefined)) throw new BrokerError('Provide exactly one text or predicate', 'INVALID_ARGUMENTS')
     if (args.text !== undefined) string(args.text, 'text', 4000)
@@ -186,7 +192,7 @@ export function createClient(connection) {
   return {
     async call(method, args = {}, { signal } = {}) {
       validateArguments(method, args)
-      const unknown = () => ['task_create', 'task_act', 'task_navigate', 'task_upload_files', 'task_handle_dialog', 'task_select_page', 'task_close_page', 'task_request_human', 'task_resume', 'task_finish', 'task_cancel'].includes(method) ? unknownActionResult() : undefined
+      const unknown = () => ['task_create', 'task_act', 'task_navigate', 'task_upload_files', 'task_handle_dialog', 'task_select_page', 'task_close_page', 'task_request_human', 'task_resume', 'task_finish', 'task_cancel', 'profile_login_start', 'profile_login_finish'].includes(method) ? unknownActionResult() : undefined
       let response
       try {
         response = await fetch(`${connection.endpoint}/rpc`, {

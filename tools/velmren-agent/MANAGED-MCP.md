@@ -88,6 +88,20 @@ before starting a replacement. Invalid, unowned, mismatched, or live state is
 preserved and startup fails. A reused PID is treated as live. Browser profiles
 and existing user processes are never deleted or killed.
 
+An intentional `profileLogin` phase keeps the controller available while its
+automated browser is stopped. New clients reuse that controller; they never start
+a replacement. Heartbeats and scoped release remain available. Ordinary manual
+login is profile-wide and starts only after all tasks and downloads end. See
+[the manual sign-in workflow](README.md#ordinary-manual-profile-sign-in).
+
+A `manual-profile.json` receipt blocks cold startup and stale-owner recovery,
+including when the receipt is malformed. A live controller accepts an explicit
+finish from the initiating client or administrator only after its ordinary browser
+has exited. If the controller crashed, preserve the receipt and profile and obtain
+explicit administrative recovery; an unattended reconnect must not delete the
+guard or reuse a profile which may still be open. Managed EOF never kills the
+ordinary sign-in window, and its closure never implies user confirmation.
+
 `managed-broker.log` contains sanitized daemon diagnostics. MCP stdout contains
 protocol messages only; help and startup errors go to stderr.
 

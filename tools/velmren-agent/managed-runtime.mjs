@@ -6,6 +6,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { effectivePolicyIdentity } from './policy-identity.mjs'
+import { assertNoManualProfileSession } from './manual-profile.mjs'
 
 const execute = promisify(execFile)
 const directory = path.dirname(fileURLToPath(import.meta.url))
@@ -124,7 +125,9 @@ async function healthy(descriptor, identity) {
   try { status = await adminRpc(descriptor, 'broker_status') } catch { return false }
   if (typeof status?.policyIdentity !== 'string' || typeof status.browserHealthy !== 'boolean') fail('BROKER_INCOMPATIBLE', 'The running broker does not support managed policy and health checks.')
   if (status.policyIdentity !== identity) fail('POLICY_MISMATCH', 'The running broker uses a different policy. Existing clients and tasks were preserved.')
-  if (!status.browserHealthy) fail('BROKER_UNHEALTHY', 'The managed browser is unavailable. Wait for its broker to stop before reconnecting.')
+  const manual = status.profileLogin?.automationConnected === false &&
+    ['stopping-automation', 'manual', 'awaiting-confirmation', 'restarting'].includes(status.profileLogin.phase)
+  if (!status.browserHealthy && !manual) fail('BROKER_UNHEALTHY', 'The managed browser is unavailable. Wait for its broker to stop before reconnecting.')
   return true
 }
 
@@ -192,6 +195,7 @@ export async function runManagedBroker(options, { startBroker, signal } = {}) {
     const descriptor = await readManagedDescriptor(options.stateDir)
     if (await healthy(descriptor, identity)) return { reused: true }
     startupSignal.throwIfAborted()
+    await assertNoManualProfileSession(options.stateDir)
     await recoverOwnedState(options)
     startupSignal.throwIfAborted()
     await writeFile(path.join(options.stateDir, OWNER_FILE), JSON.stringify({
@@ -265,6 +269,7 @@ export async function connectManaged(options, { spawnDaemon = spawnManagedDaemon
     release = await acquireStartupGate(options.stateDir, Math.max(1, deadline - Date.now()), signal)
     descriptor = await readManagedDescriptor(options.stateDir)
     if (!await healthy(descriptor, identity)) {
+      await assertNoManualProfileSession(options.stateDir)
       await release(); release = null
       signal?.throwIfAborted()
       outcome = await spawnDaemon(options)

@@ -121,6 +121,22 @@ test('task argument boundary rejects administrative methods, code, stale input s
   assert.doesNotThrow(() => validateArguments('task_list_options', { taskId: 't', frameId: 'child', observationId: 'o', ref: 'e1', query: 'Zimbabwe', offset: 0, limit: 100 }))
 })
 
+test('ordinary profile-login APIs require explicit confirmation and bounded arguments', () => {
+  assert.doesNotThrow(() => validateArguments('profile_login_start', { url: 'https://accounts.google.com/', userConfirmed: true }))
+  assert.doesNotThrow(() => validateArguments('profile_login_status', {}))
+  assert.doesNotThrow(() => validateArguments('profile_login_finish', { loginId: 'current-login', userConfirmed: true }))
+  for (const [method, args] of [
+    ['profile_login_start', { url: 'https://accounts.google.com/' }],
+    ['profile_login_start', { url: 'https://accounts.google.com/', userConfirmed: false }],
+    ['profile_login_start', { url: '--remote-debugging-port=1', userConfirmed: true }],
+    ['profile_login_start', { url: 'https://user:password@example.test/', userConfirmed: true }],
+    ['profile_login_start', { url: 'https://example.test/', userConfirmed: true, browserArgs: ['--headless'] }],
+    ['profile_login_finish', { loginId: '', userConfirmed: true }],
+    ['profile_login_finish', { loginId: 'current-login', userConfirmed: 'true' }],
+    ['profile_login_status', { loginId: 'unrequested' }]
+  ]) assert.throws(() => validateArguments(method, args), { code: 'INVALID_ARGUMENTS' })
+})
+
 test('HTTP broker error codes and client ownership survive the adapter', async t => {
   const fixture = await brokerFixture(t)
   const codex = await connectClient(fixture.stateDir, 'codex')
@@ -170,7 +186,7 @@ test('MCP stdio advertises bounded tools, carries observations/actions, and emit
   const fixture = await brokerFixture(t)
   const client = await mcpFixture(t, fixture.stateDir, 'codex')
   const listed = await client.listTools()
-  assert.equal(listed.tools.length, 18)
+  assert.equal(listed.tools.length, 21)
   assert.ok(listed.tools.every(tool => tool.name.startsWith('velmren_') && tool.inputSchema.additionalProperties === false))
   assert.ok(!listed.tools.some(tool => /evaluate|execute|cdp|control|shutdown/.test(tool.name)))
   const call = (name, args) => client.callTool({ name, arguments: args })
@@ -273,7 +289,7 @@ test('HTTP, CLI and MCP preserve structured partial failure without forwarding e
   const result = await mcp.callTool({ name: 'velmren_act', arguments: args })
   assert.equal(result.isError, true); assert.deepEqual(JSON.parse(result.content[0].text).actionResult, actionResult)
   const tools = await mcp.listTools(), wait = tools.tools.find(tool => tool.name === 'velmren_wait')
-  assert.equal(tools.tools.length, 18); assert.ok(wait.inputSchema.properties.predicate); assert.equal(wait.annotations.readOnlyHint, true)
+  assert.equal(tools.tools.length, 21); assert.ok(wait.inputSchema.properties.predicate); assert.equal(wait.annotations.readOnlyHint, true)
   assert.ok(wait.inputSchema.properties.frameId)
   for (const name of ['velmren_list_frames', 'velmren_list_options']) assert.equal(tools.tools.find(tool => tool.name === name).annotations.readOnlyHint, true)
   assert.equal(JSON.stringify(result).includes('secret-value'), false)

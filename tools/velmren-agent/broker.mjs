@@ -9,6 +9,8 @@ export { AgentBroker, originAllowed } from './runtime.mjs'
 import { CLIENTS } from './client.mjs'
 import { sanitizeActionResult, sanitizeWaitResult } from './action-result.mjs'
 import { bindProfilePolicy } from './profile-state.mjs'
+import { effectivePolicyIdentity } from './policy-identity.mjs'
+import { ManualProfileSession, assertNoManualProfileSession } from './manual-profile.mjs'
 
 const token = () => randomBytes(32).toString('base64url')
 const publicDirectory = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public')
@@ -19,16 +21,19 @@ export function rpcErrorResponse(error) {
   return { ok: false, error: error.message, code: error.code || 'BROKER_ERROR', ...(actionResult ? { actionResult } : {}), ...(waitResult ? { waitResult } : {}) }
 }
 
-export async function startBroker({executable,stateDir,policy={},port=0,browserArgs=[]}) {
+export async function startBroker({executable,stateDir,policy={},port=0,browserArgs=[],browserFactory=options=>BrowserPipe.launch(options),manualSession}) {
   stateDir=path.resolve(stateDir)
   await mkdir(stateDir,{recursive:true,mode:0o700})
   const lock=await open(path.join(stateDir,'broker.lock'),'wx',0o600).catch(()=>{throw new Error('State directory is already in use. Use a fresh state directory, or remove a stale broker.lock only after checking its PID.')})
   await lock.writeFile(String(process.pid))
   let browser,broker,server,descriptor
   try {
+    await assertNoManualProfileSession(stateDir)
     await bindProfilePolicy(stateDir,policy)
-    browser=await BrowserPipe.launch({executable,profile:path.join(stateDir,'browser-profile'),args:browserArgs,profileMode:policy.profileMode})
-    broker=new AgentBroker(browser,stateDir,policy)
+    const browserOptions={executable,profile:path.join(stateDir,'browser-profile'),args:[...browserArgs],profileMode:policy.profileMode}
+    manualSession??=new ManualProfileSession({stateDir,executable,profile:browserOptions.profile,policyIdentity:effectivePolicyIdentity(policy)})
+    browser=await browserFactory(browserOptions)
+    broker=new AgentBroker(browser,stateDir,policy,{manualSession,browserFactory:()=>browserFactory({...browserOptions,args:[...browserOptions.args]})})
     await broker.init()
     descriptor={endpoint:'',pid:process.pid,adminToken:token(),clients:Object.fromEntries(CLIENTS.map(client=>[client,{token:token()}]))}
     const identify=header=>{
@@ -69,13 +74,15 @@ export async function startBroker({executable,stateDir,policy={},port=0,browserA
     await rename(descriptorTemp,path.join(stateDir,'connection.json'))
     let closed=false
     const close=async()=>{
-      if(closed)return;closed=true
+      if(closed)return
+      broker.assertAutomated()
+      closed=true
       server.close();server.closeIdleConnections()
       await broker.close();server.closeAllConnections()
       await unlink(path.join(stateDir,'connection.json')).catch(()=>{})
       await lock.close();await unlink(path.join(stateDir,'broker.lock')).catch(()=>{})
     }
-    broker.onShutdown=close
+    broker.onShutdown=()=>close().catch(error=>broker.event('shutdown-deferred',{code:error.code??'BROKER_ERROR'}))
     if(browser.closed) { await close(); throw new Error('Browser exited during broker startup') }
     return {broker,descriptor,server,close}
   }catch(error){await browser?.close();server?.close();await lock.close();await unlink(path.join(stateDir,'broker.lock')).catch(()=>{});throw error}
@@ -88,5 +95,8 @@ if(process.argv[1] && import.meta.url===pathToFileURL(path.resolve(process.argv[
   if(!options['--browser']||!options['--state-dir'])throw new Error('--browser and --state-dir are required')
   const app=await startBroker({executable:options['--browser'],stateDir:options['--state-dir'],policy:options['--policy']?JSON.parse(await readFile(options['--policy'],'utf8')):{},port:Number(options['--port']??0)})
   console.log(JSON.stringify({status:'ready',endpoint:app.descriptor.endpoint,stateDir:path.resolve(options['--state-dir'])}))
-  for(const signal of ['SIGINT','SIGTERM'])process.once(signal,async()=>{await app.close();process.exit(0)})
+  for(const signal of ['SIGINT','SIGTERM'])process.on(signal,async()=>{
+    try{await app.close();process.exit(0)}
+    catch(error){console.error(`${error.code??'BROKER_ERROR'}: ${error.message}`)}
+  })
 }

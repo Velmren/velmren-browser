@@ -18,7 +18,7 @@ async function startBroker({ stateDir, policy }) {
   }
   const clients = new Map()
   const policyIdentity = effectivePolicyIdentity(policy)
-  let browserHealthy = true, releasedClients = 0, heartbeats = 0
+  let browserHealthy = true, releasedClients = 0, heartbeats = 0, profileLogin
   const descriptor = { pid: process.pid, adminToken: randomUUID(), endpoint: '' }
   const server = http.createServer(async (req, res) => {
     const token = req.headers.authorization?.replace(/^Bearer /, '')
@@ -28,7 +28,7 @@ async function startBroker({ stateDir, policy }) {
     try { request = JSON.parse(body) } catch { res.writeHead(400); res.end(); return }
     const admin = token === descriptor.adminToken
     let result
-    if (admin && request.method === 'broker_status') result = { tasks: [], policyIdentity, browserHealthy, clients: clients.size, releasedClients, heartbeats }
+    if (admin && request.method === 'broker_status') result = { tasks: [], policyIdentity, browserHealthy, clients: clients.size, releasedClients, heartbeats, profileLogin }
     else if (admin && request.method === 'client_register') {
       if (request.args.policyIdentity !== policyIdentity || request.args.leaseMs !== 30000) { res.writeHead(400); res.end(JSON.stringify({ ok: false })); return }
       const clientId = randomUUID(), credential = randomUUID()
@@ -36,6 +36,7 @@ async function startBroker({ stateDir, policy }) {
       result = { clientId, token: credential, leaseMs: 30000 }
     } else if (admin && request.method === 'set_browser_health') {
       browserHealthy = request.args.healthy
+      profileLogin = request.args.profileLogin
       result = { browserHealthy }
     } else if (admin && request.method === 'shutdown') {
       result = { stopping: true }

@@ -286,6 +286,38 @@ test('an unhealthy broker is rejected without spawning or registering another cl
   assert.equal(spawned, false)
 })
 
+test('a live manual-login controller accepts peers without starting another browser', async t => {
+  const config = await options()
+  t.after(() => stop(config.stateDir))
+  const first = await connectManaged(config)
+  const descriptor = await readManagedDescriptor(config.stateDir)
+  let spawned = false
+  for (const phase of ['stopping-automation', 'manual', 'awaiting-confirmation', 'restarting']) {
+    await adminRpc(descriptor, 'set_browser_health', { healthy: false, profileLogin: { phase, automationConnected: false } })
+    const peer = await connectManaged(config, { spawnDaemon: () => { spawned = true } })
+    assert.equal(peer.endpoint, first.endpoint)
+    await releaseManagedConnection(peer)
+  }
+  assert.equal(spawned, false)
+  for (const profileLogin of [{ phase: 'manual', automationConnected: true }, { phase: 'unknown', automationConnected: false }]) {
+    await adminRpc(descriptor, 'set_browser_health', { healthy: false, profileLogin })
+    await assert.rejects(connectManaged(config), { code: 'BROKER_UNHEALTHY' })
+  }
+})
+
+test('a leftover manual-profile receipt prevents cold startup before spawning or recovery', async () => {
+  const config = await options()
+  const file = path.join(config.stateDir, 'manual-profile.json')
+  const receipt = '{"ambiguous":"preserve this manual session"}'
+  await writeFile(file, receipt)
+  let spawned = false
+  await assert.rejects(connectManaged(config, { spawnDaemon: () => { spawned = true } }), { code: 'MANUAL_PROFILE_ACTIVE' })
+  assert.equal(spawned, false)
+  assert.equal(await readFile(file, 'utf8'), receipt)
+  await assert.rejects(runManagedBroker(config, { startBroker: () => { throw new Error('must not launch') } }), { code: 'MANUAL_PROFILE_ACTIVE' })
+  assert.equal(await readFile(file, 'utf8'), receipt)
+})
+
 test('lease heartbeat and release use only the scoped credential and leave peers alive', async t => {
   const config = await options()
   t.after(() => stop(config.stateDir))

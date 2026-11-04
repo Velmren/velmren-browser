@@ -193,6 +193,7 @@ const endInput = async peer => {
   await peer.client.close()
 }
 const expectedTools = [
+  'velmren_profile_login_start', 'velmren_profile_login_status', 'velmren_profile_login_finish',
   'velmren_create_task', 'velmren_list_tasks', 'velmren_observe', 'velmren_act', 'velmren_navigate',
   'velmren_wait', 'velmren_screenshot', 'velmren_list_pages', 'velmren_list_frames', 'velmren_list_options', 'velmren_select_page', 'velmren_close_page',
   'velmren_handle_dialog', 'velmren_upload_files', 'velmren_request_human', 'velmren_resume', 'velmren_finish', 'velmren_cancel'

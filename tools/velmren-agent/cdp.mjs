@@ -27,6 +27,7 @@ export class BrowserPipe extends EventEmitter {
     transport.process.stdio[4].on('error', error => transport.fail(error))
     transport.process.on('error', error => transport.fail(error))
     transport.process.on('exit', code => {
+      transport.processExited = true
       transport.closed = true
       transport.fail(new Error(`Browser exited (${code}): ${transport.stderr.slice(-1500)}`))
       transport.emit('closed')
@@ -76,6 +77,26 @@ export class BrowserPipe extends EventEmitter {
       request.reject(error)
     }
     this.pending.clear()
+  }
+
+  async closeForManual({ timeoutMs = 20000 } = {}) {
+    if (!this.process) throw new Error('Browser process identity is unavailable')
+    if (!Number.isFinite(timeoutMs) || timeoutMs < 1 || timeoutMs > 20000) throw new Error('Invalid browser exit timeout')
+    const exited = () => this.processExited || this.process.exitCode != null || this.process.signalCode != null
+    if (exited()) return
+    // A CDP acknowledgement or pipe failure does not release the profile lock.
+    await new Promise((resolve, reject) => {
+      const done = () => { clearTimeout(timer); this.process.off('exit', done); resolve() }
+      const timer = setTimeout(() => {
+        this.process.off('exit', done)
+        const error = new Error('Automated browser did not exit; manual profile login remains blocked')
+        error.code = 'PROFILE_LOGIN_BROWSER_NOT_EXITED'
+        reject(error)
+      }, timeoutMs)
+      this.process.once('exit', done)
+      if (exited()) { done(); return }
+      void this.send('Browser.close', {}, undefined, timeoutMs).catch(() => {})
+    })
   }
 
   async close() {

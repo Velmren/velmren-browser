@@ -8,6 +8,7 @@ import { effectivePolicyIdentity } from './policy-identity.mjs'
 import { RequestTrace } from './trace.mjs'
 import { sanitizeActionResult, sanitizeWaitResult } from './action-result.mjs'
 import { requestHuman, resumeHuman } from './handoff.mjs'
+import { validateManualProfileUrl } from './manual-profile.mjs'
 
 const terminal = new Set(['completed', 'cancelled'])
 const fail = (message, code = 'INVALID_STATE') => { throw new BrokerError(message, code) }
@@ -69,7 +70,7 @@ class Slots {
 }
 
 export class AgentBroker {
-  constructor(browser, stateDir, policy = {}, { trace } = {}) {
+  constructor(browser, stateDir, policy = {}, { trace, manualSession, browserFactory } = {}) {
     Object.assign(this, { browser, stateDir, tasks: new Map(), contexts: new Map(), sessions: new Map(), targets: new Map(), clients: new Map(), stopping: false })
     if (policy.allowedOrigins !== undefined && (!Array.isArray(policy.allowedOrigins) || policy.allowedOrigins.some(origin => {
       try { const url = new URL(origin); return !['http:', 'https:'].includes(url.protocol) || url.origin !== origin } catch { return true }
@@ -84,7 +85,6 @@ export class AgentBroker {
     if (!Number.isInteger(this.maxTasks) || this.maxTasks < 1 || this.maxTasks > 32 || !Number.isInteger(maxActions) || maxActions < 1 || maxActions > 8) throw new Error('Invalid task/concurrency limits')
     this.slots = new Slots(maxActions)
     this.trace = trace === undefined ? new RequestTrace(() => this.stateDir) : trace
-    browser.setMaxListeners(this.maxTasks * 16 + maxActions + 4)
     this.policyIdentity = effectivePolicyIdentity(policy)
     this.profileMode = policy.profileMode ?? 'isolated'
     this.sharedProfile = this.profileMode === 'persistent'
@@ -93,12 +93,141 @@ export class AgentBroker {
     this.pendingAttachments = new Map()
     this.downloadOwners = new Map()
     this.rootCreation = Promise.resolve()
-    this.listener = message => { void this.onProtocol(message).catch(error => this.event('protocol-error', { message: error.message })) }
-    browser.on('protocol', this.listener)
-    browser.on('closed', () => {
+    this.manualSession = manualSession
+    this.browserFactory = browserFactory
+    this.profileLogin = { phase: 'automated' }
+    this.browserGeneration = 0
+    this.protocolActive = 0
+    this.protocolWork = new Set()
+    this.queuedOperations = 0
+    this.bindBrowser(browser)
+  }
+  bindBrowser(browser) {
+    this.unbindBrowser()
+    this.browser = browser
+    const generation = ++this.browserGeneration
+    const current = () => this.browser === browser && this.browserGeneration === generation
+    browser.setMaxListeners(this.maxTasks * 16 + this.slots.max + 4)
+    this.listener = message => {
+      if (!current() || !['automated', 'restarting'].includes(this.profileLogin.phase)) return
+      this.protocolActive++
+      const work = this.onProtocol(message).catch(error => { if (current()) this.event('protocol-error', { message: error.message }) }).finally(() => { this.protocolActive--; this.protocolWork.delete(work) })
+      this.protocolWork.add(work)
+    }
+    this.closedListener = () => {
+      if (!current() || this.profileLogin.phase !== 'automated') return
       for (const task of this.tasks.values()) if (!terminal.has(task.state)) { task.state = 'cancelled'; task.reason = 'Browser stopped' }
-      if (!this.stopping) setTimeout(() => this.onShutdown?.(), 20).unref()
-    })
+      if (!this.stopping) setTimeout(() => { if (current() && this.profileLogin.phase === 'automated') this.onShutdown?.() }, 20).unref()
+    }
+    browser.on('protocol', this.listener)
+    browser.on('closed', this.closedListener)
+  }
+  unbindBrowser() {
+    if (this.listener) this.browser.off('protocol', this.listener)
+    if (this.closedListener) this.browser.off('closed', this.closedListener)
+    this.browserGeneration++
+  }
+  assertAutomated() {
+    if (this.profileLogin.phase !== 'automated') fail('Profile login is active; close its browser and explicitly finish login before using automation', 'PROFILE_LOGIN_ACTIVE')
+  }
+  assertProfileLoginIdle() {
+    const busy = [...this.tasks.values()].some(task => !terminal.has(task.state) || this.pages(task).size || task.contextId || task.ending || task.cleanupError || task.cleanupRetryQueued || task.cleanupRetryAt || task.creatingRoot || task.pendingRootAttachments?.size || task.closingPageIds?.size || task.downloads?.some(item => item.state === 'inProgress'))
+    const downloading = [...this.downloadOwners.values()].some(owner => (owner.item?.state ?? owner.state ?? 'inProgress') === 'inProgress')
+    if (busy || downloading || this.contexts.size || this.pendingAttachments.size || this.slots.active || this.slots.waiters.length || this.queuedOperations || this.protocolActive || this.creatingSharedRoot) fail('Profile login requires all tasks, pages, cleanup, queued actions, and downloads to be finished', 'PROFILE_LOGIN_BUSY')
+  }
+  profileLoginView() {
+    const active = this.profileLogin
+    return {
+      phase: active.phase, automationConnected: active.phase === 'automated' && !this.browser.closed,
+      ...(active.loginId ? { loginId: active.loginId } : {}),
+      windowOpen: active.phase === 'automated' ? false : typeof active.windowOpen === 'boolean' ? active.windowOpen : null,
+      ...(active.recoveryRequired ? { recoveryRequired: true } : {})
+    }
+  }
+  async profileLoginStatus() {
+    const current = this.profileLogin
+    if (current.phase !== 'automated') {
+      const status = await this.manualSession?.status()
+      if (this.profileLogin === current) {
+        current.windowOpen = typeof status?.windowOpen === 'boolean' ? status.windowOpen : null
+        if (status?.recoveryRequired) current.recoveryRequired = true
+        if (current.phase === 'manual' && status?.windowOpen === false) current.phase = 'awaiting-confirmation'
+      }
+    }
+    return this.profileLoginView()
+  }
+  async startProfileLogin(owner, args) {
+    this.assertAutomated()
+    if (args.userConfirmed !== true) fail('Explicit user confirmation is required', 'INVALID_ARGUMENTS')
+    const url = validateManualProfileUrl(args.url)
+    if (!this.sharedProfile || !this.allowWeb || this.allowedOrigins !== undefined) fail('Ordinary profile login requires a persistent profile and unrestricted allowWeb policy', 'PROFILE_LOGIN_POLICY')
+    if (!this.allowed(url)) fail('Origin is not permitted by the local policy', 'ORIGIN_DENIED')
+    if (!this.manualSession || !this.browserFactory) fail('Manual profile login is not configured', 'PROFILE_LOGIN_UNAVAILABLE')
+    if (this.stopping || this.browser.closed) fail('Automated browser is not running', 'INVALID_STATE')
+    this.assertProfileLoginIdle()
+    // Set the profile-wide gate before the first await, including receipt I/O.
+    this.profileLogin = { phase: 'stopping-automation', loginId: randomUUID(), owner }
+    this.idleSince = null
+    try {
+      await this.manualSession.prepare({ loginId: this.profileLogin.loginId, owner })
+      this.unbindBrowser()
+      await this.browser.closeForManual()
+      this.profileLogin.phase = 'manual'
+      await this.manualSession.launch(url)
+      return await this.profileLoginStatus()
+    } catch (error) {
+      this.profileLogin.recoveryRequired = true
+      throw error
+    }
+  }
+  resetBrowserMaps() {
+    for (const pending of this.pendingAttachments.values()) clearTimeout(pending.timer)
+    for (const map of [this.contexts, this.sessions, this.targets, this.ownedTargets, this.frameOwners, this.pendingAttachments, this.downloadOwners]) map.clear()
+    this.rootCreation = Promise.resolve()
+    this.profileContextId = null
+    this.creatingSharedRoot = false
+  }
+  async finishProfileLogin(owner, args) {
+    const current = this.profileLogin
+    if (args.userConfirmed !== true) fail('Explicit user confirmation is required', 'INVALID_ARGUMENTS')
+    if (!current.loginId || args.loginId !== current.loginId) fail('Profile login session not found', 'NOT_FOUND')
+    if (owner !== 'admin' && owner !== current.owner) fail('Only the initiating client or administrator may finish profile login', 'UNAUTHORIZED')
+    if (!['manual', 'awaiting-confirmation'].includes(current.phase) || this.profileLoginFinishing) fail('Profile login transition is already in progress or requires recovery', 'PROFILE_LOGIN_ACTIVE')
+    this.profileLoginFinishing = true
+    let replacement
+    try {
+      await this.manualSession.assertClosed(args.loginId)
+      current.phase = 'awaiting-confirmation'
+      current.windowOpen = false
+      await this.manualSession.finish(args.loginId, { userConfirmed: true })
+      current.phase = 'restarting'
+      replacement = await this.browserFactory()
+      this.resetBrowserMaps()
+      this.bindBrowser(replacement)
+      await this.init()
+      if (replacement.closed) throw new Error('Automated browser exited while reconnecting')
+      await this.manualSession.complete(args.loginId)
+      this.profileLogin = { phase: 'automated' }
+      this.idleSince = null
+      if (replacement.closed) {
+        // Completion removed the manual receipt; hand a concurrent exit back
+        // to the ordinary browser-failure lifecycle instead of retaining login.
+        this.closedListener()
+        fail('Automated browser exited while completing profile login', 'PROFILE_LOGIN_RESTART_FAILED')
+      }
+      return this.profileLoginStatus()
+    } catch (error) {
+      if (this.profileLogin === current && current.phase === 'restarting') {
+        this.unbindBrowser()
+        try {
+          if (replacement) await replacement.closeForManual()
+          await Promise.allSettled([...this.protocolWork])
+          current.phase = 'awaiting-confirmation'
+        } catch { /* Retain the blocked phase until the process can be recovered. */ }
+        current.recoveryRequired = true
+      }
+      throw error
+    } finally { this.profileLoginFinishing = false }
   }
   event(type, fields = {}) { this.onEvent?.({ type, ...fields, time: new Date().toISOString() }) }
   allowed(url) { return originAllowed(url, this.allowedOrigins, this.allowWeb) }
@@ -136,11 +265,12 @@ export class AgentBroker {
   }
   serialize(task, fn, request) {
     const started = performance.now()
-    const result = task.queue.then(() => { addQueueTime(request, 'taskQueueMs', started); return fn() })
+    this.queuedOperations++
+    const result = task.queue.then(() => { this.assertAutomated(); addQueueTime(request, 'taskQueueMs', started); return fn() }).finally(() => { this.queuedOperations-- })
     task.queue = result.catch(() => {})
     return result
   }
-  checkActive(task) { if (task.state !== 'agent-active') fail(`Task is ${task.state}; agent actions are paused`) }
+  checkActive(task) { this.assertAutomated(); if (task.state !== 'agent-active') fail(`Task is ${task.state}; agent actions are paused`) }
   async init() {
     if (this.sharedProfile) {
       const contexts = await this.browser.send('Target.getBrowserContexts')
@@ -177,7 +307,7 @@ export class AgentBroker {
     return { released: true }
   }
   checkIdle(now = Date.now()) {
-    if (!this.managedMode || this.stopping || this.retirementRequested) return
+    if (!this.managedMode || this.stopping || this.retirementRequested || this.profileLogin.phase !== 'automated') return
     const active = [...this.clients.values()].some(client => client.leaseMs && !client.released)
     const unfinished = [...this.tasks.values()].some(task => !terminal.has(task.state))
     const retrying = [...this.tasks.values()].some(task => task.contextId && (task.ending || task.cleanupRetryQueued || task.cleanupRetryAt))
@@ -201,6 +331,7 @@ export class AgentBroker {
     this.checkIdle(now)
   }
   async retryCleanup(now = Date.now()) {
+    if (this.profileLogin.phase !== 'automated') return
     const retries = []
     for (const task of this.tasks.values()) {
       if (!terminal.has(task.state) || !task.contextId || task.ending || task.cleanupRetryQueued || !task.cleanupRetryAt || task.cleanupRetryAt > now) continue
@@ -477,6 +608,7 @@ export class AgentBroker {
       }
     } else if (message.method === 'Browser.downloadProgress') {
       const owner = this.downloadOwners.get(p.guid)
+      if (owner) owner.state = p.state
       const item = owner?.item
       if (item) {
         if (this.sharedProfile && p.state === 'completed') {
@@ -490,6 +622,7 @@ export class AgentBroker {
     }
   }
   async create(owner, args, request) {
+    this.assertAutomated()
     if (!this.allowed(args.url)) fail('Origin is not permitted by the local policy', 'ORIGIN_DENIED')
     if ([...this.tasks.values()].filter(task => !terminal.has(task.state)).length >= this.maxTasks) fail('Task limit reached', 'LIMIT_REACHED')
     let initialized
@@ -507,6 +640,7 @@ export class AgentBroker {
       if (!this.sharedProfile) await this.browser.send('Browser.setDownloadBehavior', { behavior: 'allowAndName', browserContextId: task.contextId, downloadPath: task.downloadDir, eventsEnabled: true })
       task.creatingRoot = true
       const createRoot = async () => {
+        this.assertAutomated()
         this.creatingSharedRoot = this.sharedProfile
         try {
           const target = await this.browser.send('Target.createTarget', { url: 'about:blank', browserContextId: task.contextId, hidden: true, background: true })
@@ -625,6 +759,7 @@ export class AgentBroker {
     } finally { if (task.ending === ending) task.ending = null }
   }
   async control(task, action, request) {
+    this.assertAutomated()
     if (terminal.has(task.state) && !(action === 'cancel' && task.contextId)) fail('Task already ended')
     if (!['show', 'resume', 'pause', 'cancel'].includes(action)) fail('Unknown control action', 'INVALID_ARGUMENTS')
     const shownPage = action === 'show' ? this.page(task) : null
@@ -738,15 +873,19 @@ export class AgentBroker {
         if (args.leaseMs) { this.managedMode = true; this.idleSince = null; this.scheduleLifecycle() }
         return { clientId, token, ...(args.leaseMs ? { leaseMs: 30000 } : {}) }
       }
-      if (method === 'broker_status') return { tasks: [...this.tasks.values()].map(task => this.record(task)), browserVersion: this.browser.version, browserHealthy: !this.browser.closed, policyIdentity: this.policyIdentity, profileMode: this.profileMode, sharedProfile: this.sharedProfile, activeActions: this.slots.active, maxTasks: this.maxTasks, maxActiveActions: this.slots.max, allowedOrigins: this.allowedOrigins ?? [this.allowWeb ? 'http(s)' : 'loopback only'], webCompatibility: this.webCompatibility, webSocketPolicy: this.webSocketPolicy }
+      if (method === 'broker_status') return { tasks: [...this.tasks.values()].map(task => this.record(task)), browserVersion: this.browser.version, browserHealthy: this.profileLogin.phase === 'automated' && !this.browser.closed, profileLogin: this.profileLoginView(), policyIdentity: this.policyIdentity, profileMode: this.profileMode, sharedProfile: this.sharedProfile, activeActions: this.slots.active, maxTasks: this.maxTasks, maxActiveActions: this.slots.max, allowedOrigins: this.allowedOrigins ?? [this.allowWeb ? 'http(s)' : 'loopback only'], webCompatibility: this.webCompatibility, webSocketPolicy: this.webSocketPolicy }
       if (method === 'task_control') {
+        this.assertAutomated()
         const task = this.task(args.taskId, owner); request.trace.taskId = task.taskId
         return this.control(task, args.action, request)
       }
-      if (method === 'shutdown') { setTimeout(() => this.onShutdown?.(), 20); return { stopping: true } }
+      if (method === 'shutdown') { this.assertAutomated(); setTimeout(() => { if (this.profileLogin.phase === 'automated') this.onShutdown?.() }, 20); return { stopping: true } }
     }
     validateArguments(method, args)
     request.validated = true
+    if (method === 'profile_login_status') return this.profileLoginStatus()
+    if (method === 'profile_login_start') return this.startProfileLogin(owner, args)
+    if (method === 'profile_login_finish') return this.finishProfileLogin(owner, args)
     if (method === 'client_release') return this.releaseClient(owner)
     if (method === 'client_heartbeat') {
       if (!caller?.leaseMs || caller.released) fail('No active managed client lease', 'UNAUTHORIZED')
@@ -754,7 +893,9 @@ export class AgentBroker {
       return { leaseMs: caller.leaseMs }
     }
     if (method === 'task_list') return { tasks: [...this.tasks.values()].filter(task => owner === 'admin' || task.owner === owner).map(task => this.record(task)) }
+    this.assertAutomated()
     if (method === 'task_create') return this.slots.run(() => {
+      this.assertAutomated()
       if (this.stopping) fail('Broker is stopping')
       // A request queued before disconnect must not create an unowned context.
       if (caller && (this.clients.get(owner) !== caller || caller.released || (caller.leaseMs && caller.expiresAt <= Date.now()))) fail('Client credential was released or expired', 'UNAUTHORIZED')
@@ -769,6 +910,7 @@ export class AgentBroker {
     const controlGeneration = task.controlGeneration, taskOwner = task.owner
     return this.serialize(task, () => {
       const run = async () => {
+        this.assertAutomated()
         if (terminal.has(task.state)) fail('Task already ended')
         const humanRead = owner === 'admin' && ['task_observe', 'task_screenshot', 'task_select_page', 'task_handle_dialog'].includes(method)
         if (!humanRead) this.checkActive(task)
@@ -786,7 +928,7 @@ export class AgentBroker {
           page = rootPage.frames.select(args.frameId)
         }
         const sessionId = page.sessionId
-        const stillActive = () => !this.stopping && task.state === 'agent-active' && task.controlGeneration === controlGeneration && task.owner === taskOwner &&
+        const stillActive = () => this.profileLogin.phase === 'automated' && !this.stopping && task.state === 'agent-active' && task.controlGeneration === controlGeneration && task.owner === taskOwner &&
           this.tasks.get(task.taskId) === task && this.pages(task).get(rootPage.pageId) === rootPage && !rootPage.detached && rootPage.sessionId === rootSessionId && !page.detached && page.sessionId === sessionId &&
           (!rootPage.frames || rootPage.frames.current(page)) &&
           this.clients.get(owner) === caller && (!caller || (!caller.released && (!caller.leaseMs || caller.expiresAt > Date.now())))
@@ -828,6 +970,7 @@ export class AgentBroker {
     }, request)
   }
   async close() {
+    this.assertAutomated()
     if (this.stopping) return
     this.stopping = true
     clearInterval(this.lifecycleTimer)
@@ -841,6 +984,6 @@ export class AgentBroker {
       else for (const page of this.pages(task).values()) page.dispose()
     }
     try { await this.browser.close() }
-    finally { this.browser.off('protocol', this.listener); await this.trace?.close() }
+    finally { this.unbindBrowser(); await this.trace?.close() }
   }
 }
