@@ -1,15 +1,15 @@
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { diagnostic, parseManagedOptions, resolveManagedOptions, runManagedBroker } from './managed-runtime.mjs'
+import { diagnostic, ManagedError, parseManagedOptions, resolveManagedOptions, runManagedBroker } from './managed-runtime.mjs'
 
 export async function main(argv = process.argv.slice(2)) {
   const options = await resolveManagedOptions(parseManagedOptions(argv))
+  const startup = new AbortController()
   const watchdog = setTimeout(() => {
-    process.stderr.write('velmren-mcp: STARTUP_TIMEOUT: Managed broker startup timed out.\n')
-    process.exit(1)
+    startup.abort(new ManagedError('STARTUP_TIMEOUT', 'Managed broker startup timed out.'))
   }, options.startupTimeoutMs)
   try {
-    const app = await runManagedBroker(options)
+    const app = await runManagedBroker(options, { signal: startup.signal })
     if (!app.reused) {
       for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, async () => {
         try { await app.close() } finally { process.exit(0) }

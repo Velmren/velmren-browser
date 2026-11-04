@@ -7,6 +7,7 @@ import { sanitizeActionResult, sanitizeWaitResult, unknownActionResult } from '.
 
 function fixture(specs = [{}], text = '') {
   const browser = new EventEmitter(), calls = [], observers = new Set()
+  class NativeSelect { set value(value) { this.value = value } }
   const document = { body: { innerText: text }, elementFromPoint: () => elements.find(el => el === document.point) ?? elements[0] }
   const elements = specs.map(spec => {
     const el = { tagName: 'INPUT', type: 'text', value: '', innerText: '', isConnected: true, ownerDocument: document,
@@ -22,7 +23,7 @@ function fixture(specs = [{}], text = '') {
   const context = vm.createContext({ document, location: { href: 'http://fixture.test/' },
     getComputedStyle: el => ({ visibility: el.hidden ? 'hidden' : 'visible', display: 'block' }),
     innerWidth: 1280, innerHeight: 800, requestAnimationFrame: queueMicrotask,
-    setTimeout, clearTimeout, setInterval, clearInterval, Event: class {},
+    setTimeout, clearTimeout, setInterval, clearInterval, Event: class {}, HTMLSelectElement: NativeSelect,
     MutationObserver: class { constructor(callback) { this.callback = callback } observe() { observers.add(this) } disconnect() { observers.delete(this) } }
   })
   browser.send = async (method, params) => {
@@ -44,7 +45,7 @@ test('observation exact limits are complete and overflow is explicit without fab
   const exact = await f.page.observe()
   assert.equal(exact.complete, true); assert.equal(exact.truncated, false)
   assert.equal(exact.elements.length, 150); assert.equal(exact.counts.eligibleElements, 150)
-  assert.equal(exact.coverage.scope, 'main_frame'); assert.equal(exact.coverage.childFrames, 'excluded')
+  assert.equal(exact.coverage.scope, 'frame'); assert.equal(exact.coverage.childFrames, 'separate_frame_observations')
   f.elements.push({ ...f.elements[0] }); f.elements[0].name += 'n'; f.elements[0].value += 'v'; f.document.body.innerText += 't'
   const overflow = await f.page.observe()
   assert.equal(overflow.complete, false); assert.equal(overflow.truncated, true)
@@ -115,6 +116,113 @@ test('a transport failure during preparation is uncertain even before trusted in
     assert.equal(error.actionResult.recovery.retry, 'none'); return true
   })
   assert.equal(f.calls.some(call => call.method.startsWith('Input.')), false)
+})
+
+test('a failed post-action observation preserves acknowledged input and exposes no stale controls', async () => {
+  for (const type of ['click', 'fill']) {
+    const f = fixture(), observation = await f.page.observe()
+    f.page.observe = async () => { throw Object.assign(new Error('Closed page private details'), { deliveryUncertain: true }) }
+    const result = await f.page.act(observation.observationId, [{ type, ref: 'e1', ...(type === 'fill' ? { value: 'private-value' } : {}) }])
+    const delivery = type === 'fill' ? 'delivered_verified' : 'delivered_unverified'
+    assert.equal(result.completed, 1); assert.equal(result.stopped, 'observation_unavailable')
+    assert.equal(result.actionResult.delivery, delivery); assert.equal(result.actionResult.results[0].delivery, delivery)
+    assert.equal(result.actionResult.failedIndex, null)
+    assert.deepEqual(result.actionResult.recovery, { retry: 'none', observe: true, reason: 'observation_unavailable' })
+    assert.deepEqual(sanitizeActionResult(result.actionResult), JSON.parse(JSON.stringify(result.actionResult)))
+    assert.deepEqual(result.observation, { pageId: 'page', text: '', elements: [], complete: false, truncated: true,
+      coverage: { scope: 'main_frame', blocked: 'observation_unavailable' }, contentTrust: 'untrusted' })
+    assert.equal(f.page.observation, null)
+    assert.equal(JSON.stringify(result).includes('private'), false)
+    assert.equal(f.calls.filter(call => call.method === (type === 'fill' ? 'Input.insertText' : 'Input.dispatchMouseEvent')).length, type === 'fill' ? 1 : 2)
+    await assert.rejects(f.page.act(observation.observationId, [{ type: 'click', ref: 'e1' }]), /Stale observation/)
+  }
+})
+
+for (const type of ['fill', 'select']) {
+  const spec = type === 'fill' ? { type: 'password' } : { tagName: 'SELECT', options: [{ value: 'expected', label: 'Expected' }] }
+  test(`${type} preserves acknowledged delivery when value verification fails and stops remaining actions`, async () => {
+    for (const observationFails of [false, true]) {
+      const f = fixture([spec, {}]), observation = await f.page.observe(), send = f.browser.send
+      let mutations = 0, verificationReads = 0
+      f.browser.send = async (method, params) => {
+        if (method === 'Runtime.evaluate' && params.expression.includes('return (function verifyElementValue')) {
+          verificationReads++
+          assert.equal(mutations, 1, 'value verification follows acknowledged input')
+          throw new Error('Closed page private details')
+        }
+        const result = await send(method, params)
+        if (method === 'Input.insertText' || method === 'Runtime.evaluate' && params.expression.includes('return (function applyFormValue')) mutations++
+        return result
+      }
+      if (observationFails) f.page.observe = async () => { throw new Error('Closed page private details') }
+      const result = await f.page.act(observation.observationId, [
+        { type, ref: 'e1', value: 'expected' }, { type: 'click', ref: 'e2' }
+      ])
+      assert.equal(result.completed, 1); assert.equal(result.actionResult.completed, 1)
+      assert.equal(result.actionResult.failedIndex, null)
+      assert.equal(result.actionResult.delivery, 'delivered_unverified')
+      assert.deepEqual(result.actionResult.results, [{ index: 0, type, ref: 'e1', delivery: 'delivered_unverified',
+        verification: { scope: 'element', status: 'unavailable' } }])
+      assert.deepEqual(result.actionResult.recovery, { retry: 'none', observe: true,
+        reason: observationFails ? 'observation_unavailable' : 'verify_outcome' })
+      assert.deepEqual(sanitizeActionResult(result.actionResult), result.actionResult)
+      assert.equal(result.stopped, observationFails ? 'observation_unavailable' : undefined)
+      assert.equal(result.observation.complete, !observationFails)
+      assert.equal(f.elements[0].value, 'expected')
+      assert.equal(mutations, 1); assert.equal(verificationReads, 1)
+      assert.equal(f.calls.some(call => call.method === 'Input.dispatchMouseEvent'), false)
+      assert.equal(JSON.stringify(result).includes('private details'), false)
+      assert.equal(JSON.stringify(result.actionResult).includes('expected'), false)
+      if (observationFails) {
+        assert.equal(f.page.observation, null); assert.deepEqual(result.observation.elements, [])
+        assert.equal(result.observation.observationId, undefined)
+      } else assert.notEqual(result.observation.observationId, observation.observationId)
+    }
+  })
+
+  test(`${type} keeps a genuinely lost mutation response uncertain without value verification or replay`, async () => {
+    const f = fixture([spec]), observation = await f.page.observe(), send = f.browser.send
+    let mutations = 0
+    f.browser.send = async (method, params) => {
+      assert.equal(method === 'Runtime.evaluate' && params.expression.includes('return (function verifyElementValue'), false)
+      const result = await send(method, params)
+      if (method === 'Input.insertText' || method === 'Runtime.evaluate' && params.expression.includes('return (function applyFormValue')) {
+        mutations++; f.page.dispose(); throw new Error('Lost response private details')
+      }
+      return result
+    }
+    f.page.observe = async () => { assert.fail('No follow-up observation after lost mutation response') }
+    await assert.rejects(f.page.act(observation.observationId, [{ type, ref: 'e1', value: 'expected' }]), error => {
+      assert.equal(error.actionResult.completed, 0); assert.equal(error.actionResult.failedIndex, 0)
+      assert.equal(error.actionResult.delivery, 'delivery_uncertain')
+      assert.deepEqual(error.actionResult.results, [{ index: 0, type, ref: 'e1', delivery: 'delivery_uncertain' }])
+      assert.deepEqual(error.actionResult.recovery, { retry: 'none', observe: true, reason: 'delivery_uncertain' })
+      assert.equal(error.message.includes('private details'), false)
+      return true
+    })
+    assert.equal(f.elements[0].value, 'expected'); assert.equal(mutations, 1)
+  })
+}
+
+test('a lost mouse release response stays uncertain even when the page closes and is never replayed', async () => {
+  const f = fixture(), observation = await f.page.observe(), send = f.browser.send
+  f.browser.send = async (method, params) => {
+    const result = await send(method, params)
+    if (method === 'Input.dispatchMouseEvent' && params.type === 'mouseReleased') {
+      f.page.dispose()
+      throw new Error('Lost release response')
+    }
+    return result
+  }
+  f.page.observe = async () => { assert.fail('No follow-up observation after lost input response') }
+  await assert.rejects(f.page.act(observation.observationId, [{ type: 'click', ref: 'e1' }]), error => {
+    assert.equal(error.actionResult.completed, 0); assert.equal(error.actionResult.failedIndex, 0)
+    assert.equal(error.actionResult.delivery, 'delivery_uncertain')
+    assert.equal(error.actionResult.results[0].delivery, 'delivery_uncertain')
+    assert.deepEqual(error.actionResult.recovery, { retry: 'none', observe: true, reason: 'delivery_uncertain' })
+    return true
+  })
+  assert.equal(f.calls.filter(call => call.method === 'Input.dispatchMouseEvent' && call.params.type === 'mouseReleased').length, 1)
 })
 
 test('fill/select readback is element-only and reports mismatch or replacement without replay', async () => {

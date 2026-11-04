@@ -8,6 +8,7 @@ import { AgentBroker } from './runtime.mjs'
 export { AgentBroker, originAllowed } from './runtime.mjs'
 import { CLIENTS } from './client.mjs'
 import { sanitizeActionResult, sanitizeWaitResult } from './action-result.mjs'
+import { bindProfilePolicy } from './profile-state.mjs'
 
 const token = () => randomBytes(32).toString('base64url')
 const publicDirectory = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public')
@@ -25,7 +26,8 @@ export async function startBroker({executable,stateDir,policy={},port=0,browserA
   await lock.writeFile(String(process.pid))
   let browser,broker,server,descriptor
   try {
-    browser=await BrowserPipe.launch({executable,profile:path.join(stateDir,'browser-profile'),args:browserArgs})
+    await bindProfilePolicy(stateDir,policy)
+    browser=await BrowserPipe.launch({executable,profile:path.join(stateDir,'browser-profile'),args:browserArgs,profileMode:policy.profileMode})
     broker=new AgentBroker(browser,stateDir,policy)
     await broker.init()
     descriptor={endpoint:'',pid:process.pid,adminToken:token(),clients:Object.fromEntries(CLIENTS.map(client=>[client,{token:token()}]))}

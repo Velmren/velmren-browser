@@ -1,12 +1,21 @@
 import http from 'node:http'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { rename, writeFile } from 'node:fs/promises'
+import { readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import { diagnostic, parseManagedOptions, resolveManagedOptions, runManagedBroker } from '../../managed-runtime.mjs'
 import { effectivePolicyIdentity } from '../../policy-identity.mjs'
 
 async function startBroker({ stateDir, policy }) {
   if (policy.fail) throw new Error('Secret failure that must not escape: fake-admin-credential')
+  if (policy.testStartupBarrier) {
+    await writeFile(path.join(stateDir, 'fixture-launching'), String(process.pid))
+    const deadline = Date.now() + 10000
+    for (;;) {
+      try { await readFile(path.join(stateDir, 'fixture-continue')); break } catch (error) { if (error.code !== 'ENOENT') throw error }
+      if (Date.now() >= deadline) throw new Error('Fixture startup barrier timed out')
+      await new Promise(resolve => setTimeout(resolve, 20))
+    }
+  }
   const clients = new Map()
   const policyIdentity = effectivePolicyIdentity(policy)
   let browserHealthy = true, releasedClients = 0, heartbeats = 0
@@ -44,10 +53,18 @@ async function startBroker({ stateDir, policy }) {
   const temp = path.join(stateDir, `connection-${process.pid}.tmp`)
   await writeFile(temp, JSON.stringify(descriptor))
   await rename(temp, path.join(stateDir, 'connection.json'))
-  return { descriptor, server, close: () => new Promise(resolve => server.close(resolve)) }
+  return { descriptor, server, close: async () => {
+    server.closeAllConnections()
+    await new Promise(resolve => server.close(resolve))
+    await unlink(path.join(stateDir, 'connection.json'))
+    await unlink(path.join(stateDir, 'broker.lock'))
+    await writeFile(path.join(stateDir, 'fixture-closed'), String(process.pid))
+  } }
 }
 
 try {
   const options = await resolveManagedOptions(parseManagedOptions(process.argv.slice(2)))
+  process.once('disconnect', () => { void writeFile(path.join(options.stateDir, 'fixture-disconnected'), String(process.pid)) })
+  await writeFile(path.join(options.stateDir, `fixture-helper-${process.pid}`), '')
   await runManagedBroker(options, { startBroker })
 } catch (error) { process.stderr.write(diagnostic(error)); process.exit(1) }

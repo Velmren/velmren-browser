@@ -133,17 +133,21 @@ function dead(pid) {
 }
 
 // The OS releases this gate on process death. No stale file lock is ever stolen.
-export async function acquireStartupGate(stateDir, timeoutMs = 60000) {
+export async function acquireStartupGate(stateDir, timeoutMs = 60000, signal) {
   const canonical = process.platform === 'win32' ? stateDir.toLowerCase() : stateDir
   const port = 20000 + createHash('sha256').update(canonical).digest().readUInt32BE(0) % 35000
   const deadline = Date.now() + timeoutMs
   for (;;) {
+    signal?.throwIfAborted()
     const server = net.createServer(socket => socket.destroy())
     const error = await new Promise(resolve => {
       server.once('error', resolve)
       server.listen({ host: '127.0.0.1', port, exclusive: true }, () => resolve(null))
     })
-    if (!error) return () => new Promise(resolve => server.close(resolve))
+    if (!error) {
+      if (signal?.aborted) { await new Promise(resolve => server.close(resolve)); signal.throwIfAborted() }
+      return () => new Promise(resolve => server.close(resolve))
+    }
     server.close()
     if (error.code !== 'EADDRINUSE') fail('STARTUP_LOCK_FAILED', 'Cannot acquire the local broker startup lock.')
     if (Date.now() >= deadline) fail('STARTUP_TIMEOUT', 'Timed out waiting for the local broker startup lock; existing processes were left running.')
@@ -168,56 +172,135 @@ async function recoverOwnedState(options) {
   }
 }
 
-export async function runManagedBroker(options, { startBroker } = {}) {
-  const { policy, identity } = await requestedPolicy(options)
-  const release = await acquireStartupGate(options.stateDir, options.startupTimeoutMs)
+export async function runManagedBroker(options, { startBroker, signal } = {}) {
+  const controller = new AbortController()
+  const startupSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal
+  const ipc = typeof process.send === 'function'
+  const disconnected = () => controller.abort(new ManagedError('STARTUP_CANCELLED', 'Managed browser startup was cancelled.'))
+  let accept
+  const accepted = new Promise(resolve => { accept = resolve })
+  const message = value => { if (value?.type === 'managed-startup-accept') accept() }
+  if (ipc) {
+    process.once('disconnect', disconnected)
+    process.on('message', message)
+    if (!process.connected) disconnected()
+  }
+  let release, app
   try {
+    const { policy, identity } = await requestedPolicy(options)
+    release = await acquireStartupGate(options.stateDir, options.startupTimeoutMs, startupSignal)
     const descriptor = await readManagedDescriptor(options.stateDir)
     if (await healthy(descriptor, identity)) return { reused: true }
+    startupSignal.throwIfAborted()
     await recoverOwnedState(options)
+    startupSignal.throwIfAborted()
     await writeFile(path.join(options.stateDir, OWNER_FILE), JSON.stringify({
       schema: 1, purpose: 'velmren-managed-broker', pid: process.pid, nonce: randomUUID(),
       stateDir: options.stateDir, executable: options.executable, startedAt: new Date().toISOString()
     }), { flag: 'wx', mode: 0o600 })
+    startupSignal.throwIfAborted()
     const start = startBroker ?? (await import('./broker.mjs')).startBroker
-    const app = await start({ executable: options.executable, stateDir: options.stateDir, policy, port: 0 })
+    app = await start({ executable: options.executable, stateDir: options.stateDir, policy, port: 0 })
+    startupSignal.throwIfAborted()
+    if (ipc) {
+      // Keep the startup gate until the spawning client has registered or cancelled.
+      await new Promise((resolve, reject) => process.send({ type: 'managed-startup-ready' }, error => error ? reject(error) : resolve()))
+      startupSignal.throwIfAborted()
+      await Promise.race([accepted, new Promise((_, reject) => startupSignal.addEventListener('abort', () => reject(startupSignal.reason), { once: true }))])
+      startupSignal.throwIfAborted()
+    }
     return { reused: false, ...app }
-  } finally { await release() }
+  } catch (error) {
+    await app?.close()
+    throw error
+  } finally {
+    await release?.()
+    process.off('disconnect', disconnected)
+    process.off('message', message)
+    if (ipc && process.connected) process.disconnect()
+  }
 }
 
-async function spawnManagedDaemon(options) {
+export async function spawnManagedDaemon(options) {
   const args = [options.daemonScript, '--browser', options.executable, '--state-dir', options.stateDir, '--startup-timeout-ms', String(options.startupTimeoutMs)]
   if (options.policyFile) args.push('--policy', options.policyFile)
   const log = await open(path.join(options.stateDir, 'managed-broker.log'), 'a', 0o600)
   let child
-  const outcome = { exited: false, failed: false }
+  const outcome = { exited: false, failed: false, ready: false }
+  let exited, disconnected
+  const exit = new Promise(resolve => { exited = resolve })
+  const settled = new Promise(resolve => { disconnected = resolve })
   try {
-    child = spawn(options.nodeExecutable, args, { detached: true, windowsHide: true, stdio: ['ignore', 'ignore', log.fd] })
-    child.on('error', () => { outcome.exited = true; outcome.failed = true })
-    child.once('exit', code => { outcome.exited = true; outcome.failed = code !== 0 })
+    child = spawn(options.nodeExecutable, args, { detached: true, windowsHide: true, stdio: ['ignore', 'ignore', log.fd, 'ipc'] })
+    outcome.pid = child.pid
+    child.on('error', () => { outcome.exited = true; outcome.failed = true; exited(); disconnected() })
+    child.once('exit', code => { outcome.exited = true; outcome.failed = code !== 0; exited(); disconnected() })
+    child.once('disconnect', disconnected)
+    child.on('message', value => { if (value?.type === 'managed-startup-ready') outcome.ready = true })
     child.unref()
-  } catch { outcome.exited = true; outcome.failed = true } finally { await log.close() }
+  } catch { outcome.exited = true; outcome.failed = true; exited(); disconnected() } finally { await log.close() }
+  outcome.accept = async () => {
+    await new Promise((resolve, reject) => child.send({ type: 'managed-startup-accept' }, error => error ? reject(error) : resolve()))
+    outcome.accepted = true
+    await settled
+    if (outcome.failed) fail('INITIALIZATION_FAILED', 'Managed browser initialization failed. Existing processes and saved state were preserved.')
+  }
+  outcome.cancel = async () => {
+    if (outcome.accepted) return
+    child?.ref()
+    if (child?.connected) child.disconnect()
+    await exit
+  }
   return outcome
 }
 
-export async function connectManaged(options, { spawnDaemon = spawnManagedDaemon } = {}) {
+export async function connectManaged(options, { spawnDaemon = spawnManagedDaemon, signal } = {}) {
+  const deadline = Date.now() + options.startupTimeoutMs
   const { identity } = await requestedPolicy(options)
-  let descriptor = await readManagedDescriptor(options.stateDir)
-  if (!await healthy(descriptor, identity)) {
-    const outcome = await spawnDaemon(options)
-    const deadline = Date.now() + options.startupTimeoutMs
-    for (;;) {
-      descriptor = await readManagedDescriptor(options.stateDir)
-      if (await healthy(descriptor, identity)) break
-      if (outcome.exited && outcome.failed) fail('INITIALIZATION_FAILED', 'Managed browser initialization failed. Existing processes and saved state were preserved.')
-      if (Date.now() >= deadline) fail('STARTUP_TIMEOUT', 'Timed out starting the managed browser. Existing processes were left running.')
-      await pause(100)
+  let descriptor, outcome, connection, release
+  const cancelled = () => { void outcome?.cancel() }
+  signal?.addEventListener('abort', cancelled, { once: true })
+  try {
+    signal?.throwIfAborted()
+    release = await acquireStartupGate(options.stateDir, Math.max(1, deadline - Date.now()), signal)
+    descriptor = await readManagedDescriptor(options.stateDir)
+    if (!await healthy(descriptor, identity)) {
+      await release(); release = null
+      signal?.throwIfAborted()
+      outcome = await spawnDaemon(options)
+      signal?.throwIfAborted()
+      for (;;) {
+        signal?.throwIfAborted()
+        descriptor = await readManagedDescriptor(options.stateDir)
+        if (outcome.ready && descriptor?.pid === outcome.pid && await healthy(descriptor, identity)) break
+        if (outcome.exited) {
+          release = await acquireStartupGate(options.stateDir, Math.max(1, deadline - Date.now()), signal)
+          descriptor = await readManagedDescriptor(options.stateDir)
+          if (await healthy(descriptor, identity)) break
+          await release(); release = null
+          if (outcome.failed) fail('INITIALIZATION_FAILED', 'Managed browser initialization failed. Existing processes and saved state were preserved.')
+        }
+        if (Date.now() >= deadline) fail('STARTUP_TIMEOUT', 'Timed out starting the managed browser. Existing processes were left running.')
+        await pause(100)
+      }
     }
+    signal?.throwIfAborted()
+    // Registration is performed once. Only this scoped credential reaches MCP tools.
+    const registered = await adminRpc(descriptor, 'client_register', { label: options.label ?? 'Codex', policyIdentity: identity, leaseMs: MANAGED_LEASE_MS }, 5000)
+    if (typeof registered?.clientId !== 'string' || !registered.clientId || registered.clientId === 'admin' || typeof registered.token !== 'string' || registered.token.length < 16 || /[\r\n]/.test(registered.token) || registered.token === descriptor.adminToken || registered.leaseMs !== MANAGED_LEASE_MS) fail('INVALID_REGISTRATION', 'The broker returned an invalid scoped client credential or lease.')
+    connection = { endpoint: descriptor.endpoint, client: registered.clientId, token: registered.token, leaseMs: registered.leaseMs }
+    signal?.throwIfAborted()
+    if (outcome?.ready && !outcome.exited) await outcome.accept()
+    signal?.throwIfAborted()
+    return connection
+  } catch (error) {
+    if (connection) await releaseManagedConnection(connection).catch(() => {})
+    await outcome?.cancel()
+    throw error
+  } finally {
+    signal?.removeEventListener('abort', cancelled)
+    await release?.()
   }
-  // Registration is performed once. Only this scoped credential reaches MCP tools.
-  const registered = await adminRpc(descriptor, 'client_register', { label: options.label ?? 'Codex', policyIdentity: identity, leaseMs: MANAGED_LEASE_MS }, 5000)
-  if (typeof registered?.clientId !== 'string' || !registered.clientId || registered.clientId === 'admin' || typeof registered.token !== 'string' || registered.token.length < 16 || /[\r\n]/.test(registered.token) || registered.token === descriptor.adminToken || registered.leaseMs !== MANAGED_LEASE_MS) fail('INVALID_REGISTRATION', 'The broker returned an invalid scoped client credential or lease.')
-  return { endpoint: descriptor.endpoint, client: registered.clientId, token: registered.token, leaseMs: registered.leaseMs }
 }
 
 async function leaseRpc(connection, method) {

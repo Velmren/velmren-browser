@@ -1,16 +1,19 @@
 import { randomBytes, randomUUID } from 'node:crypto'
-import { mkdir, lstat, realpath } from 'node:fs/promises'
+import { mkdir, lstat, realpath, rename } from 'node:fs/promises'
 import path from 'node:path'
 import { AgentPage } from './page.mjs'
+import { PageFrames } from './frames.mjs'
 import { validateArguments, BrokerError, CLIENTS } from './client.mjs'
 import { effectivePolicyIdentity } from './policy-identity.mjs'
 import { RequestTrace } from './trace.mjs'
 import { sanitizeActionResult, sanitizeWaitResult } from './action-result.mjs'
+import { requestHuman, resumeHuman } from './handoff.mjs'
 
 const terminal = new Set(['completed', 'cancelled'])
 const fail = (message, code = 'INVALID_STATE') => { throw new BrokerError(message, code) }
 const autoAttach = { autoAttach: true, waitForDebuggerOnStart: true, flatten: true, filter: [{ type: 'browser', exclude: true }, { type: 'tab', exclude: true }, {}] }
-const mutations = new Set(['task_create', 'task_act', 'task_navigate', 'task_upload_files', 'task_handle_dialog', 'task_close_page', 'task_finish', 'task_cancel', 'task_request_human', 'task_control'])
+const taskAutoAttach = { ...autoAttach, filter: [{ type: 'shared_worker', exclude: true }, { type: 'service_worker', exclude: true }, ...autoAttach.filter] }
+const mutations = new Set(['task_create', 'task_act', 'task_navigate', 'task_upload_files', 'task_handle_dialog', 'task_close_page', 'task_finish', 'task_cancel', 'task_request_human', 'task_resume', 'task_control'])
 const addQueueTime = (request, key, started) => { if (request) request.trace[key] += performance.now() - started }
 
 export async function inspectUploadFiles(files) {
@@ -83,6 +86,13 @@ export class AgentBroker {
     this.trace = trace === undefined ? new RequestTrace(() => this.stateDir) : trace
     browser.setMaxListeners(this.maxTasks * 16 + maxActions + 4)
     this.policyIdentity = effectivePolicyIdentity(policy)
+    this.profileMode = policy.profileMode ?? 'isolated'
+    this.sharedProfile = this.profileMode === 'persistent'
+    this.ownedTargets = new Map()
+    this.frameOwners = new Map()
+    this.pendingAttachments = new Map()
+    this.downloadOwners = new Map()
+    this.rootCreation = Promise.resolve()
     this.listener = message => { void this.onProtocol(message).catch(error => this.event('protocol-error', { message: error.message })) }
     browser.on('protocol', this.listener)
     browser.on('closed', () => {
@@ -103,7 +113,7 @@ export class AgentBroker {
   pageRecords(task) { return [...this.pages(task).values()].map(page => ({ pageId: page.pageId, openerId: page.openerId ?? null, url: page.url ?? task.url, title: page.title ?? '', attached: !page.detached, ...(page.dialog ? { dialog: page.dialog } : {}) })) }
   record(task) {
     const { taskId, label, owner, state, reason, url, createdAt, downloads, blockedOrigins, selectedPageId } = task
-    return { taskId, label, owner, state, reason, url, createdAt, downloads, blockedOrigins, pages: this.pageRecords(task), selectedPageId: selectedPageId ?? task.selectedPageId, ...(task.cleanupError ? { cleanupPending: true, cleanupError: task.cleanupError } : {}) }
+    return { taskId, label, owner, state, reason, url, createdAt, downloads, blockedOrigins, profileMode: this.profileMode, sharedProfile: this.sharedProfile, pages: this.pageRecords(task), selectedPageId: selectedPageId ?? task.selectedPageId, ...(task.handoff ? { handoff: { id: task.handoff.id, pageId: task.handoff.pageId, shown: task.handoff.shown } } : {}), ...(task.cleanupError ? { cleanupPending: true, cleanupError: task.cleanupError } : {}) }
   }
   task(id, owner) {
     const task = this.tasks.get(id)
@@ -132,6 +142,14 @@ export class AgentBroker {
   }
   checkActive(task) { if (task.state !== 'agent-active') fail(`Task is ${task.state}; agent actions are paused`) }
   async init() {
+    if (this.sharedProfile) {
+      const contexts = await this.browser.send('Target.getBrowserContexts')
+      if (!contexts.defaultBrowserContextId) throw new Error('Persistent agent profile requires a default browser context ID')
+      this.profileContextId = contexts.defaultBrowserContextId
+      this.downloadStagingDir = path.join(this.stateDir, 'download-staging')
+      await mkdir(this.downloadStagingDir, { recursive: true, mode: 0o700 })
+      await this.browser.send('Browser.setDownloadBehavior', { behavior: 'allowAndName', browserContextId: this.profileContextId, downloadPath: this.downloadStagingDir, eventsEnabled: true })
+    }
     await this.browser.send('Target.setDiscoverTargets', { discover: true })
     await this.browser.send('Target.setAutoAttach', autoAttach)
   }
@@ -206,7 +224,7 @@ export class AgentBroker {
       // and subresources use the ancestor frame's intercepted loader factory.
       const owner = this.sessions.get(entry.networkOwnerSessionId)
       if (!owner?.interceptionReady || owner.task !== entry.task || !['page', 'iframe'].includes(owner.type)) throw new Error('Dedicated worker has no verified frame network policy')
-      await this.browser.send('Target.setAutoAttach', autoAttach, sessionId)
+      await this.browser.send('Target.setAutoAttach', this.sharedProfile ? taskAutoAttach : autoAttach, sessionId)
       return
     }
     await this.browser.send('Network.setBypassServiceWorker', { bypass: !this.webCompatibility }, sessionId)
@@ -216,7 +234,7 @@ export class AgentBroker {
     if (this.webCompatibility) for (const resourceType of ['Script', 'Other']) patterns.push({ urlPattern: '*', resourceType, requestStage: 'Response' })
     await this.browser.send('Fetch.enable', { patterns }, sessionId)
     if (entry) entry.interceptionReady = true
-    await this.browser.send('Target.setAutoAttach', autoAttach, sessionId)
+    await this.browser.send('Target.setAutoAttach', this.sharedProfile ? taskAutoAttach : autoAttach, sessionId)
   }
   sessionTask(sessionId) {
     return this.sessions.get(sessionId)?.task ?? [...this.tasks.values()].find(task => [...this.pages(task).values()].some(page => !page.detached && page.sessionId === sessionId))
@@ -224,6 +242,7 @@ export class AgentBroker {
   detachSession(sessionId) {
     const entry = this.sessions.get(sessionId)
     this.sessions.delete(sessionId)
+    if (entry?.task) for (const page of this.pages(entry.task).values()) page.frames?.detachSession(sessionId)
     for (const child of [...this.sessions.values()]) if (child.parentSessionId === sessionId) this.detachSession(child.sessionId)
     if (entry && this.targets.get(entry.targetId) === entry) {
       this.targets.delete(entry.targetId)
@@ -233,24 +252,87 @@ export class AgentBroker {
     }
   }
   opener(info) {
-    if (!info.openerId) return null
+    if (!info.openerId && !info.openerFrameId) return null
     const entry = this.targets.get(info.openerId)
     if (entry?.page && !entry.page.detached) return { task: entry.task, page: entry.page }
+    const frame = this.frameOwners.get(info.openerFrameId) ?? this.frameOwners.get(info.openerId)
+    const framePage = frame && this.pages(frame.task).get(frame.pageId)
+    if (framePage && !framePage.detached) return { task: frame.task, page: framePage }
     for (const task of this.tasks.values()) {
       const page = [...this.pages(task).values()].find(page => !page.detached && page.frameId === info.openerId)
       if (page) return { task, page }
     }
     return null
   }
+  rememberFrame(frameId, entry, parentId) {
+    if (!frameId || !entry?.task) return
+    const prior = this.frameOwners.get(frameId)
+    if (prior && prior.task !== entry.task) return
+    this.frameOwners.set(frameId, { task: entry.task, pageId: entry.page?.pageId ?? entry.ownerPageId ?? prior?.pageId, sessionId: entry.sessionId, parentId: parentId ?? prior?.parentId })
+  }
+  deferAttachment(message) {
+    const id = message.params.sessionId
+    if (this.pendingAttachments.has(id)) return
+    if (this.pendingAttachments.size >= 128) return this.rejectAttachment(message)
+    const timer = setTimeout(() => {
+      this.pendingAttachments.delete(id)
+      void this.rejectAttachment(message).catch(() => {})
+    }, 5000)
+    timer.unref()
+    this.pendingAttachments.set(id, { message, timer })
+  }
+  async drainAttachments(targetId) {
+    for (const [id, pending] of [...this.pendingAttachments]) {
+      if (pending.message.params.targetInfo.targetId !== targetId) continue
+      this.pendingAttachments.delete(id); clearTimeout(pending.timer)
+      await this.attach(pending.message)
+    }
+  }
+  async rejectAttachment(message) {
+    const info = message.params.targetInfo
+    // A conflicting duplicate session must not close another task's target.
+    if (this.targets.has(info.targetId) || info.type === 'worker') {
+      await this.browser.send('Target.detachFromTarget', { sessionId: message.params.sessionId }, message.sessionId).catch(() => {})
+    } else if (info.targetId) await this.browser.send('Target.closeTarget', { targetId: info.targetId }).catch(() => {})
+  }
+  async attachProfileWorker(message) {
+    const { sessionId, targetInfo: info } = message.params
+    if (this.sessions.has(sessionId)) return
+    if (message.sessionId || this.targets.has(info.targetId)) {
+      await this.browser.send('Target.detachFromTarget', { sessionId }, message.sessionId).catch(() => {})
+      return
+    }
+    const entry = { profileOwned: true, targetId: info.targetId, type: info.type, sessionId }
+    this.sessions.set(sessionId, entry); this.targets.set(info.targetId, entry)
+    entry.ready = (async () => {
+      try {
+        await this.configureSession(sessionId, entry)
+        if (this.targets.get(info.targetId) === entry) await this.browser.send('Runtime.runIfWaitingForDebugger', {}, sessionId)
+      } catch (error) {
+        await this.browser.send('Target.closeTarget', { targetId: info.targetId }).catch(() => {})
+        if (!this.stopping && this.targets.get(info.targetId) === entry) throw error
+      }
+    })()
+    await entry.ready
+  }
   async attach(message) {
     const p = message.params, info = p.targetInfo
     const parent = message.sessionId ? this.sessionTask(message.sessionId) : undefined
     const contextOwner = this.contexts.get(info.browserContextId)
     const opener = this.opener(info), openerOwner = opener?.task
-    const task = contextOwner ?? parent ?? openerOwner
+    if (this.sharedProfile && info.browserContextId === this.profileContextId && this.webCompatibility && ['shared_worker', 'service_worker'].includes(info.type)) return this.attachProfileWorker(message)
+    const frameOwner = this.frameOwners.get(info.targetId)?.task ?? this.frameOwners.get(info.parentFrameId)?.task
+    const knownOwner = this.ownedTargets.get(info.targetId)
+    const openerFrameOwner = this.frameOwners.get(info.openerFrameId)?.task
+    const openerTombstone = this.ownedTargets.get(info.openerId) ?? this.frameOwners.get(info.openerId)?.task ?? openerFrameOwner
+    const task = this.sharedProfile ? knownOwner ?? parent ?? openerOwner ?? openerTombstone ?? frameOwner : contextOwner ?? parent ?? openerOwner
+    if (this.sharedProfile && !task && info.browserContextId === this.profileContextId &&
+        ((this.creatingSharedRoot && ['page', 'other'].includes(info.type)) || info.type === 'iframe')) return this.deferAttachment(message)
     // Never infer ownership from another task's session when context disagrees.
-    if (!task || (info.browserContextId && info.browserContextId !== task.contextId) || (parent && contextOwner && parent !== contextOwner) || (openerOwner && contextOwner && openerOwner !== contextOwner) || terminal.has(task.state)) {
-      if (info.targetId) await this.browser.send('Target.closeTarget', { targetId: info.targetId }).catch(() => {})
+    if (!task || (info.browserContextId && info.browserContextId !== (this.sharedProfile ? this.profileContextId : task.contextId)) ||
+        (this.sharedProfile && [parent, openerOwner, openerTombstone, openerFrameOwner, frameOwner].some(owner => owner && owner !== task)) ||
+        (parent && contextOwner && parent !== contextOwner) || (openerOwner && contextOwner && openerOwner !== contextOwner) || terminal.has(task.state)) {
+      await this.rejectAttachment(message)
       return
     }
     // Native hidden WebContents are reported as "other" before createTarget
@@ -278,7 +360,7 @@ export class AgentBroker {
       }
       return
     }
-    const ownedHiddenPage = info.type === 'other' && contextOwner === task && (info.targetId === task.rootTargetId || openerOwner === task)
+    const ownedHiddenPage = info.type === 'other' && (this.sharedProfile || contextOwner === task) && (info.targetId === task.rootTargetId || openerOwner === task)
     const isPage = info.type === 'page' || ownedHiddenPage
     const priorPage = isPage ? this.pages(task).get(info.targetId) : undefined
     const supported = isPage || info.type === 'iframe' || (this.webCompatibility && ['worker', 'service_worker', 'shared_worker'].includes(info.type))
@@ -288,13 +370,16 @@ export class AgentBroker {
       await this.browser.send('Target.closeTarget', { targetId: info.targetId })
       return
     }
-    const parentEntry = this.sessions.get(message.sessionId) ?? this.targets.get(info.parentId) ?? [...this.targets.values()].find(entry => entry.task === task && entry.page?.frameId === info.parentFrameId && info.parentFrameId)
+    const frame = this.frameOwners.get(info.targetId) ?? this.frameOwners.get(info.parentFrameId)
+    const parentEntry = this.sessions.get(message.sessionId) ?? this.targets.get(info.parentId) ?? this.sessions.get(frame?.sessionId) ?? [...this.targets.values()].find(entry => entry.task === task && entry.page?.frameId === info.parentFrameId && info.parentFrameId)
     const ownerPageId = parentEntry?.page?.pageId ?? parentEntry?.ownerPageId ?? (info.type === 'iframe' && this.pages(task).size === 1 ? this.pages(task).keys().next().value : undefined)
     const entry = { task, sessionId: p.sessionId, parentSessionId: message.sessionId, targetId: info.targetId, type: isPage ? 'page' : info.type, ownerPageId,
       networkOwnerSessionId: parentEntry?.type === 'worker' ? parentEntry.networkOwnerSessionId : parentEntry?.sessionId }
     this.sessions.set(p.sessionId, entry); this.targets.set(info.targetId, entry)
+    this.ownedTargets.set(info.targetId, task)
     if (isPage) {
       entry.page = new AgentPage(this.browser, info.targetId, p.sessionId)
+      entry.page.frames = new PageFrames(entry.page, () => [...this.sessions.values()].filter(session => session.task === task && (!session.ownerPageId || session.ownerPageId === entry.page.pageId)), id => this.frameOwners.get(id))
       entry.page.interceptFileChooser = priorPage?.interceptFileChooser ?? opener?.page.interceptFileChooser ?? true
       Object.assign(entry.page, { openerId: opener?.page.pageId ?? info.openerId ?? priorPage?.openerId ?? (isPopup ? task.selectedPageId : null), url: info.url ?? priorPage?.url, title: info.title ?? priorPage?.title })
       priorPage?.dispose()
@@ -307,9 +392,10 @@ export class AgentBroker {
         // are active; page code cannot race setup via a popup or worker.
         await this.configureSession(p.sessionId, entry)
         if (this.targets.get(info.targetId) !== entry) return
-        if (entry.page) await entry.page.init()
+        if (entry.page) { await entry.page.init(); this.rememberFrame(entry.page.frameId, entry) }
         if (entry.type === 'iframe') {
           await this.browser.send('Page.enable', {}, entry.sessionId)
+          await this.browser.send('Runtime.enable', {}, entry.sessionId)
           await this.browser.send('Page.setInterceptFileChooserDialog', { enabled: this.pages(task).get(entry.ownerPageId)?.interceptFileChooser !== false }, entry.sessionId)
         }
         if (terminal.has(task.state) || this.targets.get(info.targetId) !== entry) return
@@ -327,14 +413,6 @@ export class AgentBroker {
   }
   async onProtocol(message) {
     const p = message.params ?? {}
-    if (message.method === 'Page.fileChooserOpened' && this.sessions.get(message.sessionId)?.type === 'iframe') {
-      const entry = this.sessions.get(message.sessionId)
-      const page = this.pages(entry.task).get(entry.ownerPageId)
-      const unsupported = 'File chooser belongs to a child-frame session; uploads support only the selected page main frame'
-      if (page?.interceptFileChooser) page.chooser = { id: randomUUID(), epoch: page.epoch, mode: p.mode, unsupported }
-      else if (!page) entry.task.fileChooserNotice = 'File chooser was intercepted in a child frame whose page owner is unavailable; observe the main page upload control'
-      return
-    }
     if (message.method === 'Target.attachedToTarget') return this.attach(message)
     if (message.method === 'Target.detachedFromTarget') {
       this.detachSession(p.sessionId)
@@ -342,12 +420,13 @@ export class AgentBroker {
     }
     if (message.method === 'Fetch.requestPaused') {
       const task = this.sessionTask(message.sessionId)
+      const profileOwned = this.sessions.get(message.sessionId)?.profileOwned
       const send = async (method, params) => {
         try { return await this.browser.send(method, params, message.sessionId) }
-        catch (error) { if (!this.stopping && !this.browser.closed && task && !terminal.has(task.state) && this.sessionTask(message.sessionId)) throw error }
+        catch (error) { if (!this.stopping && !this.browser.closed && (profileOwned || (task && !terminal.has(task.state))) && this.sessions.has(message.sessionId)) throw error }
       }
-      if (!task) { await send('Fetch.failRequest', { requestId: p.requestId, errorReason: 'BlockedByClient' }).catch(() => {}); return }
-      if (terminal.has(task.state)) { await send('Fetch.failRequest', { requestId: p.requestId, errorReason: 'Aborted' }).catch(() => {}); return }
+      if (!task && !profileOwned) { await send('Fetch.failRequest', { requestId: p.requestId, errorReason: 'BlockedByClient' }).catch(() => {}); return }
+      if (task && terminal.has(task.state)) { await send('Fetch.failRequest', { requestId: p.requestId, errorReason: 'Aborted' }).catch(() => {}); return }
       if (p.responseStatusCode) {
         const headers = [...(p.responseHeaders ?? []), { name: 'Content-Security-Policy', value: this.contentPolicy() }]
         await send('Fetch.continueResponse', { requestId: p.requestId, responseCode: p.responseStatusCode, responseHeaders: headers })
@@ -355,7 +434,7 @@ export class AgentBroker {
         const allowed = this.allowed(p.request.url)
         if (!allowed) {
           let origin; try { origin = new URL(p.request.url).origin } catch { origin = 'invalid' }
-          if (!task.blockedOrigins.includes(origin)) task.blockedOrigins.push(origin)
+          if (task && !task.blockedOrigins.includes(origin)) task.blockedOrigins.push(origin)
         }
         await send(allowed ? 'Fetch.continueRequest' : 'Fetch.failRequest', allowed ? { requestId: p.requestId } : { requestId: p.requestId, errorReason: 'BlockedByClient' })
       }
@@ -368,15 +447,46 @@ export class AgentBroker {
     } else if (message.method === 'Target.targetInfoChanged') {
       const page = this.targets.get(p.targetInfo.targetId)?.page
       if (page) Object.assign(page, { url: p.targetInfo.url, title: p.targetInfo.title })
-    } else if (message.method === 'Page.frameNavigated' && !p.frame.parentId) {
+    } else if (message.method === 'Page.frameAttached' || message.method === 'Page.frameNavigated') {
+      const frameId = p.frame?.id ?? p.frameId
+      this.rememberFrame(frameId, this.sessions.get(message.sessionId), p.frame?.parentId ?? p.parentFrameId)
+      await this.drainAttachments(frameId)
+      if (message.method !== 'Page.frameNavigated' || p.frame.parentId) return
       const task = this.sessionTask(message.sessionId)
       const page = task && [...this.pages(task).values()].find(page => page.sessionId === message.sessionId)
       if (page) { page.url = p.frame.url; if (task.selectedPageId === page.pageId) task.url = p.frame.url }
+    } else if (message.method === 'Page.frameDetached' && p.reason !== 'swap') {
+      const owner = this.frameOwners.get(p.frameId), session = this.sessions.get(message.sessionId)
+      if (owner && session?.task === owner.task) {
+        const removed = new Set([p.frameId])
+        for (let changed = true; changed;) {
+          changed = false
+          for (const [id, frame] of this.frameOwners) if (frame.task === owner.task && removed.has(frame.parentId) && !removed.has(id)) { removed.add(id); changed = true }
+        }
+        for (const id of removed) this.frameOwners.get(id).detached = true
+      }
     } else if (message.method === 'Browser.downloadWillBegin') {
-      const task = [...this.tasks.values()].find(task => [...this.pages(task).values()].some(page => page.frameId === p.frameId))
-      if (task) task.downloads.push({ guid: p.guid, name: path.basename(p.suggestedFilename.replaceAll('\\', '/')), path: path.join(task.downloadDir, p.guid), state: 'inProgress' })
+      if (!/^[a-zA-Z0-9-]{1,100}$/.test(p.guid) || this.downloadOwners.has(p.guid)) return
+      const task = this.frameOwners.get(p.frameId)?.task ?? [...this.tasks.values()].find(task => [...this.pages(task).values()].some(page => page.frameId === p.frameId))
+      if (task && !terminal.has(task.state)) {
+        const item = { guid: p.guid, name: path.basename(p.suggestedFilename.replaceAll('\\', '/')), path: path.join(task.downloadDir, p.guid), state: 'inProgress' }
+        task.downloads.push(item); this.downloadOwners.set(p.guid, { task, item })
+      } else if (this.sharedProfile) {
+        this.downloadOwners.set(p.guid, { task: null })
+        await this.browser.send('Browser.cancelDownload', { guid: p.guid, browserContextId: this.profileContextId }).catch(() => {})
+      }
     } else if (message.method === 'Browser.downloadProgress') {
-      for (const task of this.tasks.values()) { const item = task.downloads.find(item => item.guid === p.guid); if (item) Object.assign(item, { state: p.state, receivedBytes: p.receivedBytes, totalBytes: p.totalBytes }) }
+      const owner = this.downloadOwners.get(p.guid)
+      const item = owner?.item
+      if (item) {
+        if (this.sharedProfile && p.state === 'completed') {
+          // GUID names and a single profile-wide staging directory prevent
+          // concurrent task download settings from stealing one another's files.
+          if (!owner.move) owner.move = rename(path.join(this.downloadStagingDir, p.guid), item.path)
+          try { await owner.move } catch (error) { item.state = 'failed'; throw error }
+        }
+        Object.assign(item, { state: p.state, receivedBytes: p.receivedBytes, totalBytes: p.totalBytes })
+      }
     }
   }
   async create(owner, args, request) {
@@ -387,14 +497,35 @@ export class AgentBroker {
     this.tasks.set(task.taskId, task)
     if (request) { request.trace.taskId = task.taskId; request.dispatched = true }
     try {
-      const context = await this.browser.send('Target.createBrowserContext', { disposeOnDetach: true })
-      task.contextId = context.browserContextId; this.contexts.set(task.contextId, task)
+      if (this.sharedProfile) task.contextId = this.profileContextId
+      else {
+        const context = await this.browser.send('Target.createBrowserContext', { disposeOnDetach: true })
+        task.contextId = context.browserContextId; this.contexts.set(task.contextId, task)
+      }
       task.downloadDir = path.join(this.stateDir, 'downloads', task.taskId)
       await mkdir(task.downloadDir, { recursive: true })
-      await this.browser.send('Browser.setDownloadBehavior', { behavior: 'allowAndName', browserContextId: task.contextId, downloadPath: task.downloadDir, eventsEnabled: true })
+      if (!this.sharedProfile) await this.browser.send('Browser.setDownloadBehavior', { behavior: 'allowAndName', browserContextId: task.contextId, downloadPath: task.downloadDir, eventsEnabled: true })
       task.creatingRoot = true
-      const target = await this.browser.send('Target.createTarget', { url: 'about:blank', browserContextId: task.contextId, hidden: true, background: true })
-      task.rootTargetId = target.targetId; task.creatingRoot = false
+      const createRoot = async () => {
+        this.creatingSharedRoot = this.sharedProfile
+        try {
+          const target = await this.browser.send('Target.createTarget', { url: 'about:blank', browserContextId: task.contextId, hidden: true, background: true })
+          task.rootTargetId = target.targetId; task.creatingRoot = false
+          this.ownedTargets.set(target.targetId, task)
+          await this.drainAttachments(target.targetId)
+          return target
+        } finally {
+          this.creatingSharedRoot = false
+          if (this.sharedProfile) for (const [id, pending] of this.pendingAttachments) {
+            if (!['page', 'other'].includes(pending.message.params.targetInfo.type)) continue
+            this.pendingAttachments.delete(id); clearTimeout(pending.timer)
+            await this.rejectAttachment(pending.message)
+          }
+        }
+      }
+      const creating = this.sharedProfile ? this.rootCreation.then(createRoot) : createRoot()
+      if (this.sharedProfile) this.rootCreation = creating.catch(() => {})
+      const target = await creating
       const pending = [...task.pendingRootAttachments.values()]
       task.pendingRootAttachments.clear()
       await Promise.all(pending.map(message => this.attach(message)))
@@ -438,6 +569,7 @@ export class AgentBroker {
   }
   async end(task, state, { retry = false } = {}) {
     task.state = state
+    task.handoff = null
     if (task.ending) return task.ending
     if (!retry) task.cleanupFailures = 0
     const ending = (async () => {
@@ -447,6 +579,9 @@ export class AgentBroker {
       for (const targetId of [...this.pages(task).keys(), ...provisionalTargets, task.rootTargetId].filter(Boolean)) task.closingPageIds.add(targetId)
       for (const targetId of provisionalTargets) await this.closePage(task, { targetId, pageId: targetId })
       task.pendingRootAttachments?.clear()
+      for (const { task: owner, item } of this.downloadOwners.values()) if (owner === task && item.state === 'inProgress') {
+        await this.browser.send('Browser.cancelDownload', { guid: item.guid, browserContextId: contextId }).catch(() => {})
+      }
       for (const page of this.pages(task).values()) page.dispose()
       // Close every WebContents before disposing the shared task context.
       for (const page of [...this.pages(task).values()]) await this.closePage(task, page)
@@ -454,19 +589,22 @@ export class AgentBroker {
         const deadline = Date.now() + 10000
         while (true) {
           const { targetInfos } = await this.browser.send('Target.getTargets')
-          const remaining = targetInfos.filter(info => info.browserContextId === contextId && (info.type === 'page' || task.closingPageIds.has(info.targetId)))
+          const remaining = targetInfos.filter(info => info.browserContextId === contextId && (this.sharedProfile
+            ? (this.ownedTargets.get(info.targetId) === task || this.ownedTargets.get(info.openerId) === task) && ['page', 'other', 'iframe'].includes(info.type)
+            : info.type === 'page' || task.closingPageIds.has(info.targetId)))
           if (!remaining.length) break
           if (Date.now() >= deadline) throw new Error('Task pages did not close; their profile was retained')
           for (const info of remaining) await this.closePage(task, { targetId: info.targetId, pageId: info.targetId })
           await new Promise(resolve => setTimeout(resolve, 50))
         }
-        try { await this.browser.send('Target.disposeBrowserContext', { browserContextId: contextId }) }
+        try { if (!this.sharedProfile) await this.browser.send('Target.disposeBrowserContext', { browserContextId: contextId }) }
         catch (error) {
           const { browserContextIds } = await this.browser.send('Target.getBrowserContexts')
           if (!Array.isArray(browserContextIds) || browserContextIds.includes(contextId)) throw error
         }
       }
-      this.contexts.delete(contextId); task.contextId = null
+      if (!this.sharedProfile) this.contexts.delete(contextId)
+      task.contextId = null
       task.closingPageIds.clear()
       task.cleanupError = null; task.cleanupRetryAt = null; task.cleanupFailures = 0
       for (const [id, entry] of this.sessions) if (entry.task === task) this.sessions.delete(id)
@@ -489,35 +627,45 @@ export class AgentBroker {
   async control(task, action, request) {
     if (terminal.has(task.state) && !(action === 'cancel' && task.contextId)) fail('Task already ended')
     if (!['show', 'resume', 'pause', 'cancel'].includes(action)) fail('Unknown control action', 'INVALID_ARGUMENTS')
+    const shownPage = action === 'show' ? this.page(task) : null
+    const shownSession = shownPage?.sessionId
+    const checkShownPage = () => {
+      if (shownPage && (this.pages(task).get(shownPage.pageId) !== shownPage || shownPage.detached || shownPage.sessionId !== shownSession)) fail('Page session changed before manual handoff; request the current page again', 'PAGE_DETACHED')
+    }
     if (request) request.dispatched = true
     const generation = task.controlGeneration = (task.controlGeneration ?? 0) + 1
     task.state = action === 'cancel' ? 'cancelled' : 'paused'
     return this.serialize(task, async () => {
       if (generation !== task.controlGeneration || (terminal.has(task.state) && action !== 'cancel')) return this.record(task)
       if (action === 'cancel') return this.end(task, 'cancelled')
-      const page = this.page(task)
+      checkShownPage()
+      const page = shownPage ?? this.page(task)
+      if (shownPage) this.select(task, shownPage)
       await page.send('Emulation.setFocusEmulationEnabled', { enabled: false })
       if (generation !== task.controlGeneration || terminal.has(task.state)) return this.record(task)
       if (action === 'show') {
+        checkShownPage()
         await page.send('Page.setWebLifecycleState', { state: 'active' })
         if (generation !== task.controlGeneration || terminal.has(task.state)) return this.record(task)
+        checkShownPage()
         await this.browser.send('Target.setTargetVisibility', { targetId: page.targetId, visible: true })
         if (generation !== task.controlGeneration || terminal.has(task.state)) return this.record(task)
+        checkShownPage()
         await this.setPageFileChooserInterception(task, page, false)
-        if (generation === task.controlGeneration) task.state = 'human'
+        if (generation === task.controlGeneration) { checkShownPage(); this.select(task, page); task.state = 'human' }
       } else if (action === 'resume') {
         for (const current of this.pages(task).values()) {
           await this.setPageFileChooserInterception(task, current, true)
           await this.browser.send('Target.setTargetVisibility', { targetId: current.targetId, visible: false })
           await current.send('Page.setWebLifecycleState', { state: 'active' }); current.observation = null
         }
-        if (generation === task.controlGeneration) { task.state = 'agent-active'; task.reason = '' }
+        if (generation === task.controlGeneration) { task.state = 'agent-active'; task.reason = ''; task.handoff = null }
       } else { task.state = 'paused'; task.reason = 'Paused by user' }
       this.event('task-control', { taskId: task.taskId, action })
       return this.record(task)
     }, request)
   }
-  decorate(task, observation) { return { ...observation, ...(task.fileChooserNotice ? { fileChooserNotice: task.fileChooserNotice } : {}), taskId: task.taskId, state: task.state, pages: this.pageRecords(task), selectedPageId: task.selectedPageId, downloads: task.downloads, contentTrust: 'untrusted' } }
+  decorate(task, observation) { return { ...observation, ...(task.fileChooserNotice ? { fileChooserNotice: task.fileChooserNotice } : {}), taskId: task.taskId, state: task.state, profileMode: this.profileMode, sharedProfile: this.sharedProfile, pages: this.pageRecords(task), selectedPageId: task.selectedPageId, downloads: task.downloads, contentTrust: 'untrusted' } }
   async waitPage(page, args, stillActive) {
     const started = performance.now(), timeoutMs = args.timeoutMs ?? 10000
     const elapsedMs = () => Math.max(0, Math.min(timeoutMs, Math.round(performance.now() - started)))
@@ -590,7 +738,7 @@ export class AgentBroker {
         if (args.leaseMs) { this.managedMode = true; this.idleSince = null; this.scheduleLifecycle() }
         return { clientId, token, ...(args.leaseMs ? { leaseMs: 30000 } : {}) }
       }
-      if (method === 'broker_status') return { tasks: [...this.tasks.values()].map(task => this.record(task)), browserVersion: this.browser.version, browserHealthy: !this.browser.closed, policyIdentity: this.policyIdentity, activeActions: this.slots.active, maxTasks: this.maxTasks, maxActiveActions: this.slots.max, allowedOrigins: this.allowedOrigins ?? [this.allowWeb ? 'http(s)' : 'loopback only'], webCompatibility: this.webCompatibility, webSocketPolicy: this.webSocketPolicy }
+      if (method === 'broker_status') return { tasks: [...this.tasks.values()].map(task => this.record(task)), browserVersion: this.browser.version, browserHealthy: !this.browser.closed, policyIdentity: this.policyIdentity, profileMode: this.profileMode, sharedProfile: this.sharedProfile, activeActions: this.slots.active, maxTasks: this.maxTasks, maxActiveActions: this.slots.max, allowedOrigins: this.allowedOrigins ?? [this.allowWeb ? 'http(s)' : 'loopback only'], webCompatibility: this.webCompatibility, webSocketPolicy: this.webSocketPolicy }
       if (method === 'task_control') {
         const task = this.task(args.taskId, owner); request.trace.taskId = task.taskId
         return this.control(task, args.action, request)
@@ -615,13 +763,8 @@ export class AgentBroker {
     const task = this.task(args.taskId, owner)
     request.trace.taskId = task.taskId
     if (method === 'task_cancel') { request.dispatched = true; task.controlGeneration = (task.controlGeneration ?? 0) + 1; task.state = 'cancelled'; return this.serialize(task, () => this.end(task, 'cancelled'), request) }
-    if (method === 'task_request_human') {
-      if (terminal.has(task.state)) fail('Task already ended')
-      request.dispatched = true
-      task.controlGeneration = (task.controlGeneration ?? 0) + 1; task.state = 'needs-human'; task.reason = args.reason
-      for (const page of this.pages(task).values()) page.observation = null
-      return this.serialize(task, async () => { if (!terminal.has(task.state)) await this.page(task).send('Emulation.setFocusEmulationEnabled', { enabled: false }); return this.record(task) }, request)
-    }
+    if (method === 'task_request_human') return requestHuman(this, task, args, request)
+    if (method === 'task_resume') return resumeHuman(this, task, args, request)
     if (method === 'task_list_pages') return { pages: this.pageRecords(task), selectedPageId: task.selectedPageId }
     const controlGeneration = task.controlGeneration, taskOwner = task.owner
     return this.serialize(task, () => {
@@ -632,20 +775,31 @@ export class AgentBroker {
         if (this.stopping || this.tasks.get(task.taskId) !== task || task.owner !== taskOwner || task.controlGeneration !== controlGeneration ||
             this.clients.get(owner) !== caller || caller?.released || (caller?.leaseMs && caller.expiresAt <= Date.now())) fail('Task or client state changed; observe again')
         if (method === 'task_finish') { request.dispatched = true; return this.end(task, 'completed') }
-        const page = this.page(task, args.pageId)
-        request.trace.pageId = page.pageId
+        const rootPage = this.page(task, args.pageId)
+        request.trace.pageId = rootPage.pageId
+        const rootSessionId = rootPage.sessionId
+        let page = rootPage
+        if (args.frameId !== undefined || method === 'task_list_frames') {
+          await rootPage.ready
+          if (!rootPage.frames) fail('Frames are unavailable for this page', 'NOT_FOUND')
+          await rootPage.frames.refresh()
+          page = rootPage.frames.select(args.frameId)
+        }
         const sessionId = page.sessionId
         const stillActive = () => !this.stopping && task.state === 'agent-active' && task.controlGeneration === controlGeneration && task.owner === taskOwner &&
-          this.tasks.get(task.taskId) === task && this.pages(task).get(page.pageId) === page && !page.detached && page.sessionId === sessionId &&
+          this.tasks.get(task.taskId) === task && this.pages(task).get(rootPage.pageId) === rootPage && !rootPage.detached && rootPage.sessionId === rootSessionId && !page.detached && page.sessionId === sessionId &&
+          (!rootPage.frames || rootPage.frames.current(page)) &&
           this.clients.get(owner) === caller && (!caller || (!caller.released && (!caller.leaseMs || caller.expiresAt > Date.now())))
         if (method === 'task_wait') return this.waitPage(page, args, stillActive)
         await page.ready
         if (terminal.has(task.state)) fail('Task already ended')
         if (!humanRead) this.checkActive(task)
-        if (this.pages(task).get(page.pageId) !== page || page.detached || page.sessionId !== sessionId) fail('Page session changed; observe again', 'PAGE_DETACHED')
+        if (this.pages(task).get(rootPage.pageId) !== rootPage || rootPage.detached || rootPage.sessionId !== rootSessionId || page.detached || page.sessionId !== sessionId || (rootPage.frames && !rootPage.frames.current(page))) fail('Page or frame session changed; observe again', 'PAGE_DETACHED')
         if (!humanRead && !stillActive()) fail('Task state or page session changed; observe again')
         if (method === 'task_select_page') this.select(task, page)
-        if (['task_observe', 'task_select_page'].includes(method)) return this.decorate(task, await page.observe(owner === 'admin'))
+        if (method === 'task_list_frames') return { pageId: rootPage.pageId, mainFrameId: rootPage.frameId, frames: rootPage.frames.records() }
+        if (['task_observe', 'task_select_page'].includes(method)) return this.decorate(task, await page.observe(owner === 'admin', args))
+        if (method === 'task_list_options') return page.listOptions(args)
         if (method === 'task_close_page') { request.dispatched = true; return this.closePage(task, page) }
         if (method === 'task_handle_dialog') { request.dispatched = true; return this.decorate(task, await page.handleDialog(args.accept, args.promptText)) }
         if (method === 'task_upload_files') {
@@ -677,7 +831,15 @@ export class AgentBroker {
     if (this.stopping) return
     this.stopping = true
     clearInterval(this.lifecycleTimer)
-    for (const task of this.tasks.values()) { task.state = terminal.has(task.state) ? task.state : 'cancelled'; for (const page of this.pages(task).values()) page.dispose() }
+    for (const pending of this.pendingAttachments.values()) clearTimeout(pending.timer)
+    this.pendingAttachments.clear()
+    // Explicitly close task WebContents before clean session shutdown so the
+    // cookie restore switch cannot restore task or handoff windows on restart.
+    for (const task of this.tasks.values()) {
+      task.state = terminal.has(task.state) ? task.state : 'cancelled'
+      if (this.sharedProfile) await this.end(task, task.state).catch(error => this.event('task-cleanup-error', { message: error.message }))
+      else for (const page of this.pages(task).values()) page.dispose()
+    }
     try { await this.browser.close() }
     finally { this.browser.off('protocol', this.listener); await this.trace?.close() }
   }

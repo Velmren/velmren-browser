@@ -1,116 +1,14 @@
 import { randomUUID } from 'node:crypto'
 import { actionResult } from './action-result.mjs'
+import * as formControls from './form-controls.mjs'
+import * as documentObservation from './document-observation.mjs'
+
+const { prepareElement, applyFormValue, verifyElementValue } = formControls
+const { observeDocument, listSelectOptions } = documentObservation
+const formPrelude = Object.values(formControls).map(fn => fn.toString()).join('\n')
+const rendererPrelude = formPrelude + '\n' + Object.values(documentObservation).map(fn => fn.toString()).join('\n')
 
 class DialogOpened extends Error {}
-
-function elementCapabilities(el, measure = true) {
-  const box = measure ? el.getBoundingClientRect() : null, style = measure ? getComputedStyle(el) : null
-  const hidden = measure && (!box.width || !box.height || ['hidden', 'collapse'].includes(style.visibility) || style.display === 'none')
-  const disabled = !!el.disabled || el.matches(':disabled') || el.getAttribute('aria-disabled') === 'true' || !!el.closest?.('[inert]')
-  const fileInput = el.tagName === 'INPUT' && el.type === 'file'
-  const textInput = el.tagName === 'INPUT' && ['text', 'search', 'email', 'url', 'tel', 'password', 'number'].includes(el.type)
-  const availableActions = []
-  if (!disabled) {
-    if (fileInput && !el.webkitdirectory) availableActions.push('uploadFiles')
-    if (!hidden) {
-      availableActions.push('click', 'press')
-      if ((textInput || el.tagName === 'TEXTAREA' || el.isContentEditable) && !el.readOnly) availableActions.push('fill')
-      if (el.tagName === 'SELECT' && [...el.options].some(option => !option.disabled && !(option.parentElement?.tagName === 'OPTGROUP' && option.parentElement.disabled))) availableActions.push('select')
-    }
-  }
-  return { hidden, disabled, fileInput, availableActions }
-}
-
-function observeDocument({ readOnly = false } = {}) {
-  const prior = globalThis.__velmrenAgent
-  if (!readOnly) prior?.observer?.disconnect()
-  const state = { refs: new Map(), revision: 0 }
-  if (!readOnly) {
-    state.observer = new MutationObserver(() => state.revision++)
-    state.observer.observe(document, { subtree: true, childList: true, attributes: true, characterData: true })
-    globalThis.__velmrenAgent = state
-  }
-  const elements = [], limits = { elements: 150, text: 10000, name: 200, value: 300, options: 50, files: 10 }
-  const counts = { eligibleElements: 0, returnedElements: 0, hiddenElements: 0, truncatedNames: 0, truncatedValues: 0, omittedOptions: 0, truncatedOptionLabels: 0, truncatedOptionValues: 0, omittedFiles: 0 }
-  for (const el of document.querySelectorAll('a,button,input,select,textarea,label,[role],[contenteditable="true"]')) {
-    const { hidden, disabled, fileInput, availableActions } = elementCapabilities(el)
-    if (el.tagName === 'LABEL' && el.control?.type !== 'file') continue
-    if (hidden && !fileInput) { counts.hiddenElements++; continue }
-    counts.eligibleElements++
-    if (elements.length >= limits.elements) continue
-    const ref = `e${elements.length + 1}`
-    state.refs.set(ref, el)
-    const name = (el.getAttribute('aria-label') || [...(el.labels || [])].map(label => {
-      const copy=label.cloneNode(true)
-      for(const control of copy.querySelectorAll('input,textarea,select'))control.remove()
-      return copy.textContent
-    }).join(' ') || el.getAttribute('placeholder') || el.innerText || el.getAttribute('name') || '').replace(/\s+/g,' ').trim()
-    const value = el.type === 'password' ? '[redacted]' : fileInput ? '' : String(el.value ?? '')
-    const truncation = { name: name.length > limits.name, value: value.length > limits.value }
-    counts.truncatedNames += Number(truncation.name); counts.truncatedValues += Number(truncation.value)
-    const entry = { ref, tag: el.tagName.toLowerCase(), role: el.getAttribute('role') || '', name: name.slice(0, limits.name), type: el.type || '', value: value.slice(0, limits.value), disabled, hidden, availableActions, truncation }
-    if (fileInput) {
-      const files = [...el.files]
-      Object.assign(entry, { accept: el.accept, multiple: el.multiple, directory: el.webkitdirectory, files: files.slice(0, limits.files).map(file => ({ name: file.name, size: file.size })), fileCount: files.length })
-      truncation.files = files.length > limits.files; counts.omittedFiles += Math.max(0, files.length - limits.files)
-    }
-    if (el.tagName === 'SELECT') {
-      const options = [...el.options]
-      entry.optionCount = options.length; truncation.options = options.length > limits.options
-      counts.omittedOptions += Math.max(0, options.length - limits.options)
-      entry.options = options.slice(0, limits.options).map(option => {
-        const truncated = { label: option.label.length > limits.name, value: option.value.length > limits.value }
-        counts.truncatedOptionLabels += Number(truncated.label); counts.truncatedOptionValues += Number(truncated.value)
-        return { value: option.value.slice(0, limits.value), label: option.label.slice(0, limits.name), disabled: option.disabled || option.parentElement?.tagName === 'OPTGROUP' && option.parentElement.disabled, truncation: truncated }
-      })
-    }
-    elements.push(entry)
-  }
-  const text = document.body?.innerText || ''
-  counts.returnedElements = elements.length; counts.text = text.length; counts.returnedText = Math.min(text.length, limits.text)
-  const truncated = counts.eligibleElements > elements.length || text.length > limits.text || counts.truncatedNames > 0 || counts.truncatedValues > 0 || counts.omittedOptions > 0 || counts.truncatedOptionLabels > 0 || counts.truncatedOptionValues > 0 || counts.omittedFiles > 0
-  return { url: location.href, title: document.title, text: text.slice(0, limits.text), elements, revision: state.revision,
-    complete: !truncated, truncated, limits, counts,
-    coverage: { scope: 'main_frame', childFrames: 'excluded', shadowRoots: 'excluded', hiddenElements: 'excluded_except_file_inputs', completeness: 'eligible_elements_and_visible_text' } }
-}
-
-async function prepareElement({ ref, type, value }) {
-  const el = globalThis.__velmrenAgent?.refs.get(ref)
-  if (!el?.isConnected) throw new Error('Element reference is stale; observe again')
-  if (elementCapabilities(el, false).disabled) throw new Error('Element is disabled')
-  const validate = () => {
-    const capabilities = elementCapabilities(el)
-    if (capabilities.disabled) throw new Error('Element is disabled')
-    if (capabilities.hidden) throw new Error('Element is not visible')
-    if (!capabilities.availableActions.includes(type)) throw new Error('Element does not support this action')
-  }
-  validate()
-  el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' })
-  // DOM layout can precede the hidden compositor's hit-test data. Let a frame
-  // commit before dispatching trusted input at the element's final position.
-  await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
-  if (!el.isConnected) throw new Error('Element reference is stale; observe again')
-  validate()
-  const box = el.getBoundingClientRect()
-  const style = getComputedStyle(el)
-  if (!box.width || !box.height || style.visibility === 'hidden' || style.display === 'none') throw new Error('Element is not visible')
-  const x = Math.max(0, Math.min(innerWidth - 1, box.x + box.width / 2))
-  const y = Math.max(0, Math.min(innerHeight - 1, box.y + box.height / 2))
-  const hit = document.elementFromPoint(x, y)
-  if (hit !== el && !el.contains(hit)) throw new Error('Element is obscured')
-  if (type === 'fill') {
-    el.focus({ preventScroll: true })
-    if (el.isContentEditable) {
-      const range = document.createRange(); range.selectNodeContents(el)
-      const selection = getSelection(); selection.removeAllRanges(); selection.addRange(range)
-    } else el.select()
-  }
-  if (type === 'select') {
-    if (![...el.options].some(o=>o.value===value && !o.disabled && !(o.parentElement?.tagName === 'OPTGROUP' && o.parentElement.disabled))) throw new Error('Select option is unavailable')
-  }
-  if (type === 'press') el.focus({ preventScroll: true })
-  return { x, y }
-}
 
 function waitForCondition({ text, predicate, timeoutMs }) {
   const state = globalThis.__velmrenAgent
@@ -125,7 +23,7 @@ function waitForCondition({ text, predicate, timeoutMs }) {
     }
     const check = () => {
       if (!predicate) {
-        lastObserved = { state: 'text', textMatches: !!document.body?.innerText.includes(text) }
+        lastObserved = { state: 'text', textMatches: visibleDocumentText().includes(text) }
         return lastObserved.textMatches
       }
       if (globalThis.__velmrenAgent !== state || state.refs.get(predicate.ref) !== el) throw new Error('Stale observation; observe again')
@@ -147,27 +45,26 @@ function waitForCondition({ text, predicate, timeoutMs }) {
   })
 }
 
-function verifyElementValue({ ref, value }) {
-  const el = globalThis.__velmrenAgent?.refs.get(ref)
-  if (!el?.isConnected || el.ownerDocument !== document) return { scope: 'element', status: 'unavailable' }
-  return { scope: 'element', status: String(el.isContentEditable ? el.innerText : el.value ?? '') === value ? 'matched' : 'mismatch' }
-}
-
 export class AgentPage {
-  constructor(browser, targetId, sessionId) {
-    Object.assign(this, { browser, targetId, pageId: targetId, sessionId, epoch: 0, frameId: null, world: null, observation: null, dialog: null, chooser: null, interceptFileChooser: true, url: 'about:blank', title: '' })
+  constructor(browser, targetId, sessionId, { frameId = null, rootPage = null, parentFrameId = null } = {}) {
+    Object.assign(this, { browser, targetId, pageId: targetId, sessionId, epoch: 0, frameId, rootPage, parentFrameId, world: null, observation: null, dialog: null, chooser: null, interceptFileChooser: true, url: 'about:blank', title: '' })
     this.dialogWaiters = new Set()
     this.pendingCommands = new Set()
+    if (rootPage) {
+      Object.defineProperty(this, 'dialog', { get: () => rootPage.dialog, set: value => { rootPage.dialog = value } })
+      this.dialogWaiters = rootPage.dialogWaiters
+    }
     this.listener = message => {
       if (message.sessionId !== this.sessionId) return
-      if (message.method === 'Page.frameNavigated' && !message.params.frame.parentId) {
+      if (message.method === 'Page.frameNavigated' && (this.rootPage ? message.params.frame.id === this.frameId : !message.params.frame.parentId)) {
         this.frameId = message.params.frame.id
         this.url = message.params.frame.url
         this.epoch++; this.world = null; this.observation = null; this.chooser = null
       }
-      if (message.method === 'Page.navigatedWithinDocument') { this.observation = null; this.chooser = null }
+      if (message.method === 'Page.navigatedWithinDocument' && message.params.frameId === this.frameId) { this.observation = null; this.chooser = null }
       if (message.method === 'Runtime.executionContextsCleared') { this.world = null; this.observation = null; this.chooser = null }
-      if (message.method === 'Page.fileChooserOpened' && this.interceptFileChooser) {
+      if (message.method === 'Runtime.executionContextDestroyed' && message.params.executionContextId === this.world) { this.epoch++; this.world = null; this.observation = null; this.chooser = null }
+      if (message.method === 'Page.fileChooserOpened' && this.interceptFileChooser && message.params.frameId === this.frameId) {
         const { frameId, backendNodeId, mode } = message.params
         this.chooser = { id: randomUUID(), epoch: this.epoch, frameId, backendNodeId, mode,
           ...(frameId !== this.frameId ? { unsupported: 'File chooser belongs to a child frame; only the selected page main frame is supported' } :
@@ -183,7 +80,8 @@ export class AgentPage {
     browser.on('protocol', this.listener)
   }
   async send(method, params = {}, timeout) {
-    try { return await this.browser.send(method, params, this.sessionId, timeout) }
+    const sessionId = this.rootPage && (method.startsWith('Input.') || method === 'Emulation.setFocusEmulationEnabled') ? this.rootPage.sessionId : this.sessionId
+    try { return await this.browser.send(method, params, sessionId, timeout) }
     catch (error) { error.deliveryUncertain = true; throw error }
   }
   async init() {
@@ -199,6 +97,7 @@ export class AgentPage {
     await this.send('Page.setInterceptFileChooserDialog', { enabled })
     this.interceptFileChooser = enabled
     this.chooser = null
+    this.frames?.invalidateObservations()
   }
   chooserObservation() {
     if (!this.chooser) return {}
@@ -231,22 +130,35 @@ export class AgentPage {
     }
     let result
     try {
-      result = await this.interruptOnDialog(this.send('Runtime.evaluate', { expression:`(()=>{const elementCapabilities=${elementCapabilities.toString()};return (${fn.toString()})(${JSON.stringify(args) ?? ''})})()`, contextId:this.world, awaitPromise:true, returnByValue }))
+      result = await this.interruptOnDialog(this.send('Runtime.evaluate', { expression:`(()=>{${rendererPrelude};return (${fn.toString()})(${JSON.stringify(args) ?? ''})})()`, contextId:this.world, awaitPromise:true, returnByValue }))
     } catch (error) { if (!(error instanceof DialogOpened)) error.deliveryUncertain = true; throw error }
     if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description || result.exceptionDetails.text)
     return returnByValue ? result.result.value : result.result
   }
-  async observe(readOnly = false) {
+  async observe(readOnly = false, options = {}) {
     if (this.dialog) return this.dialogObservation()
     let result
-    try { result = await this.evaluate(observeDocument, { readOnly }) }
+    try { result = await this.evaluate(observeDocument, { ...options, readOnly }) }
     catch (error) { if (error instanceof DialogOpened) return this.dialogObservation(); throw error }
     this.url = result.url; this.title = result.title
+    result.frameId = this.frameId
+    result.parentFrameId = this.parentFrameId
+    if (this.frames) result.frames = await this.frames.refresh()
+    else if (this.rootPage?.frames) result.frames = this.rootPage.frames.records()
+    if (this.rootPage && result.coverage) result.coverage.scope = 'selected_frame'
     if (readOnly) { delete result.revision; return { ...result, ...this.chooserObservation(), pageId: this.pageId, contentTrust: 'untrusted' } }
     this.observation = { id:randomUUID(), epoch:this.epoch, revision:result.revision }
     delete result.revision
     this.lastObservation = { ...result, ...this.chooserObservation(), observationId:this.observation.id, pageId: this.pageId, contentTrust: 'untrusted' }
     return this.lastObservation
+  }
+  async listOptions(args) {
+    const observation = this.observation, epoch = this.epoch
+    if (this.dialog) throw new Error('Handle the open dialog before reading options')
+    if (!observation || args.observationId !== observation.id || observation.epoch !== epoch) throw new Error('Stale observation; observe the page again')
+    const result = await this.evaluate(listSelectOptions, { ...args, revision: observation.revision })
+    if (this.observation !== observation || this.epoch !== epoch || this.disposed) throw new Error('Stale observation; observe the page again')
+    return { ...result, observationId: observation.id, pageId: this.pageId, frameId: this.frameId }
   }
   async navigate(url) {
     this.observation = null; this.chooser = null
@@ -296,51 +208,69 @@ export class AgentPage {
       catch (error) { error.deliveryUncertain = true; throw error }
       for (current = 0; current < actions.length; current++) {
         const action = actions[current]
+        let verificationAction = action
         dispatched = false
         try {
           if (!stillActive() || epoch !== this.epoch) throw new Error('Task state or document changed; remaining actions stopped')
           if (action.type === 'press') {
             const keys = { Enter:13, Tab:9, Escape:27, ArrowDown:40, ArrowUp:38, Backspace:8 }
             if (!Object.hasOwn(keys, action.key)) throw new Error('Unsupported key')
-            if (action.ref) await this.evaluate(prepareElement, action)
+            if (action.ref) { await this.prepareFrame(); await this.evaluate(prepareElement, action) }
             if (!stillActive() || epoch !== this.epoch) throw new Error('Task paused during action preparation')
             dispatched = true
             await this.interruptOnDialog(this.send('Input.dispatchKeyEvent', { type:'keyDown', key:action.key, windowsVirtualKeyCode:keys[action.key], ...(action.key === 'Enter' ? { text:'\r' } : {}) }))
             await this.interruptOnDialog(this.send('Input.dispatchKeyEvent', { type:'keyUp', key:action.key, windowsVirtualKeyCode:keys[action.key] }))
           } else {
-            if (!['click', 'fill', 'select'].includes(action.type)) throw new Error('Unsupported action')
-            const point = await this.evaluate(prepareElement, action)
+            if (!['click', 'fill', 'select', 'setChecked'].includes(action.type)) throw new Error('Unsupported action')
+            await this.prepareFrame()
+            let point = await this.evaluate(prepareElement, action)
+            const clicking = ['click', 'setChecked'].includes(action.type) && !point.noOp
+            if (clicking) point = await this.toRootPoint(point)
             if (!stillActive() || epoch !== this.epoch) throw new Error('Task paused during action preparation')
-            dispatched = true
-            if (action.type === 'fill') await this.interruptOnDialog(this.send('Input.insertText', { text:action.value }))
-            else if (action.type === 'click') {
-              await this.interruptOnDialog(this.send('Input.dispatchMouseEvent', { type:'mousePressed', ...point, button:'left', clickCount:1 }))
-              await this.interruptOnDialog(this.send('Input.dispatchMouseEvent', { type:'mouseReleased', ...point, button:'left', clickCount:1 }))
-            } else {
-              await this.evaluate(({ ref, value }) => {
-                const el = globalThis.__velmrenAgent?.refs.get(ref)
-                if (!el?.isConnected || !elementCapabilities(el).availableActions.includes('select')) throw new Error('Select reference changed')
-                el.value = value; el.dispatchEvent(new Event('input', { bubbles:true })); el.dispatchEvent(new Event('change', { bubbles:true }))
-              }, action)
+            if (action.type === 'select' || action.type === 'fill' && point.inputMode === 'native') {
+              dispatched = true
+              const { expectedValue } = await this.evaluate(applyFormValue, action)
+              verificationAction = { ...action, value: expectedValue }
+            } else if (action.type === 'fill') {
+              dispatched = true
+              await this.interruptOnDialog(this.send('Input.insertText', { text: action.value }))
+            } else if (clicking) {
+              dispatched = true
+              const { x, y } = point
+              await this.interruptOnDialog(this.send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 }))
+              await this.interruptOnDialog(this.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 }))
             }
           }
           completed++
-          const verification = ['fill', 'select'].includes(action.type)
-            ? epoch === this.epoch ? await this.evaluate(verifyElementValue, action) : { scope: 'element', status: 'unavailable' }
+          const verification = ['fill', 'select', 'setChecked'].includes(action.type)
+            ? epoch === this.epoch ? await this.evaluate(verifyElementValue, verificationAction) : { scope: 'element', status: 'unavailable' }
             : undefined
           results.push(record(action, verification?.status === 'matched' ? 'delivered_verified' : 'delivered_unverified', verification))
         } catch (error) {
+          if (completed > current) {
+            // Input was acknowledged; a failed readback must not change its delivery.
+            results.push(record(action, 'delivered_unverified', { scope: 'element', status: 'unavailable' }))
+            break
+          }
           if (!(error instanceof DialogOpened) || !dispatched) throw error
           if (completed <= current) completed++
           results.push(record(action, 'delivery_uncertain'))
           break
         }
       }
-      const observation = await this.observe()
+      let observation, observationUnavailable = false
+      try { observation = await this.observe() }
+      catch {
+        // A failed follow-up read cannot change acknowledged input delivery.
+        this.observation = null
+        observationUnavailable = true
+        observation = { pageId: this.pageId, text: '', elements: [], complete: false, truncated: true,
+          coverage: { scope: 'main_frame', blocked: 'observation_unavailable' }, contentTrust: 'untrusted' }
+      }
       const delivery = results.some(result => result.delivery === 'delivery_uncertain') ? 'delivery_uncertain'
         : results.every(result => result.delivery === 'delivered_verified') ? 'delivered_verified' : 'delivered_unverified'
-      return { completed, ...(this.dialog ? { stopped: 'dialog' } : {}), observation,
-        actionResult: actionResult(completed, null, results, delivery, delivery === 'delivered_verified' ? 'completed' : delivery === 'delivery_uncertain' ? 'delivery_uncertain' : 'verify_outcome') }
+      return { completed, ...(observationUnavailable ? { stopped: 'observation_unavailable' } : this.dialog ? { stopped: 'dialog' } : {}), observation,
+        actionResult: actionResult(completed, null, results, delivery, delivery === 'delivery_uncertain' ? 'delivery_uncertain' : observationUnavailable ? 'observation_unavailable' : delivery === 'delivered_verified' ? 'completed' : 'verify_outcome') }
     } catch (error) {
       this.observation = null
       const delivery = dispatched || error.deliveryUncertain ? 'delivery_uncertain' : 'not_delivered'
@@ -388,7 +318,7 @@ export class AgentPage {
       if (!objectId) throw new Error('File input is no longer available; observe again')
       const prepared = await this.send('Runtime.callFunctionOn', {
         objectId, returnByValue: true,
-        functionDeclaration: `function(...args) { const elementCapabilities = ${elementCapabilities.toString()}; return (${function(revision, count, requireConnected) {
+        functionDeclaration: `function(...args) { ${formPrelude}; return (${function(revision, count, requireConnected) {
           if (globalThis.__velmrenAgent?.revision !== revision) return { error: 'Page changed since observation; observe again' }
           if ((requireConnected && !this.isConnected) || this.ownerDocument !== document || this.tagName !== 'INPUT' || this.type !== 'file') return { error: 'File input is no longer available in this page' }
           if (elementCapabilities(this, false).disabled) return { error: 'File input is disabled' }
@@ -480,5 +410,7 @@ export class AgentPage {
     } finally { clearInterval(watchdog); clearTimeout(deadline) }
   }
   async screenshot() { return {mimeType:'image/png',...(await this.send('Page.captureScreenshot',{format:'png',captureBeyondViewport:false}))} }
-  dispose() { this.disposed = true; this.chooser = null; this.observation = null; this.browser.off('protocol',this.listener) }
+  async prepareFrame() { if (this.rootPage?.frames) await this.rootPage.frames.prepare(this) }
+  async toRootPoint(point) { return this.rootPage?.frames ? this.rootPage.frames.toRootPoint(this, point) : point }
+  dispose() { this.disposed = true; this.chooser = null; this.observation = null; this.frames?.dispose(); this.browser.off('protocol',this.listener) }
 }

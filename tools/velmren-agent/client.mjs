@@ -5,8 +5,8 @@ import { sanitizeActionResult, sanitizeWaitResult, unknownActionResult } from '.
 export const CLIENTS = ['codex', 'claude', 'scripts']
 export const METHODS = [
   'task_create', 'task_list', 'task_observe', 'task_act', 'task_navigate',
-  'task_wait', 'task_screenshot', 'task_request_human', 'task_finish', 'task_cancel', 'task_upload_files',
-  'task_list_pages', 'task_select_page', 'task_close_page', 'task_handle_dialog', 'client_release', 'client_heartbeat'
+  'task_wait', 'task_screenshot', 'task_request_human', 'task_resume', 'task_finish', 'task_cancel', 'task_upload_files',
+  'task_list_pages', 'task_list_frames', 'task_list_options', 'task_select_page', 'task_close_page', 'task_handle_dialog', 'client_release', 'client_heartbeat'
 ]
 
 export class BrokerError extends Error {
@@ -79,18 +79,29 @@ function string(value, name, max = 65536, allowEmpty = false) {
 
 export function validateArguments(method, args) {
   const keys = {
-    task_create: ['url', 'label'], task_list: [], task_observe: ['taskId', 'pageId'],
-    task_act: ['taskId', 'pageId', 'observationId', 'actions'], task_navigate: ['taskId', 'pageId', 'url'],
-    task_wait: ['taskId', 'pageId', 'text', 'predicate', 'timeoutMs'], task_screenshot: ['taskId', 'pageId'],
-    task_request_human: ['taskId', 'reason'], task_finish: ['taskId'], task_cancel: ['taskId'],
-    task_list_pages: ['taskId'], task_select_page: ['taskId', 'pageId'], task_close_page: ['taskId', 'pageId'],
+    task_create: ['url', 'label'], task_list: [], task_observe: ['taskId', 'pageId', 'frameId', 'query', 'offset', 'limit', 'textOffset', 'textLimit'],
+    task_act: ['taskId', 'pageId', 'frameId', 'observationId', 'actions'], task_navigate: ['taskId', 'pageId', 'url'],
+    task_wait: ['taskId', 'pageId', 'frameId', 'text', 'predicate', 'timeoutMs'], task_screenshot: ['taskId', 'pageId'],
+    task_request_human: ['taskId', 'pageId', 'reason', 'showWindow'], task_resume: ['taskId', 'handoffId', 'userConfirmed'], task_finish: ['taskId'], task_cancel: ['taskId'],
+    task_list_pages: ['taskId'], task_list_frames: ['taskId', 'pageId'], task_list_options: ['taskId', 'pageId', 'frameId', 'observationId', 'ref', 'query', 'offset', 'limit'], task_select_page: ['taskId', 'pageId'], task_close_page: ['taskId', 'pageId'],
     task_handle_dialog: ['taskId', 'pageId', 'accept', 'promptText'], client_release: [], client_heartbeat: [],
-    task_upload_files: ['taskId', 'pageId', 'observationId', 'ref', 'chooserId', 'files']
+    task_upload_files: ['taskId', 'pageId', 'frameId', 'observationId', 'ref', 'chooserId', 'files']
   }
   if (!METHODS.includes(method)) throw new BrokerError('Unsupported task method', 'UNKNOWN_METHOD')
   object(args, keys[method])
   if (keys[method].includes('taskId')) string(args.taskId, 'taskId', 256)
   if (args.pageId !== undefined || ['task_select_page', 'task_close_page'].includes(method)) string(args.pageId, 'pageId', 256)
+  if (args.frameId !== undefined) string(args.frameId, 'frameId', 256)
+  if (['task_observe', 'task_list_options'].includes(method)) {
+    if (args.query !== undefined) string(args.query, 'query', 200, true)
+    for (const [key, min, max] of [['offset', 0, Number.MAX_SAFE_INTEGER], ['limit', 1, method === 'task_observe' ? 150 : 100], ['textOffset', 0, Number.MAX_SAFE_INTEGER], ['textLimit', 0, 10000]]) {
+      if (args[key] !== undefined && (!Number.isInteger(args[key]) || args[key] < min || args[key] > max)) throw new BrokerError(`${key} must be an integer from ${min} to ${max}`, 'INVALID_ARGUMENTS')
+    }
+  }
+  if (method === 'task_list_options') {
+    string(args.observationId, 'observationId', 256)
+    string(args.ref, 'ref', 256)
+  }
   const validateDialog = value => {
     if (typeof value.accept !== 'boolean') throw new BrokerError('accept must be boolean', 'INVALID_ARGUMENTS')
     if (value.promptText !== undefined) string(value.promptText, 'promptText', 65536, true)
@@ -123,7 +134,14 @@ export function validateArguments(method, args) {
     }
   }
   if (args.label !== undefined) string(args.label, 'label', 200)
-  if (method === 'task_request_human') string(args.reason, 'reason', 4000)
+  if (method === 'task_request_human') {
+    string(args.reason, 'reason', 4000)
+    if (args.showWindow !== undefined && typeof args.showWindow !== 'boolean') throw new BrokerError('showWindow must be boolean', 'INVALID_ARGUMENTS')
+  }
+  if (method === 'task_resume') {
+    string(args.handoffId, 'handoffId', 256)
+    if (args.userConfirmed !== true) throw new BrokerError('Resume requires the user to confirm that the manual step is complete', 'INVALID_ARGUMENTS')
+  }
   if (method === 'task_wait') {
     if ((args.text === undefined) === (args.predicate === undefined)) throw new BrokerError('Provide exactly one text or predicate', 'INVALID_ARGUMENTS')
     if (args.text !== undefined) string(args.text, 'text', 4000)
@@ -150,13 +168,16 @@ export function validateArguments(method, args) {
         validateDialog(action)
         continue
       }
-      object(action, ['type', 'ref', 'value', 'key'], 'action')
-      if (!['click', 'fill', 'select', 'press'].includes(action.type)) throw new BrokerError('Unsupported action type', 'INVALID_ARGUMENTS')
+      object(action, ['type', 'ref', 'value', 'key', 'checked'], 'action')
+      if (!['click', 'fill', 'select', 'press', 'setChecked'].includes(action.type)) throw new BrokerError('Unsupported action type', 'INVALID_ARGUMENTS')
       if (action.type !== 'press' || action.ref !== undefined) string(action.ref, 'ref', 256)
       if (['fill', 'select'].includes(action.type)) string(action.value, 'value', 65536, true)
       else if (action.value !== undefined) throw new BrokerError('Only fill/select accept value', 'INVALID_ARGUMENTS')
       if (action.type === 'press') string(action.key, 'key', 64)
       else if (action.key !== undefined) throw new BrokerError('Only press accepts key', 'INVALID_ARGUMENTS')
+      if (action.type === 'setChecked') {
+        if (typeof action.checked !== 'boolean') throw new BrokerError('setChecked requires a boolean checked value', 'INVALID_ARGUMENTS')
+      } else if (action.checked !== undefined) throw new BrokerError('Only setChecked accepts checked', 'INVALID_ARGUMENTS')
     }
   }
 }
@@ -165,7 +186,7 @@ export function createClient(connection) {
   return {
     async call(method, args = {}, { signal } = {}) {
       validateArguments(method, args)
-      const unknown = () => ['task_create', 'task_act', 'task_navigate', 'task_upload_files', 'task_handle_dialog', 'task_select_page', 'task_close_page', 'task_request_human', 'task_finish', 'task_cancel'].includes(method) ? unknownActionResult() : undefined
+      const unknown = () => ['task_create', 'task_act', 'task_navigate', 'task_upload_files', 'task_handle_dialog', 'task_select_page', 'task_close_page', 'task_request_human', 'task_resume', 'task_finish', 'task_cancel'].includes(method) ? unknownActionResult() : undefined
       let response
       try {
         response = await fetch(`${connection.endpoint}/rpc`, {

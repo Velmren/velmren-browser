@@ -10,10 +10,12 @@ export function normalizeEffectivePolicy(policy = {}) {
   if (!policy || typeof policy !== 'object' || Array.isArray(policy)) throw new Error('Policy must be an object')
   const normalized = { ...policy, maxTasks: policy.maxTasks ?? 8, maxActiveActions: policy.maxActiveActions ?? 5,
     webCompatibility: policy.webCompatibility ?? false, allowWeb: policy.allowWeb ?? false,
+    profileMode: policy.profileMode ?? 'isolated',
     webSocketPolicy: policy.webSocketPolicy === undefined ? 'disabled' : policy.webSocketPolicy, allowedOrigins: null }
   if (!Number.isInteger(normalized.maxTasks) || normalized.maxTasks < 1 || normalized.maxTasks > 32 ||
       !Number.isInteger(normalized.maxActiveActions) || normalized.maxActiveActions < 1 || normalized.maxActiveActions > 8 ||
       typeof normalized.webCompatibility !== 'boolean' || typeof normalized.allowWeb !== 'boolean') throw new Error('Invalid policy settings')
+  if (!['isolated', 'persistent'].includes(normalized.profileMode)) throw new Error('profileMode must be isolated or persistent')
   if (!['disabled', 'csp-secure-upgrades'].includes(normalized.webSocketPolicy) ||
       (normalized.webSocketPolicy !== 'disabled' && !normalized.webCompatibility)) throw new Error('webSocketPolicy must be disabled, or csp-secure-upgrades with webCompatibility')
   if (policy.allowedOrigins !== undefined) {

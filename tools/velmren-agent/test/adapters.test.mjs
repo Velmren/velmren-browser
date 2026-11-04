@@ -108,10 +108,17 @@ test('task argument boundary rejects administrative methods, code, stale input s
     ['task_act', { taskId: 't', observationId: 'o', actions: [{ type: 'evaluate', value: 'alert(1)' }] }],
     ['task_act', { taskId: 't', observationId: 'o', actions: [{ type: 'click', ref: 'e1', selector: '#submit' }] }],
     ['task_act', { taskId: 't', observationId: 'o', actions: [{ type: 'fill', ref: 'e1' }] }],
+    ['task_act', { taskId: 't', observationId: 'o', actions: [{ type: 'setChecked', ref: 'e1', checked: 'true' }] }],
+    ['task_act', { taskId: 't', observationId: 'o', actions: [{ type: 'click', ref: 'e1', checked: true }] }],
+    ['task_observe', { taskId: 't', offset: -1 }],
+    ['task_list_options', { taskId: 't', observationId: 'o', ref: 'e1', limit: 101 }],
     ['task_wait', { taskId: 't', text: 'done', timeoutMs: 15001 }],
     ['task_list', { owner: 'claude' }]
   ]) assert.throws(() => validateArguments(method, args))
   assert.doesNotThrow(() => validateArguments('task_act', { taskId: 't', observationId: 'o', actions: [{ type: 'fill', ref: 'e1', value: '' }, { type: 'press', key: 'Enter' }] }))
+  assert.doesNotThrow(() => validateArguments('task_act', { taskId: 't', frameId: 'child', observationId: 'o', actions: [{ type: 'setChecked', ref: 'e1', checked: true }, { type: 'fill', ref: 'e2', value: '1996-05-17' }] }))
+  assert.doesNotThrow(() => validateArguments('task_observe', { taskId: 't', frameId: 'child', query: 'country', offset: 150, limit: 100, textOffset: 10000, textLimit: 10000 }))
+  assert.doesNotThrow(() => validateArguments('task_list_options', { taskId: 't', frameId: 'child', observationId: 'o', ref: 'e1', query: 'Zimbabwe', offset: 0, limit: 100 }))
 })
 
 test('HTTP broker error codes and client ownership survive the adapter', async t => {
@@ -163,7 +170,7 @@ test('MCP stdio advertises bounded tools, carries observations/actions, and emit
   const fixture = await brokerFixture(t)
   const client = await mcpFixture(t, fixture.stateDir, 'codex')
   const listed = await client.listTools()
-  assert.equal(listed.tools.length, 15)
+  assert.equal(listed.tools.length, 18)
   assert.ok(listed.tools.every(tool => tool.name.startsWith('velmren_') && tool.inputSchema.additionalProperties === false))
   assert.ok(!listed.tools.some(tool => /evaluate|execute|cdp|control|shutdown/.test(tool.name)))
   const call = (name, args) => client.callTool({ name, arguments: args })
@@ -218,6 +225,36 @@ test('predicate wait arguments enforce exactly one wait kind and state-specific 
   ]) assert.throws(() => validateArguments('task_wait', { taskId: 't', ...args }), { code: 'INVALID_ARGUMENTS' })
 })
 
+test('manual handoff validates page/window selection and explicit confirmation', () => {
+  assert.doesNotThrow(() => validateArguments('task_request_human', { taskId: 't', pageId: 'p', reason: 'Sign in', showWindow: true }))
+  assert.doesNotThrow(() => validateArguments('task_resume', { taskId: 't', handoffId: 'current', userConfirmed: true }))
+  for (const [method, args] of [
+    ['task_request_human', { taskId: 't', reason: 'Sign in', showWindow: 'true' }],
+    ['task_request_human', { taskId: 't', reason: 'Sign in', pageId: '' }],
+    ['task_resume', { taskId: 't', handoffId: 'current' }],
+    ['task_resume', { taskId: 't', handoffId: 'current', userConfirmed: false }],
+    ['task_resume', { taskId: 't', userConfirmed: true }]
+  ]) assert.throws(() => validateArguments(method, args), { code: 'INVALID_ARGUMENTS' })
+})
+
+test('MCP relays manual show and matching user-confirmed resume without admin access', { timeout: 15000 }, async t => {
+  const fixture = await brokerFixture(t, (req, res, body) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ ok: true, result: { taskId: body.args.taskId, state: body.method === 'task_resume' ? 'agent-active' : 'human', handoff: { id: 'handoff-current' } } }))
+  })
+  const mcp = await mcpFixture(t, fixture.stateDir, 'codex')
+  const shown = await mcp.callTool({ name: 'velmren_request_human', arguments: { taskId: 'owned', pageId: 'page', reason: 'Complete sign-in', showWindow: true } })
+  assert.equal(JSON.parse(shown.content[0].text).state, 'human')
+  const resumed = await mcp.callTool({ name: 'velmren_resume', arguments: { taskId: 'owned', handoffId: 'handoff-current', userConfirmed: true } })
+  assert.equal(JSON.parse(resumed.content[0].text).state, 'agent-active')
+  assert.deepEqual(fixture.requests.map(x => x.body.method), ['task_request_human', 'task_resume'])
+  assert.ok(fixture.requests.every(x => x.auth === 'Bearer test-codex'))
+  const calls = fixture.requests.length
+  const denied = await mcp.callTool({ name: 'velmren_resume', arguments: { taskId: 'owned', handoffId: 'handoff-current', userConfirmed: false } })
+  assert.ok(denied.isError)
+  assert.equal(fixture.requests.length, calls)
+})
+
 test('HTTP, CLI and MCP preserve structured partial failure without forwarding extra secret fields', { timeout: 15000 }, async t => {
   const actionResult = { completed: 1, failedIndex: 1, delivery: 'not_delivered',
     results: [{ index: 0, type: 'fill', ref: 'e1', delivery: 'delivered_verified', verification: { scope: 'element', status: 'matched' } },
@@ -236,7 +273,9 @@ test('HTTP, CLI and MCP preserve structured partial failure without forwarding e
   const result = await mcp.callTool({ name: 'velmren_act', arguments: args })
   assert.equal(result.isError, true); assert.deepEqual(JSON.parse(result.content[0].text).actionResult, actionResult)
   const tools = await mcp.listTools(), wait = tools.tools.find(tool => tool.name === 'velmren_wait')
-  assert.equal(tools.tools.length, 15); assert.ok(wait.inputSchema.properties.predicate); assert.equal(wait.annotations.readOnlyHint, true)
+  assert.equal(tools.tools.length, 18); assert.ok(wait.inputSchema.properties.predicate); assert.equal(wait.annotations.readOnlyHint, true)
+  assert.ok(wait.inputSchema.properties.frameId)
+  for (const name of ['velmren_list_frames', 'velmren_list_options']) assert.equal(tools.tools.find(tool => tool.name === name).annotations.readOnlyHint, true)
   assert.equal(JSON.stringify(result).includes('secret-value'), false)
   await assert.rejects(run(process.execPath, [resolve(root, 'cli.mjs'), '--state-dir', fixture.stateDir, 'task_act', JSON.stringify(args)]), error => {
     const value = JSON.parse(error.stderr.trim())

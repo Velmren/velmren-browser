@@ -1,12 +1,40 @@
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
+import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from '@modelcontextprotocol/sdk/shared/stdio.js'
 import { createClient } from './client.mjs'
 import { createMcpServer } from './mcp.mjs'
-import { connectManaged, diagnostic, maintainManagedLease, parseManagedOptions, resolveManagedOptions } from './managed-runtime.mjs'
+import { connectManaged, diagnostic, maintainManagedLease, parseManagedOptions, releaseManagedConnection, resolveManagedOptions } from './managed-runtime.mjs'
 
 export async function startManagedMcp(options) {
-  const connection = await connectManaged(await resolveManagedOptions(options))
+  const startup = new AbortController()
+  const cancelStartup = () => startup.abort()
+  process.stdin.once('end', cancelStartup)
+  process.stdin.once('close', cancelStartup)
+  if (process.stdin.readableEnded || process.stdin.destroyed) cancelStartup()
+  // Buffer protocol bytes while observing EOF, including EOF after initialize.
+  const buffered = []
+  let bytes = 0
+  const buffer = chunk => {
+    bytes += chunk.length
+    if (bytes > STDIO_DEFAULT_MAX_BUFFER_SIZE) { cancelStartup(); return }
+    buffered.push(chunk)
+  }
+  process.stdin.on('data', buffer)
+  let connection
+  try { connection = await connectManaged(await resolveManagedOptions(options), { signal: startup.signal }) }
+  catch (error) { if (!startup.signal.aborted) throw error; return }
+  finally {
+    process.stdin.off('end', cancelStartup)
+    process.stdin.off('close', cancelStartup)
+    process.stdin.pause()
+    process.stdin.off('data', buffer)
+  }
+  if (startup.signal.aborted) {
+    await releaseManagedConnection(connection).catch(() => {})
+    return
+  }
+  for (const chunk of buffered.reverse()) process.stdin.unshift(chunk)
   const server = createMcpServer(createClient(connection))
   let closing
   const lease = maintainManagedLease(connection, error => {
@@ -22,7 +50,7 @@ export async function startManagedMcp(options) {
   server.onclose = () => { void close() }
   process.stdin.once('end', close)
   process.stdin.once('close', close)
-  try { await server.connect(new StdioServerTransport()) }
+  try { await server.connect(new StdioServerTransport()); process.stdin.resume() }
   catch (error) { await close(); throw error }
   // Releasing a lease affects only its own tasks; peer connections stay alive.
   return server

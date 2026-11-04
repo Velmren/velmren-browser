@@ -6,7 +6,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 import { createClient } from '../client.mjs'
-import { acquireStartupGate, adminRpc, connectManaged, diagnostic, maintainManagedLease, parseManagedOptions, readManagedDescriptor, releaseManagedConnection, resolveManagedOptions, runManagedBroker } from '../managed-runtime.mjs'
+import { acquireStartupGate, adminRpc, connectManaged, diagnostic, maintainManagedLease, parseManagedOptions, readManagedDescriptor, releaseManagedConnection, resolveManagedOptions, runManagedBroker, spawnManagedDaemon } from '../managed-runtime.mjs'
 import { effectivePolicyIdentity } from '../policy-identity.mjs'
 
 const directory = path.dirname(fileURLToPath(import.meta.url))
@@ -23,6 +23,7 @@ async function options(extra = {}) {
 async function stop(stateDir) {
   const descriptor = await readManagedDescriptor(stateDir)
   if (!descriptor) return
+  try { process.kill(descriptor.pid, 0) } catch (error) { if (error.code === 'ESRCH') return; throw error }
   await adminRpc(descriptor, 'shutdown')
   const deadline = Date.now() + 5000
   for (;;) {
@@ -38,14 +39,39 @@ async function deadPid() {
   return child.pid
 }
 
-test('five concurrent clients share one daemon and receive isolated credentials', async t => {
+async function waitForFile(file) {
+  const deadline = Date.now() + 5000
+  for (;;) {
+    try { return await readFile(file, 'utf8') } catch (error) { if (error.code !== 'ENOENT') throw error }
+    assert.ok(Date.now() < deadline, `Fixture did not reach ${path.basename(file)}`)
+    await new Promise(resolve => setTimeout(resolve, 20))
+  }
+}
+
+test('five concurrent clients settle every helper before sharing one daemon and immediate shutdown', async t => {
   const config = await options()
-  t.after(() => stop(config.stateDir))
-  const connections = await Promise.all(Array.from({ length: 5 }, (_, i) => connectManaged({ ...config, label: `Codex ${i}` })))
+  let stopped = false
+  const outcomes = []
+  t.after(async () => {
+    await Promise.all(outcomes.map(outcome => outcome.cancel()))
+    if (!stopped) await stop(config.stateDir)
+  })
+  let requested = 0, releaseSpawns
+  const allRequested = new Promise(resolve => { releaseSpawns = resolve })
+  const spawnDaemon = async config => {
+    if (++requested === 5) releaseSpawns()
+    await allRequested
+    const outcome = await spawnManagedDaemon(config)
+    outcomes.push(outcome)
+    return outcome
+  }
+  const connections = await Promise.all(Array.from({ length: 5 }, (_, i) => connectManaged({ ...config, label: `Codex ${i}` }, { spawnDaemon })))
   assert.equal(new Set(connections.map(value => value.client)).size, 5)
   assert.equal(new Set(connections.map(value => value.token)).size, 5)
   assert.equal(new Set(connections.map(value => value.endpoint)).size, 1)
   const before = await readManagedDescriptor(config.stateDir)
+  assert.equal(outcomes.length, 5)
+  for (const outcome of outcomes) assert.ok(outcome.pid === before.pid || outcome.exited, 'A client returned with a pending startup helper')
   for (const connection of connections) {
     assert.deepEqual(Object.keys(connection).sort(), ['client', 'endpoint', 'leaseMs', 'token'])
     assert.equal(connection.leaseMs, 30000)
@@ -58,6 +84,94 @@ test('five concurrent clients share one daemon and receive isolated credentials'
   assert.equal((await createClient(connections[4]).call('task_list')).owner, connections[4].client)
   const log = await readFile(path.join(config.stateDir, 'managed-broker.log'), 'utf8')
   for (const secret of [before.adminToken, ...connections.map(value => value.token)]) assert.ok(!log.includes(secret))
+  await stop(config.stateDir)
+  stopped = true
+  for (const outcome of outcomes) assert.throws(() => process.kill(outcome.pid, 0), { code: 'ESRCH' })
+  assert.equal((await readManagedDescriptor(config.stateDir)).pid, before.pid)
+})
+
+test('cancelling an owned helper while it waits for the gate prevents a late startup', async t => {
+  const config = await options()
+  const release = await acquireStartupGate(config.stateDir)
+  t.after(release)
+  const outcome = await spawnManagedDaemon(config)
+  t.after(() => outcome.cancel())
+  await waitForFile(path.join(config.stateDir, `fixture-helper-${outcome.pid}`))
+  await outcome.cancel()
+  assert.equal(outcome.exited, true)
+  assert.throws(() => process.kill(outcome.pid, 0), { code: 'ESRCH' })
+  assert.equal(await readManagedDescriptor(config.stateDir), null)
+})
+
+test('startup timeout settles and closes an in-flight owned launch before releasing the gate', async () => {
+  const config = await options()
+  const controller = new AbortController()
+  let launching, finish, closed = false
+  const started = new Promise(resolve => { launching = resolve })
+  const launched = new Promise(resolve => { finish = resolve })
+  const run = runManagedBroker(config, { signal: controller.signal, startBroker: async () => {
+    launching()
+    await launched
+    return { close: async () => { closed = true } }
+  } })
+  await started
+  const timeout = Object.assign(new Error('Startup timed out'), { code: 'STARTUP_TIMEOUT' })
+  controller.abort(timeout)
+  finish()
+  await assert.rejects(run, { code: 'STARTUP_TIMEOUT' })
+  assert.equal(closed, true)
+  await (await acquireStartupGate(config.stateDir, 100))()
+})
+
+function startupMcp(config) {
+  const args = [path.join(directory, 'fixtures', 'managed-fake-mcp.mjs'), '--browser', process.execPath, '--state-dir', config.stateDir]
+  if (config.policyFile) args.push('--policy', config.policyFile)
+  const child = spawn(process.execPath, args, { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] })
+  let stdout = '', stderr = ''
+  child.stdout.on('data', chunk => { stdout += chunk })
+  child.stderr.on('data', chunk => { stderr += chunk })
+  const exited = once(child, 'exit')
+  return { child, exited, get stdout() { return stdout }, get stderr() { return stderr } }
+}
+
+test('MCP EOF after queued protocol bytes cancels an in-flight launch and closes its owned broker', { timeout: 15000 }, async t => {
+  const config = await options()
+  config.policyFile = path.join(config.stateDir, 'policy.json')
+  await writeFile(config.policyFile, JSON.stringify({ testStartupBarrier: true }))
+  const client = startupMcp(config)
+  t.after(async () => {
+    client.child.stdin.end()
+    await writeFile(path.join(config.stateDir, 'fixture-continue'), '')
+    await client.exited
+  })
+  const pid = Number(await waitForFile(path.join(config.stateDir, 'fixture-launching')))
+  client.child.stdin.end('{"jsonrpc":"2.0","id":1,"method":"initialize"}\n')
+  await waitForFile(path.join(config.stateDir, 'fixture-disconnected'))
+  await writeFile(path.join(config.stateDir, 'fixture-continue'), '')
+  assert.equal((await client.exited)[0], 0)
+  assert.equal(client.stdout, '')
+  assert.equal(client.stderr, '')
+  assert.equal(Number(await waitForFile(path.join(config.stateDir, 'fixture-closed'))), pid)
+  assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' })
+  assert.equal(await readManagedDescriptor(config.stateDir), null)
+})
+
+test('MCP EOF during connection preserves an existing healthy broker and peer lease', { timeout: 15000 }, async t => {
+  const config = await options()
+  const peer = await connectManaged(config)
+  t.after(() => stop(config.stateDir))
+  const descriptor = await readManagedDescriptor(config.stateDir)
+  const release = await acquireStartupGate(config.stateDir)
+  t.after(release)
+  const client = startupMcp(config)
+  t.after(async () => { client.child.stdin.end(); await client.exited })
+  await waitForFile(path.join(config.stateDir, 'fixture-mcp-starting'))
+  client.child.stdin.end('{"jsonrpc":"2.0","id":1,"method":"initialize"}\n')
+  assert.equal((await client.exited)[0], 0)
+  assert.equal(client.stdout, '')
+  assert.equal(client.stderr, '')
+  assert.equal((await adminRpc(descriptor, 'broker_status')).clients, 1)
+  assert.equal((await createClient(peer).call('task_list')).owner, peer.client)
 })
 
 function stdioClient(config) {

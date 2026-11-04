@@ -69,6 +69,36 @@ test('browser autoattach pauses targets before any page executes', async () => {
   assert.equal(task.selectedPageId, 'popup')
 })
 
+test('queued manual Show remains bound to its requested page when a popup becomes selected', async () => {
+  const f = fixture({ webCompatibility: true }), task = f.addTask('one'), gate = deferred()
+  const main = await f.attach(task, 'main')
+  task.queue = gate.promise
+  const showing = f.broker.rpc('one', 'task_request_human', { taskId: 'one', pageId: 'main', reason: 'Sign in', showWindow: true })
+  await f.attach(task, 'popup', 'main')
+  assert.equal(task.selectedPageId, 'popup')
+  gate.resolve()
+  const result = await showing
+  assert.equal(result.handoff.pageId, 'main'); assert.equal(result.handoff.shown, true)
+  assert.equal(result.selectedPageId, 'main')
+  assert.deepEqual(f.calls.filter(x => x.method === 'Target.setTargetVisibility' && x.params.visible).map(x => x.params.targetId), ['main'])
+  assert.equal(main.interceptFileChooser, false)
+  assert.equal(task.pages.get('popup').interceptFileChooser, true)
+  await f.broker.close()
+})
+
+test('queued manual Show rejects a replaced page session before making it visible', async () => {
+  const f = fixture({ webCompatibility: true }), task = f.addTask('one'), gate = deferred()
+  const main = await f.attach(task, 'main')
+  task.queue = gate.promise
+  const showing = f.broker.rpc('one', 'task_request_human', { taskId: 'one', pageId: 'main', reason: 'Sign in', showWindow: true })
+  const rejected = assert.rejects(showing, /Page session changed/)
+  main.sessionId = 'replaced-session'
+  gate.resolve(); await rejected
+  assert.equal(task.handoff.shown, false)
+  assert.equal(f.calls.filter(x => x.method === 'Target.setTargetVisibility' && x.params.visible).length, 0)
+  await f.broker.close()
+})
+
 test('file picker handoff affects only the shown page and its frames; hidden siblings and their popups stay intercepted', async () => {
   const f = fixture({ webCompatibility: true }), task = f.addTask('one')
   const main = await f.attach(task, 'main')
@@ -94,7 +124,7 @@ test('file picker handoff affects only the shown page and its frames; hidden sib
   await f.broker.rpc('admin', 'task_control', { taskId: 'one', action: 'resume' })
   assert.ok([...task.pages.values()].every(page => page.interceptFileChooser))
   await f.broker.onProtocol({ sessionId: 'session-main-frame', method: 'Page.fileChooserOpened', params: { frameId: 'child', backendNodeId: 17, mode: 'selectSingle' } })
-  assert.match(main.chooserObservation().fileChooser.unsupported, /child-frame session/)
+  assert.equal(main.chooser, null, 'A child-frame chooser cannot become the main-frame chooser')
   assert.equal(hidden.chooser, null)
   await f.broker.close()
 })

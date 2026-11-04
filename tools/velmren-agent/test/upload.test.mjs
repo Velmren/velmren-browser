@@ -139,7 +139,7 @@ test('chooser IDs are opaque, session and frame bound, consumed after upload, an
   const opened = (sessionId, frameId = 'main') => f.browser.emit('protocol', { sessionId, method: 'Page.fileChooserOpened', params: { frameId, backendNodeId: 7, mode: 'selectSingle' } })
   opened('foreign'); assert.equal(f.page.chooser, null)
   opened('session', 'iframe')
-  await assert.rejects(f.upload({ ref: undefined, chooserId: f.page.chooser.id }), /child frame/)
+  assert.equal(f.page.chooser, null, 'A chooser from another frame is not adopted')
   opened('session')
   const chooserId = f.page.chooser.id
   assert.equal(Object.hasOwn(f.page.chooserObservation().fileChooser, 'backendNodeId'), false)

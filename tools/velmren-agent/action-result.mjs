@@ -1,6 +1,6 @@
 const deliveries = new Set(['not_delivered', 'delivery_uncertain', 'delivered_unverified', 'delivered_verified', 'unknown'])
-const types = new Set(['click', 'fill', 'select', 'press', 'handleDialog', 'uploadFiles', 'navigate'])
-const reasons = new Set(['not_dispatched', 'delivery_uncertain', 'verify_outcome', 'completed', 'state_changed', 'transport_unknown'])
+const types = new Set(['click', 'fill', 'select', 'press', 'setChecked', 'handleDialog', 'uploadFiles', 'navigate'])
+const reasons = new Set(['not_dispatched', 'delivery_uncertain', 'verify_outcome', 'completed', 'state_changed', 'transport_unknown', 'observation_unavailable'])
 const index = value => Number.isInteger(value) && value >= 0 && value < 20
 
 // Rebuild the public envelope; never forward arbitrary exception or input fields.
@@ -36,7 +36,7 @@ export function unknownActionResult() {
 export function actionResult(completed, failedIndex, results, delivery, reason) {
   return { completed, failedIndex, delivery, results,
     recovery: { retry: failedIndex !== null && delivery === 'not_delivered' && reason === 'not_dispatched' ? 'failed_action_only' : 'none',
-      observe: failedIndex !== null || delivery !== 'delivered_verified', reason } }
+      observe: failedIndex !== null || delivery !== 'delivered_verified' || reason === 'observation_unavailable', reason } }
 }
 
 export function sanitizeWaitResult(value) {

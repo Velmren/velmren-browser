@@ -11,6 +11,13 @@ children use `CreateNoWindow`; Node children use `windowsHide`.
 Signed installation verification has a separate 90-second deadline. Configure
 the MCP host startup timeout to include that deadline plus broker startup time.
 
+For Codex, include `supports_parallel_tool_calls = true` under
+`[mcp_servers.velmren]`. Its default is false, which serializes independent task
+calls in the host before they reach this server. `required = true` waits for the
+configured server to be ready before building the initial tool catalog. Keep
+the caller's chosen approval settings; parallel dispatch does not grant new
+permissions.
+
 For development, run:
 
 ```powershell
@@ -30,6 +37,11 @@ defaults of eight tasks and five simultaneous actions, and `false` for
 deduplicated, and override `allowWeb`. Missing policy files, changed identities,
 and brokers without policy/health metadata fail before client registration.
 Changes to a policy file do not change an already running broker's policy.
+Set `profileMode: "persistent"` for a dedicated agent profile whose cookies and
+site storage survive completed tasks and clean restarts. Tasks then share
+origin storage but retain separate ownership of their pages and control APIs.
+The profile's effective policy is bound before launch and incompatible reuse
+is rejected. The default `"isolated"` mode creates disposable task contexts.
 
 Each MCP startup registers `{label, policyIdentity, leaseMs: 30000}` with
 authenticated admin RPC `client_register`, expecting `{clientId, token,
@@ -61,6 +73,13 @@ lock when its process ends. A rare unrelated port collision causes a bounded
 startup failure, never termination of the other process. Startup defaults to
 60 seconds; allow additional time in the MCP host for installation verification
 and cold module imports.
+Each spawning client waits for its own helper to exit after reuse or complete
+an IPC handshake after registration. A healthy peer descriptor alone cannot
+leave a late startup helper behind. EOF during startup and the startup deadline
+cancel cooperatively: an in-progress owned launch is closed after it settles,
+while existing peer brokers remain running. Graceful cleanup can outlast the
+startup deadline. Protocol bytes received before readiness are bounded and
+buffered until the MCP transport takes over.
 
 A dead broker is recovered only if `managed-owner.json`, `broker.lock`, and any
 connection descriptor identify the same process and a PID probe confirms that

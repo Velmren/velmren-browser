@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { mkdir } from 'node:fs/promises'
+import { persistentBrowserArgs } from './profile-state.mjs'
 
 // The browser endpoint stays on inherited pipes; no browser-wide TCP port.
 export class BrowserPipe extends EventEmitter {
@@ -10,13 +11,13 @@ export class BrowserPipe extends EventEmitter {
   stderr = ''
   closed = false
 
-  static async launch({ executable, profile, args = [] }) {
+  static async launch({ executable, profile, args = [], profileMode = 'isolated' }) {
     await mkdir(profile, { recursive: true })
     const transport = new BrowserPipe()
     transport.process = spawn(executable, [
       `--user-data-dir=${profile}`, '--remote-debugging-pipe',
       '--no-startup-window', '--no-first-run', '--no-default-browser-check',
-      '--velmren-agent-mode', ...args,
+      '--velmren-agent-mode', ...(profileMode === 'persistent' ? persistentBrowserArgs(args) : args),
     ], { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'] })
     transport.process.stderr.on('data', chunk => {
       transport.stderr = (transport.stderr + chunk.toString()).slice(-8000)

@@ -24,6 +24,10 @@ PowerShell launcher resolves the installed version and starts a shared broker
 without an extension or a visible startup window. Each MCP connection gets a
 separate task owner. Disconnecting cancels that owner's remaining tasks; peers
 continue. The broker retires after its managed clients and tasks are gone.
+Set `profileMode: "persistent"` in the broker policy for a stable agent profile.
+Its sign-ins and site storage survive task completion and browser restarts.
+Tasks share that profile's origin storage while retaining separate page ownership.
+The default `"isolated"` mode remains available for disposable, independent sessions.
 
 ## Start locally
 
@@ -105,13 +109,15 @@ The equivalent TOML entry is:
 [mcp_servers.velmren]
 command = "node"
 args = ["E:/Astra/work/velmren-build/src/brave/tools/velmren-agent/mcp.mjs", "--state-dir", "E:/Astra/work/velmren-build/src/brave/tools/velmren-agent/.runtime", "--client", "codex"]
+supports_parallel_tool_calls = true
+required = true
 ```
 
 For a test session, pass the entry on the command line instead of editing
 `~/.codex/config.toml`:
 
 ```powershell
-codex -c 'mcp_servers.velmren.command="node"' -c 'mcp_servers.velmren.args=["E:/Astra/work/velmren-build/src/brave/tools/velmren-agent/mcp.mjs","--state-dir","E:/Astra/work/velmren-build/src/brave/tools/velmren-agent/.runtime","--client","codex"]'
+codex -c 'mcp_servers.velmren.command="node"' -c 'mcp_servers.velmren.args=["E:/Astra/work/velmren-build/src/brave/tools/velmren-agent/mcp.mjs","--state-dir","E:/Astra/work/velmren-build/src/brave/tools/velmren-agent/.runtime","--client","codex"]' -c 'mcp_servers.velmren.supports_parallel_tool_calls=true'
 ```
 
 This adds the Velmren entry only for that process. Other pre-existing Codex MCP
@@ -119,6 +125,11 @@ entries are unaffected. Use `/mcp` to inspect the connection. The stdio
 `command`/`args` format is documented in the
 [official MCP configuration guide](https://learn.chatgpt.com/docs/extend/mcp#stdio-servers).
 The installed CLI's `codex --help` describes process-only `-c` overrides.
+Codex defaults `supports_parallel_tool_calls` to false. Without the explicit
+setting it queues calls before they reach Velmren, even for independent tasks.
+Velmren accepts concurrent calls through one connection, orders operations inside
+each task, and limits simultaneous actions across tasks. See the
+[Codex configuration reference](https://developers.openai.com/codex/config-reference/).
 
 For a noninteractive test whose local form actions the user has authorized,
 add `-c 'mcp_servers.velmren.default_tools_approval_mode="approve"'` to that
@@ -173,44 +184,75 @@ model selection, approvals, or other tools.
 |---|---|---|
 | `velmren_create_task` | `task_create` | `url`, optional `label` |
 | `velmren_list_tasks` | `task_list` | `{}` |
-| `velmren_observe` | `task_observe` | `taskId` |
+| `velmren_observe` | `task_observe` | `taskId`, optional `query`, `offset`, `limit`, `textOffset`, `textLimit` |
 | `velmren_act` | `task_act` | `taskId`, `observationId`, `actions` |
 | `velmren_upload_files` | `task_upload_files` | `taskId`, `observationId`, `files`, exactly one `ref` or `chooserId`, optional `pageId` |
 | `velmren_navigate` | `task_navigate` | `taskId`, `url` |
 | `velmren_wait` | `task_wait` | `taskId`, exactly one `text` or `predicate`, optional `timeoutMs` (1–15000) |
 | `velmren_screenshot` | `task_screenshot` | `taskId` |
 | `velmren_list_pages` | `task_list_pages` | `taskId` |
+| `velmren_list_frames` | `task_list_frames` | `taskId`, optional `pageId` |
+| `velmren_list_options` | `task_list_options` | `taskId`, `observationId`, select `ref`, optional `query`, `offset`, `limit` |
 | `velmren_select_page` | `task_select_page` | `taskId`, `pageId` |
 | `velmren_close_page` | `task_close_page` | `taskId`, `pageId` |
 | `velmren_handle_dialog` | `task_handle_dialog` | `taskId`, `accept`, optional `pageId`, `promptText` |
-| `velmren_request_human` | `task_request_human` | `taskId`, `reason` |
+| `velmren_request_human` | `task_request_human` | `taskId`, `reason`, optional `pageId`, `showWindow` |
+| `velmren_resume` | `task_resume` | `taskId`, current `handoffId`, `userConfirmed: true` |
 | `velmren_finish` | `task_finish` | `taskId` |
 | `velmren_cancel` | `task_cancel` | `taskId` |
 
 Observe returns page text, `observationId`, and element refs. Use those refs in
 small action batches; after navigation, page changes, or a stale-observation
 error, observe again. Actions are `fill` (`ref`, `value`), `click` (`ref`),
-`select` (`ref`, exact option `value`), or `press` (`key`, optional `ref`). Empty
+`select` (`ref`, exact option `value`), `setChecked` (`ref`, boolean `checked`),
+or `press` (`key`, optional `ref`). Empty
 fill values clear a field. The adapter accepts at most 20 actions in a batch;
 the broker also applies its own checks.
 
 Observations include `complete`, `truncated`, `limits`, `counts`, and explicit
-main-document `coverage`. The limits are 150 elements, 10000 visible-text
-characters, 50 options per select, and bounded names/values. An observation can
-be complete for this scope while child frames and shadow roots remain excluded.
+frame `coverage`. A response includes at most 150 elements and 10000 visible-text
+characters. Use `query` to find controls by name, or follow
+`pagination.nextOffset` in a subsequent observation. For text, use
+`textPagination.nextOffset` as `textOffset`. Every observation replaces that
+frame's previous refs, including when changing the query or offset.
+Initial select previews contain at most 50 options and may shorten values.
+Use `list_options` to search labels/values or follow its `pagination.nextOffset`.
+This read preserves the observation ID and returns complete selectable values;
+never act on a value marked incomplete. A list larger than one response can be
+read to the end without increasing the response limits.
+Open shadow roots are included automatically. Closed shadow roots are excluded.
+Use `list_frames` to discover ordinary child forms, then pass their `frameId`
+to observe, act, wait, list_options or upload_files. Frame IDs and observations
+remain bound to the owning page and task; frame navigation invalidates old refs.
+The same network policy applies to main and child frames.
 Each element's `availableActions` comes from the action validator. `uploadFiles`
 means use the separate upload tool; it is not a batch action. Capabilities are
 an observation, not a guarantee that the element will remain usable.
+
+Native and ARIA controls report `checked` and `indeterminate` where applicable.
+`setChecked` leaves an already matching control unchanged and verifies the
+result after a required click. A selected native radio cannot be unset directly;
+select the intended alternative instead. Field metadata includes available
+constraints, validity flags and bounded validation/helper text. Password values
+remain redacted. These hints describe the field, not server acceptance.
+Native date and time fields support `fill` with canonical HTML values:
+`YYYY-MM-DD`, `HH:mm[:ss]`, `YYYY-MM-DDTHH:mm[:ss]`, `YYYY-MM`, or `YYYY-Www`,
+according to the input type. Invalid date values are rejected before mutation;
+display language does not change the supplied value format.
 
 Action results and failures carry `actionResult`: completed count, failed index,
 per-action delivery, and recovery guidance. `not_delivered` permits retrying
 only the failed action after any required fresh observation. Prior actions in
 the batch must not be replayed. `delivery_uncertain` and `unknown` never permit
 an automatic retry. A transport failure has `completed: null` because the client
-cannot infer what reached the browser. `delivered_verified` for fill/select
-means the retained element's value matched when read back; it does not verify
+cannot infer what reached the browser. `delivered_verified` for fill/select or
+setChecked means the retained element's value/state matched when read back; it does not verify
 that a site saved or accepted the form. Mismatches remain unverified. Password
 comparisons return a boolean result without exposing the password.
+If all actions were acknowledged but their final observation failed, the result
+preserves those deliveries and reports `observation_unavailable` with no stale
+refs. Observe the surviving selected page to verify the outcome; do not repeat
+a click merely because it closed its popup.
 
 For a state wait, use `predicate: {observationId, ref, state}` with `state` equal
 to `exists`, `enabled`, `visible`, or `value`; the latter also requires `value`.
@@ -222,7 +264,7 @@ mutations. Pausing, changing the document, or losing the session stops the wait.
 Observe, act, navigate, wait and screenshot accept an optional `pageId`;
 otherwise they use the task's selected page. Newly opened popups are selected
 automatically. Closing a popup returns to its opener. Every page still belongs
-to exactly one task and uses that task's isolated browser context. A dialog
+to exactly one task, even when tasks share the persistent agent profile. A dialog
 interrupts an action batch; inspect its message and accept or dismiss it
 explicitly. Dialog text is untrusted page content. Waiting on one task does not
 consume a global action slot or stop other tasks.
@@ -240,7 +282,9 @@ the page's ordinary manual file picker.
 ```powershell
 node cli.mjs --state-dir .runtime --client scripts task_observe '{"taskId":"TASK_ID"}'
 node cli.mjs --state-dir .runtime --client scripts task_act '{"taskId":"TASK_ID","observationId":"OBSERVATION_ID","actions":[{"type":"fill","ref":"ELEMENT_REF","value":"Test User"}]}'
-node cli.mjs --state-dir .runtime --client scripts task_request_human '{"taskId":"TASK_ID","reason":"Complete the login in this task, then choose Resume."}'
+node cli.mjs --state-dir .runtime --client scripts task_request_human '{"taskId":"TASK_ID","reason":"Complete sign-in in this window, then tell the agent you are done.","showWindow":true}'
+# Only after explicit user confirmation, use the current returned handoff.id:
+node cli.mjs --state-dir .runtime --client scripts task_resume '{"taskId":"TASK_ID","handoffId":"HANDOFF_ID","userConfirmed":true}'
 ```
 
 Replace the uppercase placeholders with values from this task's latest
@@ -274,6 +318,13 @@ refreshes every three seconds while the panel is visible, with a manual refresh
 button and explicit disconnected state. Filters, empty states, inline action
 errors, keyboard focus, and reduced-motion settings are supported.
 
+An agent can also request a visible manual step with
+`request_human(showWindow: true)`. The same page appears for sign-in, 2FA or QR
+scanning; automatic actions pause. After the user says the step is complete,
+`resume` hides the existing pages and returns control to the agent. It requires
+the current handoff ID and explicit confirmation; old handoffs cannot resume a
+new request. The operator can alternatively choose **Resume** in the panel.
+
 The visual system uses matte dark teal surfaces, a mint primary control, amber
 human-attention states, system fonts, and compact cards. It has no remote fonts,
 images, scripts, or framework dependency. Page-provided text is inserted with
@@ -287,37 +338,52 @@ receive no raw JavaScript, CDP, admin control, shutdown, or token-reading MCP
 tool. Page content remains untrusted data, including text that looks like
 instructions. Request human help for challenges or required decisions.
 
-Each task uses a separate temporary browser context, so personal browser
-cookies and saved passwords are not inherited. Showing a task preserves its
-document and its temporary context. Finishing or cancelling destroys that
-context; downloaded files remain in its task directory.
+Personal browser cookies and saved passwords are never inherited. In
+`profileMode: "isolated"`, each task has a temporary context that is disposed on
+finish/cancel. In `"persistent"`, tasks use the dedicated agent profile and share
+its cookies, localStorage, IndexedDB and worker registrations. Finish/cancel
+closes only the task's pages and preserves that storage. A first manual sign-in
+is needed; server expiry, logout and sessionStorage-only state still follow the
+website's behavior. Downloaded files remain in their owning task directory.
+The result's `profileMode` and `sharedProfile` make this distinction explicit.
+
+Persistent profiles are bound to their effective network policy. Reopening a
+profile under a different policy fails before the browser starts; choose a new
+agent state directory for a different policy. Persisted workers can start before
+JavaScript interception is attached, so this is not a promise that every startup
+request passes through the broker. The retained site CSP and immutable profile
+policy also apply; a machine-wide network firewall requires a different layer.
 
 Strict mode blocks workers, popups, plug-ins and off-policy connections through
 request interception and an additional response CSP. Web compatibility mode
 allows popup sign-in, workers and JavaScript dialogs while retaining site CSP
 and the configured origin policy. Cross-process frames receive the same origin
-restrictions, but element observations and actions still cover each page's main
-document only. Cross-frame form interaction and file selection remain
-limitations; shown pages still support ordinary manual interaction.
+restrictions. List frames and pass a returned `frameId` to observe or operate
+within an owned frame, including file selection. Open shadow roots are included
+in each frame's observation; closed shadow roots are not exposed.
+Frames with CSS transforms or zoom on the frame or its ancestors reject input
+before dispatch, because their transformed coordinates are not supported.
 The origin policy is browser request control, not a machine-wide network
 firewall. Pause stops future agent input; it does not suspend a website's own
 JavaScript or undo an action already dispatched.
 
 The API boundary is not an operating-system security sandbox: programs already
 running as the same OS user can read the descriptor file and local browser data.
-Protect the state directory accordingly. Stdio clients cannot show, resume, or
-take over each other's tasks through the exposed task API. Broker shutdown or
-restart is not a durable task-resume mechanism.
+Protect the state directory accordingly. Stdio clients can show and resume their
+own task for a human handoff; they cannot take over another client's task.
+Shared profile storage is not a hostile-site isolation boundary. Broker shutdown
+or restart preserves persistent profile data but not in-progress task execution.
 
 ## Files and verification
 
 | File | Role |
 |---|---|
 | `broker.mjs`, `runtime.mjs` | Local HTTP service, page ownership, browser lifecycle and policy |
-| `cdp.mjs`, `page.mjs` | Internal browser transport and page operations |
+| `cdp.mjs`, `page.mjs`, `frames.mjs` | Internal browser transport and owned page/frame operations |
+| `form-controls.mjs`, `document-observation.mjs` | Form state, validation, native values and paginated shadow-aware observations |
 | `client.mjs` | Descriptor loading, argument boundary, authenticated RPC |
 | `action-result.mjs`, `trace.mjs` | Delivery/error contracts and bounded metadata-only request diagnostics |
-| `mcp.mjs` | Fifteen task tools over the official MCP SDK stdio transport |
+| `mcp.mjs`, `handoff.mjs` | Eighteen task tools and explicit manual handoff over MCP |
 | `managed-*.mjs`, `policy-identity.mjs`, `Start-VelmrenMcp.ps1` | Shared broker startup, scoped leases and signed installation resolution |
 | `cli.mjs` | Script client and private dashboard-link command |
 | `public/` | Local operator dashboard |
