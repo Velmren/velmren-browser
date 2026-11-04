@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
-import { AgentBroker, originAllowed } from '../broker.mjs'
+import { AgentBroker, originAllowed, rpcErrorResponse } from '../broker.mjs'
 
 function fixture() {
   const browser=new EventEmitter()
@@ -9,9 +9,9 @@ function fixture() {
   browser.calls=[]
   browser.send=async(method,params)=>{browser.calls.push({method,params});return method==='Target.getTargets'?{targetInfos:[]}:{}}
   browser.close=async()=>{}
-  const broker=new AgentBroker(browser,'unused',{maxActiveActions:2})
+  const broker=new AgentBroker(browser,'unused',{maxActiveActions:2},{trace:null})
   let inputs=0
-  const page={sessionId:'s1',observation:null,send:async()=>{},dispose(){},observe:async()=>({text:'fixture',observationId:'obs'}),act:async(_id,_actions,active)=>{if(active())inputs++;return {inputs}}}
+  const page={sessionId:'s1',observation:null,send:async()=>{},setFileChooserInterception:async()=>{},dispose(){},observe:async()=>({text:'fixture',observationId:'obs'}),act:async(_id,_actions,active)=>{if(active())inputs++;return {inputs}}}
   const task={taskId:'task1',targetId:'target1',contextId:'context1',owner:'codex',state:'agent-active',label:'fixture',url:'http://127.0.0.1/',createdAt:new Date().toISOString(),downloads:[],blockedOrigins:[],queue:Promise.resolve(),page}
   broker.tasks.set(task.taskId,task)
   return {browser,broker,task,page,get inputs(){return inputs}}
@@ -114,4 +114,51 @@ test('closing a task disposes its context and excludes further actions',async()=
   assert.deepEqual(browser.calls.map(call=>call.method),['Target.closeTarget','Target.getTargets','Target.disposeBrowserContext'])
   assert.deepEqual(browser.calls.at(-1),{method:'Target.disposeBrowserContext',params:{browserContextId:'context1'}})
   await assert.rejects(broker.rpc('codex','task_observe',{taskId:'task1'}),/already ended/)
+})
+
+test('HTTP error envelope forwards only the structured action whitelist',()=>{
+  const error=Object.assign(new Error('Action failed'),{code:'STALE_OBSERVATION',token:'secret',actionResult:{
+    completed:1,failedIndex:1,delivery:'not_delivered',
+    results:[{index:0,type:'fill',ref:'e1',delivery:'delivered_verified',value:'secret',verification:{scope:'element',status:'matched',actual:'secret'}}],
+    recovery:{retry:'failed_action_only',observe:true,reason:'not_dispatched',prompt:'secret'},args:{password:'secret'}
+  }})
+  assert.deepEqual(rpcErrorResponse(error),{ok:false,error:'Action failed',code:'STALE_OBSERVATION',actionResult:{
+    completed:1,failedIndex:1,delivery:'not_delivered',
+    results:[{index:0,type:'fill',ref:'e1',delivery:'delivered_verified',verification:{scope:'element',status:'matched'}}],
+    recovery:{retry:'failed_action_only',observe:true,reason:'not_dispatched'}
+  }})
+  error.actionResult.delivery='secret'
+  assert.equal(rpcErrorResponse(error).actionResult,undefined)
+})
+
+test('broker distinguishes pre-dispatch rejection from an unclassified dispatched mutation failure',async()=>{
+  const f=fixture(), args={taskId:'task1',observationId:'obs',actions:[{type:'click',ref:'e1'}]}
+  await assert.rejects(f.broker.rpc('claude','task_act',args),error=>{
+    assert.equal(error.actionResult.delivery,'not_delivered')
+    assert.equal(error.actionResult.completed,0)
+    return true
+  })
+  await assert.rejects(f.broker.rpc('codex','task_act',{...args,actions:[]}),error=>{
+    assert.equal(error.actionResult.delivery,'not_delivered')
+    assert.equal(error.actionResult.recovery.retry,'none')
+    return true
+  })
+  f.page.act=async()=>{throw new Error('Interrupted after input dispatch')}
+  await assert.rejects(f.broker.rpc('codex','task_act',args),error=>{
+    assert.equal(error.actionResult.delivery,'unknown')
+    assert.equal(error.actionResult.completed,null)
+    assert.equal(error.actionResult.recovery.retry,'none')
+    return true
+  })
+})
+
+test('HTTP wait failure keeps bounded state evidence without actual values',()=>{
+  const error=Object.assign(new Error('Wait expired'),{waitResult:{
+    matched:false,elapsedMs:20,pageId:'page1',lastObserved:{state:'value',exists:true,valueMatches:false,value:'secret'},text:'secret'
+  }})
+  assert.deepEqual(rpcErrorResponse(error).waitResult,{
+    matched:false,elapsedMs:20,pageId:'page1',lastObserved:{state:'value',exists:true,valueMatches:false}
+  })
+  error.waitResult.elapsedMs=Infinity
+  assert.equal(rpcErrorResponse(error).waitResult,undefined)
 })

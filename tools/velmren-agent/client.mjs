@@ -1,17 +1,23 @@
 import { readFile } from 'node:fs/promises'
-import { resolve } from 'node:path'
+import { resolve, isAbsolute } from 'node:path'
+import { sanitizeActionResult, sanitizeWaitResult, unknownActionResult } from './action-result.mjs'
 
 export const CLIENTS = ['codex', 'claude', 'scripts']
 export const METHODS = [
   'task_create', 'task_list', 'task_observe', 'task_act', 'task_navigate',
-  'task_wait', 'task_screenshot', 'task_request_human', 'task_finish', 'task_cancel'
+  'task_wait', 'task_screenshot', 'task_request_human', 'task_finish', 'task_cancel', 'task_upload_files',
+  'task_list_pages', 'task_select_page', 'task_close_page', 'task_handle_dialog', 'client_release', 'client_heartbeat'
 ]
 
 export class BrokerError extends Error {
-  constructor(message, code = 'BROKER_ERROR') {
+  constructor(message, code = 'BROKER_ERROR', result, waitResult) {
     super(message)
     this.name = 'BrokerError'
     this.code = code
+    const clean = sanitizeActionResult(result)
+    if (clean) this.actionResult = clean
+    const cleanWait = sanitizeWaitResult(waitResult)
+    if (cleanWait) this.waitResult = cleanWait
   }
 }
 
@@ -73,14 +79,41 @@ function string(value, name, max = 65536, allowEmpty = false) {
 
 export function validateArguments(method, args) {
   const keys = {
-    task_create: ['url', 'label'], task_list: [], task_observe: ['taskId'],
-    task_act: ['taskId', 'observationId', 'actions'], task_navigate: ['taskId', 'url'],
-    task_wait: ['taskId', 'text', 'timeoutMs'], task_screenshot: ['taskId'],
-    task_request_human: ['taskId', 'reason'], task_finish: ['taskId'], task_cancel: ['taskId']
+    task_create: ['url', 'label'], task_list: [], task_observe: ['taskId', 'pageId'],
+    task_act: ['taskId', 'pageId', 'observationId', 'actions'], task_navigate: ['taskId', 'pageId', 'url'],
+    task_wait: ['taskId', 'pageId', 'text', 'predicate', 'timeoutMs'], task_screenshot: ['taskId', 'pageId'],
+    task_request_human: ['taskId', 'reason'], task_finish: ['taskId'], task_cancel: ['taskId'],
+    task_list_pages: ['taskId'], task_select_page: ['taskId', 'pageId'], task_close_page: ['taskId', 'pageId'],
+    task_handle_dialog: ['taskId', 'pageId', 'accept', 'promptText'], client_release: [], client_heartbeat: [],
+    task_upload_files: ['taskId', 'pageId', 'observationId', 'ref', 'chooserId', 'files']
   }
   if (!METHODS.includes(method)) throw new BrokerError('Unsupported task method', 'UNKNOWN_METHOD')
   object(args, keys[method])
   if (keys[method].includes('taskId')) string(args.taskId, 'taskId', 256)
+  if (args.pageId !== undefined || ['task_select_page', 'task_close_page'].includes(method)) string(args.pageId, 'pageId', 256)
+  const validateDialog = value => {
+    if (typeof value.accept !== 'boolean') throw new BrokerError('accept must be boolean', 'INVALID_ARGUMENTS')
+    if (value.promptText !== undefined) string(value.promptText, 'promptText', 65536, true)
+  }
+  if (method === 'task_handle_dialog') validateDialog(args)
+  if (method === 'task_upload_files') {
+    string(args.observationId, 'observationId', 256)
+    if ((args.ref === undefined) === (args.chooserId === undefined)) throw new BrokerError('Provide exactly one input ref or chooserId', 'INVALID_ARGUMENTS')
+    if (args.ref !== undefined) string(args.ref, 'ref', 256)
+    if (args.chooserId !== undefined) string(args.chooserId, 'chooserId', 256)
+    if (!Array.isArray(args.files) || args.files.length < 1 || args.files.length > 10) throw new BrokerError('files must contain between 1 and 10 absolute local file paths', 'INVALID_ARGUMENTS')
+    for (const [index, file] of args.files.entries()) {
+      string(file, `files[${index}]`, 4096)
+      const parts = file.replace(/\\/g, '/').split('/')
+      // Exclude UNC/device paths, alternate streams, wildcards, and Windows device names.
+      if (!isAbsolute(file) || /^[\\/]{2}/.test(file) || /[\x00-\x1f*?]/.test(file) ||
+          file.replace(/^[A-Za-z]:/, '').includes(':') ||
+          (process.platform === 'win32' && !/^[A-Za-z]:[\\/]/.test(file)) ||
+          parts.some(part => /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(part) || /[. ]$/.test(part))) {
+        throw new BrokerError(`files[${index}] must be an absolute local file path without wildcards, device names, or network paths`, 'INVALID_ARGUMENTS')
+      }
+    }
+  }
   if (keys[method].includes('url')) {
     string(args.url, 'url', 8192)
     let url
@@ -92,7 +125,16 @@ export function validateArguments(method, args) {
   if (args.label !== undefined) string(args.label, 'label', 200)
   if (method === 'task_request_human') string(args.reason, 'reason', 4000)
   if (method === 'task_wait') {
-    string(args.text, 'text', 4000)
+    if ((args.text === undefined) === (args.predicate === undefined)) throw new BrokerError('Provide exactly one text or predicate', 'INVALID_ARGUMENTS')
+    if (args.text !== undefined) string(args.text, 'text', 4000)
+    if (args.predicate !== undefined) {
+      object(args.predicate, ['observationId', 'ref', 'state', 'value'], 'predicate')
+      string(args.predicate.observationId, 'predicate.observationId', 256)
+      string(args.predicate.ref, 'predicate.ref', 256)
+      if (!['exists', 'enabled', 'visible', 'value'].includes(args.predicate.state)) throw new BrokerError('Unsupported predicate state', 'INVALID_ARGUMENTS')
+      if (args.predicate.state === 'value') string(args.predicate.value, 'predicate.value', 65536, true)
+      else if (args.predicate.value !== undefined) throw new BrokerError('Only a value predicate accepts value', 'INVALID_ARGUMENTS')
+    }
     if (args.timeoutMs !== undefined && (!Number.isInteger(args.timeoutMs) || args.timeoutMs < 1 || args.timeoutMs > 15000)) {
       throw new BrokerError('timeoutMs must be an integer from 1 to 15000', 'INVALID_ARGUMENTS')
     }
@@ -103,6 +145,11 @@ export function validateArguments(method, args) {
       throw new BrokerError('actions must contain between 1 and 20 actions', 'INVALID_ARGUMENTS')
     }
     for (const action of args.actions) {
+      if (action?.type === 'handleDialog') {
+        object(action, ['type', 'accept', 'promptText'], 'action')
+        validateDialog(action)
+        continue
+      }
       object(action, ['type', 'ref', 'value', 'key'], 'action')
       if (!['click', 'fill', 'select', 'press'].includes(action.type)) throw new BrokerError('Unsupported action type', 'INVALID_ARGUMENTS')
       if (action.type !== 'press' || action.ref !== undefined) string(action.ref, 'ref', 256)
@@ -118,6 +165,7 @@ export function createClient(connection) {
   return {
     async call(method, args = {}, { signal } = {}) {
       validateArguments(method, args)
+      const unknown = () => ['task_create', 'task_act', 'task_navigate', 'task_upload_files', 'task_handle_dialog', 'task_select_page', 'task_close_page', 'task_request_human', 'task_finish', 'task_cancel'].includes(method) ? unknownActionResult() : undefined
       let response
       try {
         response = await fetch(`${connection.endpoint}/rpc`, {
@@ -131,17 +179,18 @@ export function createClient(connection) {
           error.name === 'AbortError' || error.name === 'TimeoutError'
             ? 'Broker request interrupted. Observe the task before retrying an action.'
             : 'Cannot reach the local broker. Check that it is running with this state directory.',
-          'CONNECTION_ERROR'
+          'CONNECTION_ERROR', unknown()
         )
       }
       let payload
       try { payload = await response.json() } catch {
-        throw new BrokerError(`Broker returned a non-JSON response (HTTP ${response.status})`, 'INVALID_RESPONSE')
+        throw new BrokerError(`Broker returned a non-JSON response (HTTP ${response.status})`, 'INVALID_RESPONSE', unknown())
       }
       if (!response.ok || payload?.ok !== true) {
         throw new BrokerError(typeof payload?.error === 'string' ? payload.error : `Broker request failed (HTTP ${response.status})`,
-          typeof payload?.code === 'string' ? payload.code : 'BROKER_ERROR')
+          typeof payload?.code === 'string' ? payload.code : 'BROKER_ERROR', sanitizeActionResult(payload?.actionResult) ?? unknown(), payload?.waitResult)
       }
+      if (!Object.hasOwn(payload, 'result')) throw new BrokerError('Broker response is missing its result', 'INVALID_RESPONSE', unknown())
       return payload.result
     }
   }

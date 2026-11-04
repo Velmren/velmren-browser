@@ -57,7 +57,7 @@ foreach ($path in @(
   'browser/VkLayer_khronos_validation.dll', 'browser/VkICD_mock_icd.dll', 'browser/dbghelp.dll', 'browser/dbgcore.dll', 'browser/msdia140.dll', 'browser/symsrv.dll', 'browser/test_trace_processor.dll',
   'browser/dxcompiler.dll', 'browser/dxil.dll', 'browser/vulkan-1.dll', 'browser/vk_swiftshader.dll',
   'browser/chrome.exe', 'browser/test.exe', 'browser/debug.pdb', 'browser/ignored.obj',
-  'agent/broker.mjs', 'agent/package.json', 'agent/README.md', 'agent/public/index.html',
+  'agent/broker.mjs', 'agent/package.json', 'agent/README.md', 'agent/Start-VelmrenMcp.ps1', 'agent/public/index.html',
   'agent/node_modules/fixture/index.js', 'agent/node_modules/fixture/LICENSE', 'runtime/node.exe', 'runtime/LICENSE'
 )) { Write-Fixture $path }
 $browser = Join-Path $work 'browser'
@@ -112,6 +112,7 @@ try {
     $checks.Add('every signed file matches staged and archived bytes')
   } finally { $archive.Dispose() }
   $paths = @($manifest.files.path)
+  Assert ($paths -ccontains 'agent/Start-VelmrenMcp.ps1') 'signed inventory includes managed MCP launcher'
   foreach ($required in 'browser/156.1.98.0.manifest', 'browser/chrome.dll', 'browser/locales/en-US.pak', 'browser/vk_swiftshader_icd.json', 'runtime/node.exe', 'agent/broker.mjs', 'agent/public/index.html', 'agent/node_modules/fixture/index.js', 'agent/node_modules/fixture/LICENSE', 'licenses/Brave-MPL-2.0.txt', 'licenses/Chromium-LICENSE.txt', 'licenses/Node-LICENSE.txt', 'delivery/Velmren.exe', 'delivery/VelmrenMaintenance.exe') {
     Assert ($paths -ccontains $required) "signed inventory includes $required"
   }

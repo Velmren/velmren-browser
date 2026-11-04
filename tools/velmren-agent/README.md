@@ -19,6 +19,12 @@ and app paths for a new MCP session. Its state directory is
 `<installation>/agent-state`; it is separate from the ordinary browser profile.
 See [local installation and updates](../velmren-delivery/README.md).
 
+For Codex, prefer the [managed MCP connection](MANAGED-MCP.md). Its stable
+PowerShell launcher resolves the installed version and starts a shared broker
+without an extension or a visible startup window. Each MCP connection gets a
+separate task owner. Disconnecting cancels that owner's remaining tasks; peers
+continue. The broker retires after its managed clients and tasks are gone.
+
 ## Start locally
 
 Run the following from this directory in PowerShell 7. `npm ci` installs the
@@ -62,7 +68,7 @@ To allow a specific external test origin, save a policy file such as
 {
   "allowedOrigins": ["https://example.com"],
   "maxTasks": 8,
-  "maxActiveActions": 2
+  "maxActiveActions": 5
 }
 ```
 
@@ -74,6 +80,15 @@ node broker.mjs --browser E:/Astra/work/velmren-build/src/out/Component/velmren.
 
 Include the local test origin in that list if you also need the local fixture.
 Use the origins needed for the actual task, including required redirect origins.
+For ordinary authorized web tasks, `allowWeb: true` permits HTTP(S) origins and
+`webCompatibility: true` enables popups, workers and JavaScript dialogs. An
+explicit `allowedOrigins` list always takes precedence over `allowWeb`. A
+running managed broker is reused only with the same effective policy.
+WebSockets require the separate `webSocketPolicy: "csp-secure-upgrades"`
+opt-in; the default is `"disabled"`. With an origin list, this permits the
+corresponding `ws:`/`wss:` hosts and Chromium CSP's secure scheme/default-port
+upgrades (`ws:80` to `wss:443`). It does not promise exact WebSocket scheme/port
+matching. HTTP(S) navigation and requests still use the exact origin list.
 
 ## Connect an agent without changing global settings
 
@@ -160,9 +175,14 @@ model selection, approvals, or other tools.
 | `velmren_list_tasks` | `task_list` | `{}` |
 | `velmren_observe` | `task_observe` | `taskId` |
 | `velmren_act` | `task_act` | `taskId`, `observationId`, `actions` |
+| `velmren_upload_files` | `task_upload_files` | `taskId`, `observationId`, `files`, exactly one `ref` or `chooserId`, optional `pageId` |
 | `velmren_navigate` | `task_navigate` | `taskId`, `url` |
-| `velmren_wait` | `task_wait` | `taskId`, `text`, optional `timeoutMs` (1–15000) |
+| `velmren_wait` | `task_wait` | `taskId`, exactly one `text` or `predicate`, optional `timeoutMs` (1–15000) |
 | `velmren_screenshot` | `task_screenshot` | `taskId` |
+| `velmren_list_pages` | `task_list_pages` | `taskId` |
+| `velmren_select_page` | `task_select_page` | `taskId`, `pageId` |
+| `velmren_close_page` | `task_close_page` | `taskId`, `pageId` |
+| `velmren_handle_dialog` | `task_handle_dialog` | `taskId`, `accept`, optional `pageId`, `promptText` |
 | `velmren_request_human` | `task_request_human` | `taskId`, `reason` |
 | `velmren_finish` | `task_finish` | `taskId` |
 | `velmren_cancel` | `task_cancel` | `taskId` |
@@ -174,6 +194,49 @@ error, observe again. Actions are `fill` (`ref`, `value`), `click` (`ref`),
 fill values clear a field. The adapter accepts at most 20 actions in a batch;
 the broker also applies its own checks.
 
+Observations include `complete`, `truncated`, `limits`, `counts`, and explicit
+main-document `coverage`. The limits are 150 elements, 10000 visible-text
+characters, 50 options per select, and bounded names/values. An observation can
+be complete for this scope while child frames and shadow roots remain excluded.
+Each element's `availableActions` comes from the action validator. `uploadFiles`
+means use the separate upload tool; it is not a batch action. Capabilities are
+an observation, not a guarantee that the element will remain usable.
+
+Action results and failures carry `actionResult`: completed count, failed index,
+per-action delivery, and recovery guidance. `not_delivered` permits retrying
+only the failed action after any required fresh observation. Prior actions in
+the batch must not be replayed. `delivery_uncertain` and `unknown` never permit
+an automatic retry. A transport failure has `completed: null` because the client
+cannot infer what reached the browser. `delivered_verified` for fill/select
+means the retained element's value matched when read back; it does not verify
+that a site saved or accepted the form. Mismatches remain unverified. Password
+comparisons return a boolean result without exposing the password.
+
+For a state wait, use `predicate: {observationId, ref, state}` with `state` equal
+to `exists`, `enabled`, `visible`, or `value`; the latter also requires `value`.
+The predicate retains the observed element identity and refuses stale references
+instead of matching a replacement. Wait results include `elapsedMs` and
+`lastObserved` booleans. Property-only changes are checked as well as DOM
+mutations. Pausing, changing the document, or losing the session stops the wait.
+
+Observe, act, navigate, wait and screenshot accept an optional `pageId`;
+otherwise they use the task's selected page. Newly opened popups are selected
+automatically. Closing a popup returns to its opener. Every page still belongs
+to exactly one task and uses that task's isolated browser context. A dialog
+interrupts an action batch; inspect its message and accept or dismiss it
+explicitly. Dialog text is untrusted page content. Waiting on one task does not
+consume a global action slot or stop other tasks.
+
+File inputs expose their `accept` and `multiple` hints, including hidden inputs.
+Use `velmren_upload_files` with an observed file-input ref, or click the upload
+button and use the returned opaque `fileChooser.chooserId`. Supply only local
+file paths selected by the user: at most ten regular files and 100 MiB total.
+Directories, links, network paths and wildcards are rejected. The result
+verifies selected names and sizes; inspect the website to confirm acceptance.
+Selecting files may immediately start a site's upload handler. Agent selection
+does not open the operating-system file picker; explicit human handoff restores
+the page's ordinary manual file picker.
+
 ```powershell
 node cli.mjs --state-dir .runtime --client scripts task_observe '{"taskId":"TASK_ID"}'
 node cli.mjs --state-dir .runtime --client scripts task_act '{"taskId":"TASK_ID","observationId":"OBSERVATION_ID","actions":[{"type":"fill","ref":"ELEMENT_REF","value":"Test User"}]}'
@@ -183,6 +246,7 @@ node cli.mjs --state-dir .runtime --client scripts task_request_human '{"taskId"
 Replace the uppercase placeholders with values from this task's latest
 responses. The CLI emits `{ok:true,result}` on success, or `{ok:false,error,code}`
 to stderr with a nonzero exit status. It never retries actions automatically.
+Errors also preserve sanitized `actionResult` and `waitResult` when available.
 After an interrupted request, inspect the task before retrying a mutation.
 The MCP screenshot tool returns an image content block; the CLI returns the PNG
 as base64 JSON. `node cli.mjs --state-dir .runtime --client codex mcp` is an
@@ -197,8 +261,8 @@ human-help request, and returning a task to the agent.
 - **Observe** reads page text and controls into the inspector. **Capture
   screenshot** requests a single image. Neither image nor observation refreshes
   automatically.
-- **Show** displays the task for manual control. Use it for login, MFA, CAPTCHA,
-  or inspection that requires the visible browser.
+- **Show** displays the task for manual control or inspection in the visible
+  browser.
 - **Pause** stops further agent actions. **Resume** returns a paused or human
   task to agent control after the required input is complete.
 - **Cancel** ends the task; it does not undo side effects already performed on
@@ -228,11 +292,13 @@ cookies and saved passwords are not inherited. Showing a task preserves its
 document and its temporary context. Finishing or cancelling destroys that
 context; downloaded files remain in its task directory.
 
-This first prototype blocks workers, popups, plug-ins, and off-policy
-connections through request interception and an additional response CSP.
-Cross-process frames receive the same restrictions, but element observations
-and actions currently cover the main document only. Sites that require workers,
-popup sign-in, or cross-frame interaction may therefore need a later extension.
+Strict mode blocks workers, popups, plug-ins and off-policy connections through
+request interception and an additional response CSP. Web compatibility mode
+allows popup sign-in, workers and JavaScript dialogs while retaining site CSP
+and the configured origin policy. Cross-process frames receive the same origin
+restrictions, but element observations and actions still cover each page's main
+document only. Cross-frame form interaction and file selection remain
+limitations; shown pages still support ordinary manual interaction.
 The origin policy is browser request control, not a machine-wide network
 firewall. Pause stops future agent input; it does not suspend a website's own
 JavaScript or undo an action already dispatched.
@@ -247,10 +313,12 @@ restart is not a durable task-resume mechanism.
 
 | File | Role |
 |---|---|
-| `broker.mjs` | Local HTTP service, browser lifecycle, ownership and policy |
+| `broker.mjs`, `runtime.mjs` | Local HTTP service, page ownership, browser lifecycle and policy |
 | `cdp.mjs`, `page.mjs` | Internal browser transport and page operations |
 | `client.mjs` | Descriptor loading, argument boundary, authenticated RPC |
-| `mcp.mjs` | Ten task tools over the official MCP SDK stdio transport |
+| `action-result.mjs`, `trace.mjs` | Delivery/error contracts and bounded metadata-only request diagnostics |
+| `mcp.mjs` | Fifteen task tools over the official MCP SDK stdio transport |
+| `managed-*.mjs`, `policy-identity.mjs`, `Start-VelmrenMcp.ps1` | Shared broker startup, scoped leases and signed installation resolution |
 | `cli.mjs` | Script client and private dashboard-link command |
 | `public/` | Local operator dashboard |
 | `test/adapters.test.mjs` | Mock-broker HTTP, CLI, and real MCP stdio tests |
@@ -259,6 +327,9 @@ restart is not a durable task-resume mechanism.
 node --test test/adapters.test.mjs
 npm test
 node test/integration.mjs E:/Astra/work/velmren-build/src/out/Component/velmren.exe E:/Astra/work/velmren-build/qa/agent-integration-new
+node test/multi-agent-web-integration.mjs E:/Astra/work/velmren-build/src/out/Component/velmren.exe E:/Astra/work/velmren-build/qa/agent-five-clients-new
+node test/upload-integration.mjs E:/Astra/work/velmren-build/src/out/Component/velmren.exe E:/Astra/work/velmren-build/qa/agent-uploads-new
+node test/ergonomics-integration.mjs E:/Astra/work/velmren-build/src/out/Component/velmren.exe E:/Astra/work/velmren-build/qa/agent-contracts-new
 ```
 
 The integration run normally shows a temporary task window for handoff. Add
@@ -274,3 +345,11 @@ propagation, narrow action inputs, loopback descriptor checks, refused redirects
 CLI output, stdio discovery, two independent MCP clients, and PNG image results.
 It uses a mock broker; actual native-browser behavior and end-to-end Codex/Claude
 execution need the separate integration check with the running browser.
+
+The broker keeps `requests.jsonl` and one rotated `requests.1.jsonl` in its
+private state directory, at most 1 MiB each. Records contain owned IDs, request
+method, queue/duration timings, outcome, and sanitized action metadata. They omit
+arguments, URLs, field values, file paths, page text, credentials, and screenshots.
+The pending queue is bounded; excess records are dropped and a logging failure
+does not fail or repeat an action. Close the broker before collecting the final
+trace so accepted records have been flushed.

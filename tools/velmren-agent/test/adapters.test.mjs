@@ -9,6 +9,7 @@ import { promisify } from 'node:util'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { connectClient, createClient, dashboardUrl, parseOptions, readConnection, validateArguments } from '../client.mjs'
+import { unknownActionResult } from '../action-result.mjs'
 
 const run = promisify(execFile)
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -162,7 +163,7 @@ test('MCP stdio advertises bounded tools, carries observations/actions, and emit
   const fixture = await brokerFixture(t)
   const client = await mcpFixture(t, fixture.stateDir, 'codex')
   const listed = await client.listTools()
-  assert.equal(listed.tools.length, 10)
+  assert.equal(listed.tools.length, 15)
   assert.ok(listed.tools.every(tool => tool.name.startsWith('velmren_') && tool.inputSchema.additionalProperties === false))
   assert.ok(!listed.tools.some(tool => /evaluate|execute|cdp|control|shutdown/.test(tool.name)))
   const call = (name, args) => client.callTool({ name, arguments: args })
@@ -204,4 +205,73 @@ test('panel keeps tokens out of storage and treats page data as text', async () 
   assert.ok(!/innerHTML|outerHTML|insertAdjacentHTML|localStorage|sessionStorage|document\.cookie/.test(app))
   assert.ok(!/src=["']https?:|href=["']https?:/.test(html))
   assert.ok(app.includes("$('screenshot').addEventListener('click'"))
+})
+
+test('predicate wait arguments enforce exactly one wait kind and state-specific fields', () => {
+  const predicate = { observationId: 'o', ref: 'e1', state: 'value', value: '' }
+  assert.doesNotThrow(() => validateArguments('task_wait', { taskId: 't', predicate, timeoutMs: 15000 }))
+  for (const args of [
+    {}, { text: 'done', predicate }, { predicate: { ...predicate, selector: '#field' } },
+    { predicate: { ...predicate, state: 'visible' } }, { predicate: { ...predicate, state: 'script' } },
+    { predicate: { observationId: 'o', ref: 'e1', state: 'value' } },
+    { predicate: { ref: 'e1', state: 'exists' } }, { predicate, timeoutMs: 0 }
+  ]) assert.throws(() => validateArguments('task_wait', { taskId: 't', ...args }), { code: 'INVALID_ARGUMENTS' })
+})
+
+test('HTTP, CLI and MCP preserve structured partial failure without forwarding extra secret fields', { timeout: 15000 }, async t => {
+  const actionResult = { completed: 1, failedIndex: 1, delivery: 'not_delivered',
+    results: [{ index: 0, type: 'fill', ref: 'e1', delivery: 'delivered_verified', verification: { scope: 'element', status: 'matched' } },
+      { index: 1, type: 'click', ref: 'e2', delivery: 'not_delivered' }],
+    recovery: { retry: 'failed_action_only', observe: true, reason: 'not_dispatched' } }
+  const fixture = await brokerFixture(t, (req, res) => {
+    res.writeHead(409, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ ok: false, error: 'Element is disabled', code: 'ACTION_FAILED', actionResult: { ...actionResult, value: 'secret-value' } }))
+  })
+  const args = { taskId: 't', observationId: 'o', actions: [{ type: 'click', ref: 'e1' }] }
+  const http = await connectClient(fixture.stateDir)
+  await assert.rejects(http.call('task_act', args), error => {
+    assert.deepEqual(error.actionResult, actionResult); assert.equal(JSON.stringify(error).includes('secret-value'), false); return true
+  })
+  const mcp = await mcpFixture(t, fixture.stateDir, 'codex')
+  const result = await mcp.callTool({ name: 'velmren_act', arguments: args })
+  assert.equal(result.isError, true); assert.deepEqual(JSON.parse(result.content[0].text).actionResult, actionResult)
+  const tools = await mcp.listTools(), wait = tools.tools.find(tool => tool.name === 'velmren_wait')
+  assert.equal(tools.tools.length, 15); assert.ok(wait.inputSchema.properties.predicate); assert.equal(wait.annotations.readOnlyHint, true)
+  assert.equal(JSON.stringify(result).includes('secret-value'), false)
+  await assert.rejects(run(process.execPath, [resolve(root, 'cli.mjs'), '--state-dir', fixture.stateDir, 'task_act', JSON.stringify(args)]), error => {
+    const value = JSON.parse(error.stderr.trim())
+    assert.deepEqual(value.actionResult, actionResult)
+    assert.equal(error.stderr.includes('secret-value'), false)
+    return true
+  })
+})
+
+test('client transport interruption and malformed mutation responses are unknown and never replayed', async t => {
+  const args = { taskId: 't', observationId: 'o', actions: [{ type: 'fill', ref: 'e1', value: 'secret-value' }] }
+  const fixture = await brokerFixture(t, (req, res) => { res.writeHead(503); res.end('offline') })
+  const client = await connectClient(fixture.stateDir)
+  await assert.rejects(client.call('task_act', args), error => {
+    assert.deepEqual(error.actionResult, unknownActionResult()); return true
+  })
+  assert.equal(fixture.requests.length, 1)
+  const controller = new AbortController(); controller.abort()
+  await assert.rejects(client.call('task_act', args, { signal: controller.signal }), error => {
+    assert.deepEqual(error.actionResult, unknownActionResult()); assert.equal(JSON.stringify(error).includes('secret-value'), false); return true
+  })
+  assert.equal(fixture.requests.length, 1)
+})
+
+test('wait diagnostics survive HTTP and MCP errors as bounded booleans only', { timeout: 15000 }, async t => {
+  const waitResult = { matched: false, elapsedMs: 123, pageId: 'page', lastObserved: { state: 'value', exists: true, valueMatches: false } }
+  const fixture = await brokerFixture(t, (req, res) => {
+    res.writeHead(409, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ ok: false, error: 'Element reference is stale; observe again', waitResult: { ...waitResult, value: 'private', lastObserved: { ...waitResult.lastObserved, actualValue: 'private' } } }))
+  })
+  const args = { taskId: 't', predicate: { observationId: 'o', ref: 'e1', state: 'value', value: 'private' } }
+  const http = await connectClient(fixture.stateDir)
+  await assert.rejects(http.call('task_wait', args), error => { assert.deepEqual(error.waitResult, waitResult); return true })
+  const mcp = await mcpFixture(t, fixture.stateDir, 'codex')
+  const result = await mcp.callTool({ name: 'velmren_wait', arguments: args })
+  assert.equal(result.isError, true); assert.deepEqual(JSON.parse(result.content[0].text).waitResult, waitResult)
+  assert.equal(JSON.stringify(result).includes('private'), false)
 })

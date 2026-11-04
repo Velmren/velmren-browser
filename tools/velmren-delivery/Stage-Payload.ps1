@@ -79,7 +79,7 @@ foreach ($name in 'resources', 'MEIPreload', 'IwaKeyDistribution', 'hyphen-data'
   if (Test-Path -LiteralPath $source) { Copy-TreeSafe $source (Join-Path $browser $name) }
 }
 foreach ($file in Get-ChildItem -LiteralPath $AgentDirectory -File) {
-  if ($file.Extension -in '.mjs', '.json', '.md') { Copy-TreeSafe $file.FullName (Join-Path $agent $file.Name) }
+  if ($file.Extension -in '.mjs', '.json', '.md', '.ps1') { Copy-TreeSafe $file.FullName (Join-Path $agent $file.Name) }
 }
 Copy-TreeSafe (Join-Path $AgentDirectory 'public') (Join-Path $agent 'public')
 $modules = Join-Path $AgentDirectory 'node_modules'

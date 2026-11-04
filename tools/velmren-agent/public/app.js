@@ -59,6 +59,18 @@ function makeCard(taskId) {
   const url = element('p', 'url')
   const reason = element('p', 'human-reason')
   const blocked = element('p', 'blocked-origins')
+  const pageLabel = element('label', 'filter-label', 'Page ')
+  const pageSelect = element('select')
+  pageSelect.id = `pages-${taskId}`
+  pageLabel.htmlFor = pageSelect.id
+  pageLabel.append(pageSelect)
+  pageSelect.addEventListener('change', async () => {
+    if (busy.has(taskId)) return
+    busy.add(taskId); pageSelect.disabled = true
+    try { renderObservation(taskId, await rpc('task_select_page', { taskId, pageId: pageSelect.value })) }
+    catch (failure) { showError(error, failure.message) }
+    finally { busy.delete(taskId); await refresh() }
+  })
   const actions = element('div', 'task-actions')
   const buttons = {
     observe: taskButton('Observe', 'observe', taskId, 'observe'),
@@ -73,9 +85,9 @@ function makeCard(taskId) {
   const error = element('p', 'inline-error')
   error.setAttribute('role', 'alert')
   error.hidden = true
-  card.append(top, meta, url, reason, blocked, actions, error)
+  card.append(top, meta, url, pageLabel, reason, blocked, actions, error)
   $('tasks').append(card)
-  return { card, title, badge, owner, id, url, reason, blocked, buttons, error }
+  return { card, title, badge, owner, id, url, pageLabel, pageSelect, reason, blocked, buttons, error }
 }
 
 function updateCard(task) {
@@ -95,6 +107,19 @@ function updateCard(task) {
   view.blocked.textContent = task.blockedOrigins?.length ? `Blocked by policy: ${task.blockedOrigins.join(', ')}` : ''
   view.blocked.hidden = !view.blocked.textContent
   const isBusy = busy.has(id)
+  const pages = task.pages ?? []
+  const pageSignature = JSON.stringify(pages.map(page => [page.pageId, page.title, page.url]))
+  if (view.pageSelect.dataset.pages !== pageSignature) {
+    view.pageSelect.replaceChildren(...pages.map((page, index) => {
+      const option = element('option', '', `${index + 1}. ${page.title || page.url || 'New page'}`)
+      option.value = page.pageId; option.title = page.url || ''
+      return option
+    }))
+    view.pageSelect.dataset.pages = pageSignature
+  }
+  view.pageSelect.value = task.selectedPageId || ''
+  view.pageSelect.disabled = isBusy || terminal(task.state)
+  view.pageLabel.hidden = pages.length < 2
   view.buttons.observe.disabled = isBusy || terminal(task.state)
   view.buttons.show.disabled = isBusy || terminal(task.state)
   view.buttons.pause.disabled = isBusy || task.state !== 'agent-active'
@@ -186,6 +211,7 @@ function renderObservation(taskId, observation) {
   $('inspection-url').textContent = observation.url || ''
   $('inspection-stamp').textContent = `Observed ${new Date().toLocaleTimeString()} · This is a snapshot of the page`
   $('page-text').textContent = observation.text || 'No visible page text.'
+  renderDialog(taskId, observation)
   $('elements').replaceChildren()
   for (const item of observation.elements ?? []) {
     const row = element('li')
@@ -199,6 +225,45 @@ function renderObservation(taskId, observation) {
   $('downloads-details').hidden = !observation.downloads?.length
   for (const task of tasks) updateCard(task)
   announce(`Observed ${task?.label || 'task'}. Page inspector updated.`)
+}
+
+const dialogPanel = element('fieldset')
+dialogPanel.hidden = true
+dialogPanel.append(element('legend', '', 'Page dialog'))
+const dialogMessage = element('pre', 'page-text')
+const promptLabel = element('label', '', 'Prompt response ')
+const promptInput = element('input', 'button')
+promptInput.id = 'page-prompt-response'; promptInput.type = 'text'; promptInput.autocomplete = 'off'
+promptLabel.htmlFor = promptInput.id; promptLabel.append(promptInput)
+const dialogActions = element('div', 'inspector-actions')
+let dialogTaskId, dialogPageId
+const dialogButtons = [true, false].map(accept => {
+  const button = element('button', 'button', accept ? 'Accept dialog' : 'Dismiss dialog')
+  button.type = 'button'
+  button.addEventListener('click', async () => {
+    if (!dialogTaskId || busy.has(dialogTaskId)) return
+    const taskId = dialogTaskId, pageId = dialogPageId
+    busy.add(taskId); dialogButtons.forEach(button => { button.disabled = true })
+    try {
+      const result = await rpc('task_handle_dialog', { taskId, pageId, accept, ...(promptLabel.hidden ? {} : { promptText: promptInput.value }) })
+      renderObservation(taskId, result)
+      announce(accept ? 'Page dialog accepted.' : 'Page dialog dismissed.')
+    } catch (error) { showError($('inspection-error'), error.message) }
+    finally { busy.delete(taskId); dialogButtons.forEach(button => { button.disabled = false }); await refresh() }
+  })
+  return button
+})
+dialogActions.append(...dialogButtons)
+dialogPanel.append(dialogMessage, promptLabel, dialogActions)
+$('inspection-error').after(dialogPanel)
+
+function renderDialog(taskId, observation) {
+  dialogPanel.hidden = !observation.dialog
+  dialogTaskId = taskId; dialogPageId = observation.pageId
+  if (!observation.dialog) return
+  dialogMessage.textContent = `${observation.dialog.type}: ${observation.dialog.message}`
+  promptLabel.hidden = observation.dialog.type !== 'prompt'
+  promptInput.value = observation.dialog.defaultPrompt || ''
 }
 
 async function runTaskAction(taskId, action) {

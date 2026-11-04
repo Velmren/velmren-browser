@@ -54,7 +54,8 @@ class AgentTargetSurface final
     root->AddChild(contents->GetNativeView());
     contents->Resize(gfx::Rect(0, 0, 1280, 800));
     // The Aura ancestor must permit child layers to composite. This does not
-    // show the widget's native top-level window; WebContents remains idle-hidden.
+    // show the widget's native top-level window; WebContents remains
+    // idle-hidden.
     contents->GetNativeView()->Show();
     // Scoped focus emulation and screenshots drive rendering only on demand.
     // Do not call Widget::Show(), activate the host, or expose a normal tab.
@@ -66,10 +67,12 @@ class AgentTargetSurface final
     if (!widget_) {
       return;
     }
-    if (auto* contents = web_contents()) {
+    // A client-owned Widget can outlive its native window during shutdown.
+    auto* native_window = widget_->GetNativeWindow();
+    if (auto* contents = web_contents(); contents && native_window) {
       auto* view = contents->GetNativeView();
-      auto* root = widget_->GetNativeWindow()->GetRootWindow();
-      if (view->parent() == root) {
+      auto* root = native_window->GetRootWindow();
+      if (view && root && view->parent() == root) {
         root->RemoveChild(view);
       }
     }
@@ -95,7 +98,8 @@ WEB_CONTENTS_USER_DATA_KEY_IMPL(AgentTargetSurface);
 
 void ChromeDevToolsManagerDelegate::PrepareAgentTarget(
     content::WebContents* web_contents) {
-  if (!base::CommandLine::ForCurrentProcess()->HasSwitch("velmren-agent-mode")) {
+  if (!base::CommandLine::ForCurrentProcess()->HasSwitch(
+          "velmren-agent-mode")) {
     return;
   }
 #if defined(USE_AURA)
@@ -105,10 +109,12 @@ void ChromeDevToolsManagerDelegate::PrepareAgentTarget(
 
 void ChromeDevToolsManagerDelegate::ShowAgentTarget(
     std::unique_ptr<content::WebContents>& web_contents) {
-  if (!base::CommandLine::ForCurrentProcess()->HasSwitch("velmren-agent-mode")) {
+  if (!base::CommandLine::ForCurrentProcess()->HasSwitch(
+          "velmren-agent-mode")) {
     return;
   }
-  auto* profile = Profile::FromBrowserContext(web_contents->GetBrowserContext());
+  auto* profile =
+      Profile::FromBrowserContext(web_contents->GetBrowserContext());
   if (GetBrowserWindowCreationStatusForProfile(*profile) !=
       BrowserWindowInterface::CreationStatus::kOk) {
     return;
@@ -129,8 +135,8 @@ void ChromeDevToolsManagerDelegate::ShowAgentTarget(
   }
 #endif
   web_contents->SetDelegate(nullptr);
-  browser->GetTabStripModel()->InsertWebContentsAt(
-      0, std::move(web_contents), AddTabTypes::ADD_ACTIVE);
+  browser->GetTabStripModel()->InsertWebContentsAt(0, std::move(web_contents),
+                                                   AddTabTypes::ADD_ACTIVE);
   browser->GetWindow()->Show();
 }
 

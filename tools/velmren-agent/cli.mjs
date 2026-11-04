@@ -1,5 +1,6 @@
 import { pathToFileURL } from 'node:url'
 import { connectClient, dashboardUrl, METHODS, parseOptions } from './client.mjs'
+import { sanitizeActionResult, sanitizeWaitResult } from './action-result.mjs'
 
 export async function main(argv = process.argv.slice(2)) {
   const options = parseOptions(argv)
@@ -27,7 +28,8 @@ export async function main(argv = process.argv.slice(2)) {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch(error => {
-    process.stderr.write(`${JSON.stringify({ ok: false, error: error.message, code: error.code ?? 'CLI_ERROR' })}\n`)
+    const actionResult = sanitizeActionResult(error.actionResult), waitResult = sanitizeWaitResult(error.waitResult)
+    process.stderr.write(`${JSON.stringify({ ok: false, error: error.message, code: error.code ?? 'CLI_ERROR', ...(actionResult ? { actionResult } : {}), ...(waitResult ? { waitResult } : {}) })}\n`)
     process.exitCode = 1
   })
 }
