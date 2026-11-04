@@ -1,6 +1,6 @@
 import { spawn, execFile } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdir, readFile, realpath, rename, stat, writeFile, open } from 'node:fs/promises'
+import { mkdir, readFile, realpath, rename, stat, writeFile, open, unlink } from 'node:fs/promises'
 import net from 'node:net'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -158,14 +158,28 @@ export async function acquireStartupGate(stateDir, timeoutMs = 60000, signal) {
   }
 }
 
-async function recoverOwnedState(options) {
+function recoveryLineage(receipt) {
+  return { schema: 1, loginId: receipt.id, brokerPid: receipt.brokerPid, browserPid: receipt.browserPid,
+    browserStartTime: receipt.browserStartTime, executable: receipt.executable, profile: receipt.profile, policyIdentity: receipt.policyIdentity }
+}
+
+async function recoverOwnedState(options, manualReceipt) {
   const { stateDir } = options
+  if (manualReceipt && !dead(manualReceipt.brokerPid)) fail('BROKER_STILL_RUNNING', 'The recorded manual sign-in broker process is still running; it was left running.')
   const owner = await readManagedJson(path.join(stateDir, OWNER_FILE))
   const descriptor = await readManagedDescriptor(stateDir)
   let lock = null
   try { lock = await readFile(path.join(stateDir, 'broker.lock'), 'utf8') } catch (error) { if (error.code !== 'ENOENT') fail('STATE_UNAVAILABLE', 'Cannot read the broker ownership lock.') }
   if (!owner && !descriptor && lock === null) return
   if (!owner || owner.schema !== 1 || owner.purpose !== 'velmren-managed-broker' || owner.stateDir !== stateDir || !Number.isSafeInteger(owner.pid) || owner.pid < 1 || typeof owner.nonce !== 'string') fail('UNOWNED_STATE', 'Existing broker state has no managed ownership receipt; it was preserved.')
+  if (manualReceipt) {
+    // A recovered broker may later initiate a different manual login itself.
+    const original = owner.pid === manualReceipt.brokerPid
+    const lineage = recoveryLineage(manualReceipt)
+    const attempt = owner.executable === manualReceipt.executable && owner.profileLoginRecovery &&
+      Object.entries(lineage).every(([key, value]) => owner.profileLoginRecovery[key] === value)
+    if (!original && !attempt) fail('OWNERSHIP_MISMATCH', 'Managed ownership does not match the manual sign-in recovery lineage; existing state was preserved.')
+  }
   if (!dead(owner.pid)) fail('BROKER_STILL_RUNNING', 'The recorded broker process is still running but unavailable; it was left running.')
   if ((descriptor && descriptor.pid !== owner.pid) || (lock !== null && (!/^\d+\s*$/.test(lock) || Number(lock) !== owner.pid))) fail('OWNERSHIP_MISMATCH', 'Broker state does not match the recorded managed process; it was preserved.')
   const backup = path.join(stateDir, 'recovery', `${Date.now()}-${randomUUID()}`)
@@ -175,7 +189,7 @@ async function recoverOwnedState(options) {
   }
 }
 
-export async function runManagedBroker(options, { startBroker, signal } = {}) {
+export async function runManagedBroker(options, { startBroker, signal, profileLoginRecovery } = {}) {
   const controller = new AbortController()
   const startupSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal
   const ipc = typeof process.send === 'function'
@@ -188,34 +202,51 @@ export async function runManagedBroker(options, { startBroker, signal } = {}) {
     process.on('message', message)
     if (!process.connected) disconnected()
   }
-  let release, app
+  let release, app, ownerNonce
+  const acceptStartup = async () => {
+    startupSignal.throwIfAborted()
+    if (!ipc) return
+    // Keep the startup gate until the spawning client has registered or cancelled.
+    await new Promise((resolve, reject) => process.send({ type: 'managed-startup-ready' }, error => error ? reject(error) : resolve()))
+    startupSignal.throwIfAborted()
+    await Promise.race([accepted, new Promise((_, reject) => startupSignal.addEventListener('abort', () => reject(startupSignal.reason), { once: true }))])
+    startupSignal.throwIfAborted()
+  }
   try {
     const { policy, identity } = await requestedPolicy(options)
     release = await acquireStartupGate(options.stateDir, options.startupTimeoutMs, startupSignal)
     const descriptor = await readManagedDescriptor(options.stateDir)
-    if (await healthy(descriptor, identity)) return { reused: true }
+    if (profileLoginRecovery === undefined && await healthy(descriptor, identity)) return { reused: true }
     startupSignal.throwIfAborted()
-    await assertNoManualProfileSession(options.stateDir)
-    await recoverOwnedState(options)
+    let recoveryReceipt
+    if (profileLoginRecovery === undefined) await assertNoManualProfileSession(options.stateDir)
+    else {
+      const { validateProfileLoginRecovery } = await import('./broker.mjs')
+      recoveryReceipt = await validateProfileLoginRecovery({ executable: options.executable, stateDir: options.stateDir, policy }, profileLoginRecovery)
+    }
+    await recoverOwnedState(options, recoveryReceipt)
     startupSignal.throwIfAborted()
+    const nonce = randomUUID()
     await writeFile(path.join(options.stateDir, OWNER_FILE), JSON.stringify({
-      schema: 1, purpose: 'velmren-managed-broker', pid: process.pid, nonce: randomUUID(),
-      stateDir: options.stateDir, executable: options.executable, startedAt: new Date().toISOString()
-    }), { flag: 'wx', mode: 0o600 })
+      schema: 1, purpose: 'velmren-managed-broker', pid: process.pid, nonce,
+      stateDir: options.stateDir, executable: recoveryReceipt?.executable ?? options.executable, startedAt: new Date().toISOString(),
+      ...(recoveryReceipt ? { profileLoginRecovery: recoveryLineage(recoveryReceipt) } : {})
+    }), { flag: 'wx', mode: 0o600, flush: true })
+    ownerNonce = nonce
     startupSignal.throwIfAborted()
     const start = startBroker ?? (await import('./broker.mjs')).startBroker
-    app = await start({ executable: options.executable, stateDir: options.stateDir, policy, port: 0 })
-    startupSignal.throwIfAborted()
-    if (ipc) {
-      // Keep the startup gate until the spawning client has registered or cancelled.
-      await new Promise((resolve, reject) => process.send({ type: 'managed-startup-ready' }, error => error ? reject(error) : resolve()))
-      startupSignal.throwIfAborted()
-      await Promise.race([accepted, new Promise((_, reject) => startupSignal.addEventListener('abort', () => reject(startupSignal.reason), { once: true }))])
-      startupSignal.throwIfAborted()
-    }
+    app = await start({ executable: options.executable, stateDir: options.stateDir, policy, port: 0,
+      ...(profileLoginRecovery === undefined ? {} : { profileLoginRecovery, signal: startupSignal, beforeProfileLoginComplete: acceptStartup }) })
+    // Recovery already crossed its receipt commit boundary after readiness/acceptance.
+    if (!app.profileLoginRecovered) await acceptStartup()
     return { reused: false, ...app }
   } catch (error) {
     await app?.close()
+    if (profileLoginRecovery !== undefined && ownerNonce) {
+      const owner = await readManagedJson(path.join(options.stateDir, OWNER_FILE))
+      // A failed recovery must not replace the original receipt's owner identity.
+      if (owner?.pid === process.pid && owner.nonce === ownerNonce) await unlink(path.join(options.stateDir, OWNER_FILE))
+    }
     throw error
   } finally {
     await release?.()

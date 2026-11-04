@@ -94,13 +94,22 @@ a replacement. Heartbeats and scoped release remain available. Ordinary manual
 login is profile-wide and starts only after all tasks and downloads end. See
 [the manual sign-in workflow](README.md#ordinary-manual-profile-sign-in).
 
-A `manual-profile.json` receipt blocks cold startup and stale-owner recovery,
+A `manual-profile.json` receipt blocks ordinary cold startup and stale-owner recovery,
 including when the receipt is malformed. A live controller accepts an explicit
 finish from the initiating client or administrator only after its ordinary browser
 has exited. If the controller crashed, preserve the receipt and profile and obtain
 explicit administrative recovery; an unattended reconnect must not delete the
 guard or reuse a profile which may still be open. Managed EOF never kills the
 ordinary sign-in window, and its closure never implies user confirmation.
+
+`profile-recovery.mjs` is the explicit administrator entrypoint after a controller
+exit. It requires the recorded login ID, `--user-confirmed true`, and the original
+browser, state directory and policy. Under the existing startup gate it validates
+the receipt and dead managed owner, preserves stale ownership files, and restores
+the manual gate. Only successful close verification and a fresh CDP initialization
+complete the receipt. A failed recovery keeps the receipt and can be retried after
+the underlying condition is resolved. This option is not accepted by the ordinary
+managed MCP client.
 
 `managed-broker.log` contains sanitized daemon diagnostics. MCP stdout contains
 protocol messages only; help and startup errors go to stderr.

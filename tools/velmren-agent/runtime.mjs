@@ -187,7 +187,7 @@ export class AgentBroker {
     this.profileContextId = null
     this.creatingSharedRoot = false
   }
-  async finishProfileLogin(owner, args) {
+  async finishProfileLogin(owner, args, { signal, beforeComplete } = {}) {
     const current = this.profileLogin
     if (args.userConfirmed !== true) fail('Explicit user confirmation is required', 'INVALID_ARGUMENTS')
     if (!current.loginId || args.loginId !== current.loginId) fail('Profile login session not found', 'NOT_FOUND')
@@ -196,6 +196,7 @@ export class AgentBroker {
     this.profileLoginFinishing = true
     let replacement
     try {
+      signal?.throwIfAborted()
       await this.manualSession.assertClosed(args.loginId)
       current.phase = 'awaiting-confirmation'
       current.windowOpen = false
@@ -206,7 +207,10 @@ export class AgentBroker {
       this.bindBrowser(replacement)
       await this.init()
       if (replacement.closed) throw new Error('Automated browser exited while reconnecting')
-      await this.manualSession.complete(args.loginId)
+      signal?.throwIfAborted()
+      await beforeComplete?.()
+      if (replacement.closed) throw new Error('Automated browser exited while reconnecting')
+      await this.manualSession.complete(args.loginId, { signal })
       this.profileLogin = { phase: 'automated' }
       this.idleSince = null
       if (replacement.closed) {

@@ -57,11 +57,19 @@ export async function assertNoManualProfileSession(stateDir) {
 }
 
 // Arguments arrive through the environment, never interpolated into executable code.
-// Only matching profile processes and the one requested PID leave this helper.
+// Only process identities leave this helper; profile paths and URLs stay private.
 const windowsInspectionScript = String.raw`
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 $inspectionStage = 'request'
+function NativeErrorCode($failure) {
+  $exception = $failure.Exception
+  while ($exception) {
+    if ($exception -is [System.ComponentModel.Win32Exception]) { return [int]$exception.NativeErrorCode }
+    $exception = $exception.InnerException
+  }
+  return 0
+}
 try {
 $request = $env:VELMREN_MANUAL_PROCESS_QUERY | ConvertFrom-Json
 $inspectionStage = 'native-helper'
@@ -100,6 +108,7 @@ function Identity($entry) {
   return @{ pid = [int]$entry.ProcessId; executable = [string]$entry.ExecutablePath; startTime = $entry.CreationDate.ToUniversalTime().ToString('o') }
 }
 $matchingProcesses = @()
+$unresolvedForeign = @()
 $requested = $null
 $expectedName = [IO.Path]::GetFileName($request.executable)
 $inspectionStage = 'profile-path'
@@ -118,34 +127,49 @@ foreach ($entry in @(Get-CimInstance Win32_Process -ErrorAction Stop)) {
   if ($entry.CommandLine -notmatch '(?i)--user-data-dir') { continue }
   $inspectionStage = 'command-line'
   $arguments = [VelmrenManualCommandLine]::Split($entry.CommandLine)
+  $unresolvedEntry = $null
+  $matchedProfile = $false
   for ($i = 1; $i -lt $arguments.Length; $i++) {
     $candidate = $null
     if ($arguments[$i].StartsWith('--user-data-dir=', [StringComparison]::OrdinalIgnoreCase)) { $candidate = $arguments[$i].Substring(16) }
     elseif ($arguments[$i] -ieq '--user-data-dir' -and $i + 1 -lt $arguments.Length) { $i++; $candidate = $arguments[$i] }
     if (!$candidate) { continue }
-    if (![IO.Path]::IsPathRooted($candidate)) { throw 'RELATIVE_PROFILE_UNVERIFIED' }
+    if (![IO.Path]::IsPathRooted($candidate) -or $candidate -match '^[A-Za-z]:(?![\\/])|^[\\/](?![\\/])') { throw 'RELATIVE_PROFILE_UNVERIFIED' }
     $inspectionStage = 'candidate-profile'
-    try { $candidate = [VelmrenManualCommandLine]::CanonicalDirectory([IO.Path]::GetFullPath($candidate)).TrimEnd([char[]]'\/') }
+    $candidatePath = [IO.Path]::GetFullPath($candidate)
+    try { $candidate = [VelmrenManualCommandLine]::CanonicalDirectory($candidatePath).TrimEnd([char[]]'\/') }
     catch {
-      # A process snapshot can outlive a test process and its temporary profile.
-      # A missing live process alias is still ambiguous and must fail closed.
+      $nativeCode = NativeErrorCode $_
       $inspectionStage = 'process-query'
       $stillPresent = @(Get-CimInstance Win32_Process -Filter ('ProcessId = ' + [int]$entry.ProcessId) -ErrorAction Stop)
-      if (!$stillPresent.Count) { break }
+      if (!$stillPresent.Count) { $unresolvedEntry = $null; break }
+      $inspectionStage = 'candidate-profile'
+      $ordinaryPath = $candidatePath -match '^[A-Za-z]:\\' -or $candidatePath -match '^\\\\(?![?.]\\)[^\\]+\\[^\\]+(?:\\|$)'
+      if ($nativeCode -in @(2, 3) -and $ordinaryPath -and $candidatePath.TrimEnd([char[]]'\/') -ine $expectedProfile -and $entry.Name -and $entry.Name -ine $expectedName) {
+        $identity = Identity $entry
+        $currentIdentity = Identity $stillPresent[0]
+        if ($identity.startTime -ne $currentIdentity.startTime -or $identity.executable -ine $currentIdentity.executable) { throw 'PROCESS_IDENTITY_UNAVAILABLE' }
+        if ($identity.executable -ine $request.executable -and [IO.Path]::GetFileName($identity.executable) -ine $expectedName) {
+          # A foreign missing path is unresolved, not proof the profile is free.
+          # The receipt survives until a fresh browser acquires it and binds CDP.
+          $unresolvedEntry = $identity
+          continue
+        }
+      }
       $inspectionStage = 'candidate-profile'
       throw
     }
-    if ($candidate -ieq $expectedProfile) { $matchingProcesses += (Identity $entry); break }
+    if ($candidate -ieq $expectedProfile) { $matchingProcesses += (Identity $entry); $matchedProfile = $true; break }
   }
+  if ($unresolvedEntry -and !$matchedProfile) { $unresolvedForeign += $unresolvedEntry }
 }
 $inspectionStage = 'result'
-@{ matches = @($matchingProcesses); requested = $requested } | ConvertTo-Json -Compress -Depth 4
+@{ matches = @($matchingProcesses); requested = $requested; unresolvedForeign = @($unresolvedForeign) } | ConvertTo-Json -Compress -Depth 4
 } catch {
   $knownIds = @('PROCESS_IDENTITY_UNAVAILABLE', 'BROWSER_COMMANDLINE_UNAVAILABLE', 'RELATIVE_PROFILE_UNVERIFIED', 'NonStringKeyInDictionary,Microsoft.PowerShell.Commands.ConvertToJsonCommand', 'MethodInvocationException')
   $errorId = 'POWERSHELL_ERROR'
   if ($knownIds -contains $_.FullyQualifiedErrorId) { $errorId = $_.FullyQualifiedErrorId.Split(',')[0] }
-  $nativeCode = 0
-  if ($_.Exception.InnerException -is [System.ComponentModel.Win32Exception]) { $nativeCode = $_.Exception.InnerException.NativeErrorCode }
+  $nativeCode = NativeErrorCode $_
   [Console]::Out.WriteLine('{"inspectionFailure":{"stage":"' + $inspectionStage + '","errorId":"' + $errorId + '","nativeCode":' + [int]$nativeCode + '}}')
 }
 `
@@ -228,6 +252,7 @@ export class ManualProfileSession {
     }
     const validIdentity = entry => entry && validPid(entry.pid) && path.isAbsolute(entry.executable ?? '') && validText(entry.startTime)
     if (!result || !Array.isArray(result.matches) || result.matches.some(entry => !validIdentity(entry)) ||
+        (Object.hasOwn(result, 'unresolvedForeign') && (!Array.isArray(result.unresolvedForeign) || result.unresolvedForeign.some(entry => !validIdentity(entry)))) ||
         !Object.hasOwn(result, 'requested') || (result.requested !== null && !validIdentity(result.requested))) fail('Manual browser process inspection is incomplete. Keep automation stopped.')
     return result
   }
@@ -325,10 +350,12 @@ export class ManualProfileSession {
     this._confirmed = loginId
     return status
   }) }
-  complete(loginId) { return this._run(async () => {
+  complete(loginId, { signal } = {}) { return this._run(async () => {
     if (this._confirmed !== loginId) fail('Manual completion requires a verified close and explicit confirmation.', 'USER_CONFIRMATION_REQUIRED')
     const receipt = await this._readExpected(loginId)
     if (receipt.state !== 'awaiting-confirmation') fail('Manual sign-in is not ready for completion.')
+    // Unlink is the commit point: cancellation after dispatch cannot undo success.
+    signal?.throwIfAborted()
     await unlink(path.join(this.stateDir, MANUAL_PROFILE_RECEIPT)).catch(() => fail('Manual sign-in receipt could not be cleared. Keep automation stopped.'))
     this._receipt = null; this._confirmed = null
     this._disown()

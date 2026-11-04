@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import { execFile } from 'node:child_process'
-import { mkdtemp, mkdir, readFile, writeFile, rm, realpath } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, writeFile, rm, realpath, symlink } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
@@ -252,9 +252,8 @@ test('concurrent prepares publish one intact receipt without overwriting the win
   assert.equal(f.calls.length, 0)
 })
 
-test('Windows inspector parses synthetic CIM processes without regex variables corrupting its result', { skip: process.platform !== 'win32' }, async t => {
-  const f = await fixture(t)
-  const result = await inspectManualProfileProcesses({ profile: f.options.profile.replaceAll('\\', '/'), executable: f.options.executable, pid: 5901 }, {
+async function inspectSyntheticProcesses(f, processes, { pid = null, transformScript = script => script } = {}) {
+  return inspectManualProfileProcesses({ profile: f.options.profile.replaceAll('\\', '/'), executable: f.options.executable, pid }, {
     runProcess: async (executable, args, options) => {
       // Execute the actual Windows helper, with only CIM enumeration replaced.
       // No real processes are enumerated and no browser is launched.
@@ -263,27 +262,122 @@ test('Windows inspector parses synthetic CIM processes without regex variables c
         $syntheticProcesses = $env:VELMREN_TEST_PROCESSES | ConvertFrom-Json
         foreach ($item in $syntheticProcesses) {
           if ($Filter -and ($item.Gone -or $Filter -ne ('ProcessId = ' + $item.ProcessId))) { continue }
-          $item.CreationDate = [DateTime]::Parse($item.CreationDate).ToUniversalTime()
+          if ($Filter -and $item.RequeryCreationDate) { $item.CreationDate = $item.RequeryCreationDate }
+          if ($item.CreationDate) { $item.CreationDate = [DateTime]::Parse($item.CreationDate).ToUniversalTime() }
           $item
         }
       }\n`
-      const script = fakeCim + Buffer.from(args.at(-1), 'base64').toString('utf16le')
-      const processes = [
-        { ProcessId: 5901, Name: 'fixture-browser.exe', ExecutablePath: f.options.executable, CreationDate: '2026-11-04T00:00:00Z', CommandLine: `"${f.options.executable}" "--user-data-dir=${f.options.profile}" https://example.test/private` },
-        { ProcessId: 5902, Name: 'unrelated.exe', ExecutablePath: f.options.executable, CreationDate: '2026-11-04T00:00:00Z', CommandLine: 'unrelated.exe --private=must-not-leak' },
-        { ProcessId: 5903, Name: 'fixture-browser.exe', ExecutablePath: f.options.executable, CreationDate: '2026-11-04T00:00:00Z', CommandLine: `fixture-browser.exe "--user-data-dir=${path.join(f.options.stateDir, 'already-removed-profile')}"`, Gone: true }
-      ]
+      const script = fakeCim + transformScript(Buffer.from(args.at(-1), 'base64').toString('utf16le'))
       const output = await promisify(execFile)(executable, [...args.slice(0, -1), Buffer.from(script, 'utf16le').toString('base64')], {
         ...options, env: { ...options.env, VELMREN_TEST_PROCESSES: JSON.stringify(processes) }
       })
-      assert.doesNotMatch(output.stdout, /example\.test|must-not-leak|CommandLine/)
+      assert.doesNotMatch(output.stdout, /example\.test|must-not-leak|private-missing-profile|CommandLine/)
       return output
     }
   })
+}
+
+function foreignProcess(f, overrides = {}) {
+  const executable = path.join(f.options.stateDir, 'foreign-browser.exe')
+  return { ProcessId: 5904, Name: 'foreign-browser.exe', ExecutablePath: executable, CreationDate: '2026-11-04T00:00:00Z',
+    CommandLine: `"${executable}" "--user-data-dir=${path.join(f.options.stateDir, 'private-missing-profile')}" https://example.test/private`, ...overrides }
+}
+
+test('Windows inspector parses synthetic CIM processes without regex variables corrupting its result', { skip: process.platform !== 'win32' }, async t => {
+  const f = await fixture(t)
+  const result = await inspectSyntheticProcesses(f, [
+    { ProcessId: 5901, Name: 'fixture-browser.exe', ExecutablePath: f.options.executable, CreationDate: '2026-11-04T00:00:00Z', CommandLine: `"${f.options.executable}" "--user-data-dir=${f.options.profile}" https://example.test/private` },
+    { ProcessId: 5902, Name: 'unrelated.exe', ExecutablePath: f.options.executable, CreationDate: '2026-11-04T00:00:00Z', CommandLine: 'unrelated.exe --private=must-not-leak' },
+    { ProcessId: 5903, Name: 'fixture-browser.exe', ExecutablePath: f.options.executable, CreationDate: '2026-11-04T00:00:00Z', CommandLine: `fixture-browser.exe "--user-data-dir=${path.join(f.options.stateDir, 'already-removed-profile')}"`, Gone: true }
+  ], { pid: 5901 })
   assert.equal(result.matches.length, 1)
   assert.equal(result.matches[0].pid, 5901)
   assert.equal(result.requested.pid, 5901)
   assert.deepEqual(Object.keys(result.matches[0]).sort(), ['executable', 'pid', 'startTime'])
+  assert.deepEqual(result.unresolvedForeign, [])
+})
+
+test('Windows inspector records a live foreign missing profile without losing requested PID identity', { skip: process.platform !== 'win32' }, async t => {
+  const f = await fixture(t), entry = foreignProcess(f)
+  const result = await inspectSyntheticProcesses(f, [entry], { pid: entry.ProcessId })
+  assert.deepEqual(result.matches, [])
+  assert.equal(result.unresolvedForeign.length, 1)
+  assert.deepEqual(result.requested, result.unresolvedForeign[0])
+  assert.equal(result.requested.pid, entry.ProcessId)
+  assert.deepEqual(Object.keys(result.unresolvedForeign[0]).sort(), ['executable', 'pid', 'startTime'])
+})
+
+test('Windows inspector still detects a foreign executable using an existing profile junction', { skip: process.platform !== 'win32' }, async t => {
+  const f = await fixture(t), alias = path.join(f.options.stateDir, 'profile-alias')
+  await symlink(f.options.profile, alias, 'junction')
+  const entry = foreignProcess(f, { CommandLine: `foreign-browser.exe "--user-data-dir=${path.join(f.options.stateDir, 'private-missing-profile')}" "--user-data-dir=${alias}"` })
+  const result = await inspectSyntheticProcesses(f, [entry])
+  assert.deepEqual(result.matches.map(item => item.pid), [entry.ProcessId])
+  assert.deepEqual(result.unresolvedForeign, [])
+})
+
+test('an unresolved foreign profile keeps the completion receipt until the caller successfully rebinds', { skip: process.platform !== 'win32' }, async t => {
+  const f = await fixture(t)
+  await f.begin(); f.exit()
+  const recovered = new ManualProfileSession({ ...f.options,
+    inspectProcesses: ({ pid }) => inspectSyntheticProcesses(f, [foreignProcess(f)], { pid }) })
+  assert.equal((await recovered.load()).windowOpen, false)
+  await recovered.finish('login-1', { userConfirmed: true })
+  assert.equal((await readManualProfileReceipt(f.options.stateDir)).state, 'awaiting-confirmation')
+  await assert.rejects(assertNoManualProfileSession(f.options.stateDir), { code: 'MANUAL_PROFILE_ACTIVE' })
+  assert.equal(f.calls.length, 1); assert.equal(f.kills, 0)
+})
+
+test('Windows inspector cannot defer the expected profile after it disappears during inspection', { skip: process.platform !== 'win32' }, async t => {
+  const f = await fixture(t)
+  const entry = foreignProcess(f, { CommandLine: `foreign-browser.exe "--user-data-dir=${f.options.profile}"` })
+  const transformScript = script => script.replace('public static string CanonicalDirectory(string name) {', `static int directoryCalls;
+    public static string CanonicalDirectory(string name) {
+      if (++directoryCalls > 1) throw new System.ComponentModel.Win32Exception(3);`)
+  await assert.rejects(inspectSyntheticProcesses(f, [entry], { transformScript }), /candidate-profile; .*; 3/)
+})
+
+test('Windows inspector fails closed for its executable or basename with a missing profile', { skip: process.platform !== 'win32' }, async t => {
+  const f = await fixture(t)
+  for (const overrides of [
+    { Name: 'fixture-browser.exe', ExecutablePath: f.options.executable },
+    { Name: 'fixture-browser.exe' },
+    { ExecutablePath: path.join(f.options.stateDir, 'other-install', 'fixture-browser.exe') },
+    { ExecutablePath: f.options.executable }
+  ]) {
+    await assert.rejects(inspectSyntheticProcesses(f, [foreignProcess(f, overrides)]), /candidate-profile; .*; [23]/)
+  }
+})
+
+test('Windows inspector rejects incomplete or changing foreign process identity', { skip: process.platform !== 'win32' }, async t => {
+  const f = await fixture(t)
+  for (const overrides of [{ ExecutablePath: null }, { CreationDate: null }, { RequeryCreationDate: '2026-11-04T00:01:00Z' }]) {
+    await assert.rejects(inspectSyntheticProcesses(f, [foreignProcess(f, overrides)]), /process-identity; PROCESS_IDENTITY_UNAVAILABLE/)
+  }
+})
+
+test('Windows inspector does not treat relative or unsupported namespace paths as unresolved foreign profiles', { skip: process.platform !== 'win32' }, async t => {
+  const f = await fixture(t)
+  for (const candidate of ['relative-profile', 'C:relative-profile', '\\relative-profile', '\\\\?\\GLOBALROOT\\not-a-real-device\\profile']) {
+    await assert.rejects(inspectSyntheticProcesses(f, [foreignProcess(f, { CommandLine: `foreign-browser.exe "--user-data-dir=${candidate}"` })]), { code: 'MANUAL_PROFILE_RECOVERY_REQUIRED' })
+  }
+})
+
+test('Windows inspector defers only file-not-found and path-not-found errors from foreign profiles', { skip: process.platform !== 'win32' }, async t => {
+  const f = await fixture(t), entry = foreignProcess(f)
+  for (const code of [2, 3, 5, 123, null]) {
+    const transformScript = script => script.replace('public static string CanonicalDirectory(string name) {', `public static string CanonicalDirectory(string name) {
+      if (name.EndsWith("private-missing-profile")) throw new ${code === null ? 'InvalidOperationException()' : `System.ComponentModel.Win32Exception(${code})`};`)
+    const inspection = inspectSyntheticProcesses(f, [entry], { transformScript })
+    if (code === 2 || code === 3) assert.equal((await inspection).unresolvedForeign[0].pid, entry.ProcessId)
+    else await assert.rejects(inspection, new RegExp(`candidate-profile; .*; ${code ?? 0}`))
+  }
+})
+
+test('Windows inspector drops a disappeared foreign process instead of recording unresolved identity', { skip: process.platform !== 'win32' }, async t => {
+  const f = await fixture(t)
+  const result = await inspectSyntheticProcesses(f, [foreignProcess(f, { Gone: true })])
+  assert.deepEqual(result, { matches: [], requested: null, unresolvedForeign: [] })
 })
 
 test('Windows inspection failures expose only a whitelisted stage and numeric code', { skip: process.platform !== 'win32' }, async t => {

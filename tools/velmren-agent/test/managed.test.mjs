@@ -16,8 +16,17 @@ const results = path.join(root, 'test-results')
 await mkdir(results, { recursive: true })
 
 async function options(extra = {}) {
-  const stateDir = await mkdtemp(path.join(results, 'managed-'))
-  return resolveManagedOptions({ executable: process.execPath, stateDir, daemonScript: fake, startupTimeoutMs: 8000, ...extra })
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const stateDir = await mkdtemp(path.join(results, 'managed-'))
+    const config = await resolveManagedOptions({ executable: process.execPath, stateDir, daemonScript: fake, startupTimeoutMs: 8000, ...extra })
+    try { await (await acquireStartupGate(config.stateDir, 100))(); return config }
+    catch (error) {
+      // A random path can hash to a Windows-reserved port. Select an available
+      // fixture before testing ownership, timeouts, or recovery semantics.
+      if (process.platform !== 'win32' || error.code !== 'STARTUP_LOCK_FAILED' || extra.stateDir) throw error
+    }
+  }
+  throw new Error('No available startup gate for the managed test fixture')
 }
 
 async function stop(stateDir) {

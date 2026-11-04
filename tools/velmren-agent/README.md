@@ -64,6 +64,27 @@ it merely to bypass the guard. This initial implementation verifies processes on
 Windows. Do not claim Google or another provider accepted the account until the
 user actually completes the real sign-in.
 
+The Windows check keeps matching existing profile aliases across executables.
+A missing directory belonging to a different browser is recorded as unresolved,
+not mistaken for the manual Velmren window. Recovery still has to acquire the
+native profile lock and initialize a fresh inherited CDP pipe before clearing the
+receipt. If another browser owns that profile, startup fails and the receipt stays.
+Missing Velmren paths, access failures and unknown process identities remain blocked.
+
+If the original controller has stopped after the user closed the manual window,
+an administrator can explicitly recover the recorded login using the same browser,
+state directory and policy:
+
+```sh
+node profile-recovery.mjs --browser EXE --state-dir DIR --policy JSON --login-id ID --user-confirmed true
+```
+
+Use the current receipt's login ID and the user's actual confirmation. Recovery
+refuses a live original controller, a changed profile/policy or incomplete process
+identity. It preserves previous managed ownership files, checks closure again, and
+reconnects automation before completing the receipt. Ordinary MCP startup never
+performs this recovery automatically. Do not remove the receipt to make startup pass.
+
 ## Start locally
 
 Run the following from this directory in PowerShell 7. `npm ci` installs the
