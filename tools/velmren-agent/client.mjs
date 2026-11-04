@@ -3,12 +3,12 @@ import { resolve, isAbsolute } from 'node:path'
 import { sanitizeActionResult, sanitizeWaitResult, unknownActionResult } from './action-result.mjs'
 
 export const CLIENTS = ['codex', 'claude', 'scripts']
-export const AGENT_PROTOCOL = 2
+export const AGENT_PROTOCOL = 3
 export const METHODS = [
   'task_create', 'task_list', 'task_observe', 'task_act', 'task_navigate',
   'task_wait', 'task_screenshot', 'task_request_human', 'task_resume', 'task_finish', 'task_cancel', 'task_upload_files',
   'task_list_pages', 'task_list_frames', 'task_list_options', 'task_select_page', 'task_close_page', 'task_handle_dialog', 'client_release', 'client_heartbeat',
-  'profile_login_start', 'profile_login_status', 'profile_login_finish', 'task_sensitive', 'task_private_input', 'agent_protocol'
+  'profile_login_start', 'profile_login_status', 'profile_login_finish', 'task_sensitive', 'task_private_input', 'agent_protocol', 'task_captcha'
 ]
 
 export class BrokerError extends Error {
@@ -82,6 +82,7 @@ function string(value, name, max = 65536, allowEmpty = false) {
 export function validateArguments(method, args) {
   const keys = {
     task_create: ['url', 'label', 'sensitive'], task_list: [], task_observe: ['taskId', 'pageId', 'frameId', 'query', 'offset', 'limit', 'textOffset', 'textLimit'],
+    task_captcha: ['taskId', 'pageId', 'frameId', 'action', 'challengeId', 'jobId'],
     task_act: ['taskId', 'pageId', 'frameId', 'observationId', 'actions'], task_navigate: ['taskId', 'pageId', 'url'],
     task_wait: ['taskId', 'pageId', 'frameId', 'text', 'predicate', 'timeoutMs'], task_screenshot: ['taskId', 'pageId'],
     task_request_human: ['taskId', 'pageId', 'reason', 'showWindow'], task_resume: ['taskId', 'handoffId', 'userConfirmed'], task_finish: ['taskId'], task_cancel: ['taskId'],
@@ -98,6 +99,12 @@ export function validateArguments(method, args) {
   if (args.pageId !== undefined || ['task_select_page', 'task_close_page'].includes(method)) string(args.pageId, 'pageId', 256)
   if (args.frameId !== undefined) string(args.frameId, 'frameId', 256)
   if (args.sensitive !== undefined && typeof args.sensitive !== 'boolean') throw new BrokerError('sensitive must be boolean', 'INVALID_ARGUMENTS')
+  if (method === 'task_captcha') {
+    if (args.action === 'inspect') object(args, ['taskId', 'pageId', 'frameId', 'action'])
+    else if (args.action === 'solve') { object(args, ['taskId', 'pageId', 'frameId', 'action', 'challengeId']); string(args.challengeId, 'challengeId', 256) }
+    else if (['status', 'cancel'].includes(args.action)) { object(args, ['taskId', 'action', 'jobId']); string(args.jobId, 'jobId', 256) }
+    else throw new BrokerError('Invalid CAPTCHA operation', 'INVALID_ARGUMENTS')
+  }
   const exactOrigin = value => {
     let parsed
     try { parsed = new URL(value) } catch {}

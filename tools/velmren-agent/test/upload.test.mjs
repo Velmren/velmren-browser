@@ -247,5 +247,5 @@ test('manual-step messaging stays neutral and uploads are advertised as a conseq
   const upload = TOOL_DEFINITIONS.find(tool => tool.name === 'velmren_upload_files')
   assert.equal(upload.inputSchema.properties.files.maxItems, 10)
   assert.match(upload.description, /immediately upload/)
-  assert.doesNotMatch(SERVER_INSTRUCTIONS + TOOL_DEFINITIONS.find(tool => tool.name === 'velmren_request_human').description, /CAPTCHA|bypass|challenge/i)
+  assert.doesNotMatch(TOOL_DEFINITIONS.find(tool => tool.name === 'velmren_request_human').description, /CAPTCHA|bypass|challenge/i)
 })

@@ -11,6 +11,9 @@ import { requestHuman, resumeHuman } from './handoff.mjs'
 import { validateManualProfileUrl } from './manual-profile.mjs'
 import { sanitizePublicResult, sanitizePublicError } from './privacy.mjs'
 import { PrivateInputs } from './private-input.mjs'
+import { CaptchaService } from './capsolver-service.mjs'
+import { installCaptchaSession } from './captcha-page.mjs'
+import { startCaptchaJob, findCaptchaJob, captchaJobView } from './captcha-runtime.mjs'
 import { beginSensitive, endSensitive, validateSensitiveEnd, clearSensitiveObservations, rememberSensitiveDocument, sensitiveStatus } from './sensitive-state.mjs'
 
 const terminal = new Set(['completed', 'cancelled'])
@@ -73,8 +76,9 @@ class Slots {
 }
 
 export class AgentBroker {
-  constructor(browser, stateDir, policy = {}, { trace, manualSession, browserFactory } = {}) {
+  constructor(browser, stateDir, policy = {}, { trace, manualSession, browserFactory, captchaService } = {}) {
     this.privateInputs = new PrivateInputs()
+    this.captcha = captchaService ?? new CaptchaService(stateDir)
     Object.assign(this, { browser, stateDir, tasks: new Map(), contexts: new Map(), sessions: new Map(), targets: new Map(), clients: new Map(), stopping: false })
     if (policy.allowedOrigins !== undefined && (!Array.isArray(policy.allowedOrigins) || policy.allowedOrigins.some(origin => {
       try { const url = new URL(origin); return !['http:', 'https:'].includes(url.protocol) || url.origin !== origin } catch { return true }
@@ -254,7 +258,7 @@ export class AgentBroker {
   pageRecords(task) { return [...this.pages(task).values()].map(page => sanitizePublicResult({ pageId: page.pageId, openerId: page.openerId ?? null, url: page.url ?? task.url, title: page.title ?? '', attached: !page.detached, ...(page.dialog ? { dialog: page.dialog } : {}) }, { sensitive: task.sensitiveHistory })) }
   record(task) {
     const { taskId, label, owner, state, reason, url, createdAt, downloads, blockedOrigins, selectedPageId } = task
-    return sanitizePublicResult({ taskId, label, owner, state, reason, url, createdAt, downloads, blockedOrigins, profileMode: this.profileMode, sharedProfile: this.sharedProfile, pages: this.pageRecords(task), selectedPageId: selectedPageId ?? task.selectedPageId, privacy: sensitiveStatus(task, task.page), ...(task.targetPolicy ? { targetPolicy: task.targetPolicy } : {}), ...(task.handoff ? { handoff: { id: task.handoff.id, pageId: task.handoff.pageId, shown: task.handoff.shown } } : {}), ...(task.cleanupError ? { cleanupPending: true, cleanupError: task.cleanupError } : {}) }, { sensitive: task.sensitiveHistory })
+    return sanitizePublicResult({ taskId, label, owner, state, reason, url, createdAt, downloads, blockedOrigins, captchaStats: this.captcha.statistics(taskId), profileMode: this.profileMode, sharedProfile: this.sharedProfile, pages: this.pageRecords(task), selectedPageId: selectedPageId ?? task.selectedPageId, privacy: sensitiveStatus(task, task.page), ...(task.targetPolicy ? { targetPolicy: task.targetPolicy } : {}), ...(task.handoff ? { handoff: { id: task.handoff.id, pageId: task.handoff.pageId, shown: task.handoff.shown } } : {}), ...(task.cleanupError ? { cleanupPending: true, cleanupError: task.cleanupError } : {}) }, { sensitive: task.sensitiveHistory })
   }
   task(id, owner) {
     const task = this.tasks.get(id)
@@ -284,6 +288,8 @@ export class AgentBroker {
   }
   checkActive(task) { this.assertAutomated(); if (task.state !== 'agent-active') fail(`Task is ${task.state}; agent actions are paused`) }
   async init() {
+    // Broken optional service storage must not prevent ordinary browser work.
+    await this.captcha.ready.catch(() => {})
     if (this.sharedProfile) {
       const contexts = await this.browser.send('Target.getBrowserContexts')
       if (!contexts.defaultBrowserContextId) throw new Error('Persistent agent profile requires a default browser context ID')
@@ -403,7 +409,10 @@ export class AgentBroker {
     if (entry.chooserError) { entry.policyPhase = 'file-chooser-interception'; throw entry.chooserError }
     if (entry.type === 'worker' && !this.sessions.get(entry.networkOwnerSessionId)?.interceptionReady) throw new Error('Dedicated worker frame policy was detached')
     entry.policyPhase = 'navigation-resume'
+    const captchaReady = this.captcha.enabled && ['page', 'iframe'].includes(entry.type)
+      ? installCaptchaSession(this.browser, entry.sessionId).catch(() => { entry.captchaUnavailable = true }) : null
     await this.browser.send('Runtime.runIfWaitingForDebugger', {}, entry.sessionId)
+    await captchaReady
     entry.policyPhase = 'service-worker-acknowledgement'
     const error = await entry.bypassAcknowledgement
     if (error) throw error
@@ -865,7 +874,7 @@ export class AgentBroker {
   decorate(task, observation) {
     const page = this.pages(task).get(observation?.pageId) ?? task.page
     rememberSensitiveDocument(task, page)
-    return { ...observation, ...(task.fileChooserNotice ? { fileChooserNotice: task.fileChooserNotice } : {}), taskId: task.taskId, state: task.state, profileMode: this.profileMode, sharedProfile: this.sharedProfile, pages: this.pageRecords(task), selectedPageId: task.selectedPageId, downloads: sanitizePublicResult(task.downloads, { sensitive: task.sensitiveHistory }), privacy: sensitiveStatus(task, page), contentTrust: 'untrusted' }
+    return { ...observation, captchaStats: this.captcha.statistics(task.taskId), ...(task.fileChooserNotice ? { fileChooserNotice: task.fileChooserNotice } : {}), taskId: task.taskId, state: task.state, profileMode: this.profileMode, sharedProfile: this.sharedProfile, pages: this.pageRecords(task), selectedPageId: task.selectedPageId, downloads: sanitizePublicResult(task.downloads, { sensitive: task.sensitiveHistory }), privacy: sensitiveStatus(task, page), contentTrust: 'untrusted' }
   }
   privateBinding(task, rootPage, page, ref, origin) {
     return { owner: task.owner, taskId: task.taskId, pageId: rootPage.pageId, frameId: page.frameId,
@@ -941,6 +950,7 @@ export class AgentBroker {
       if (method !== 'client_release') fail('Client lease expired', 'UNAUTHORIZED')
     }
     if (owner === 'admin') {
+      if (method === 'captcha_settings') return this.captcha.settings(args)
       if (method === 'client_register') {
         if (Object.keys(args).some(key => !['label', 'policyIdentity', 'leaseMs'].includes(key)) || typeof args.label !== 'string' || !args.label.trim() || args.label.length > 200) fail('A client label of 1 to 200 characters is required', 'INVALID_ARGUMENTS')
         if (args.policyIdentity !== undefined && args.policyIdentity !== this.policyIdentity) fail('Broker policy does not match the requested policy', 'POLICY_MISMATCH')
@@ -951,7 +961,7 @@ export class AgentBroker {
         if (args.leaseMs) { this.managedMode = true; this.idleSince = null; this.scheduleLifecycle() }
         return { clientId, token, ...(args.leaseMs ? { leaseMs: 30000 } : {}) }
       }
-      if (method === 'broker_status') return { agentProtocol: AGENT_PROTOCOL, tasks: [...this.tasks.values()].map(task => this.record(task)), browserVersion: this.browser.version, browserHealthy: this.profileLogin.phase === 'automated' && !this.browser.closed, profileLogin: this.profileLoginView(), policyIdentity: this.policyIdentity, profileMode: this.profileMode, sharedProfile: this.sharedProfile, activeActions: this.slots.active, maxTasks: this.maxTasks, maxActiveActions: this.slots.max, allowedOrigins: this.allowedOrigins ?? [this.allowWeb ? 'http(s)' : 'loopback only'], webCompatibility: this.webCompatibility, webSocketPolicy: this.webSocketPolicy }
+      if (method === 'broker_status') return { captchaStats: this.captcha.statistics(), agentProtocol: AGENT_PROTOCOL, tasks: [...this.tasks.values()].map(task => this.record(task)), browserVersion: this.browser.version, browserHealthy: this.profileLogin.phase === 'automated' && !this.browser.closed, profileLogin: this.profileLoginView(), policyIdentity: this.policyIdentity, profileMode: this.profileMode, sharedProfile: this.sharedProfile, activeActions: this.slots.active, maxTasks: this.maxTasks, maxActiveActions: this.slots.max, allowedOrigins: this.allowedOrigins ?? [this.allowWeb ? 'http(s)' : 'loopback only'], webCompatibility: this.webCompatibility, webSocketPolicy: this.webSocketPolicy }
       if (method === 'task_control') {
         this.assertAutomated()
         const task = this.task(args.taskId, owner); request.trace.taskId = task.taskId
@@ -982,6 +992,11 @@ export class AgentBroker {
     }, request)
     const task = this.task(args.taskId, owner)
     request.trace.taskId = task.taskId
+    if (method === 'task_captcha' && ['status', 'cancel'].includes(args.action)) {
+      const job = findCaptchaJob(task, args.jobId)
+      if (args.action === 'cancel' && job.status === 'pending') job.controller.abort()
+      return captchaJobView(job, this.captcha, task.taskId)
+    }
     if (method === 'task_private_input' && args.action === 'revoke') return this.privateInputs.revoke(args.secretRef, task.owner, task.taskId)
     if (method === 'task_cancel') { request.dispatched = true; task.controlGeneration = (task.controlGeneration ?? 0) + 1; task.state = 'cancelled'; return this.serialize(task, () => this.end(task, 'cancelled'), request) }
     if (method === 'task_request_human') return requestHuman(this, task, args, request)
@@ -1018,6 +1033,16 @@ export class AgentBroker {
         if (!humanRead) this.checkActive(task)
         if (this.pages(task).get(rootPage.pageId) !== rootPage || rootPage.detached || rootPage.sessionId !== rootSessionId || page.detached || page.sessionId !== sessionId || (rootPage.frames && !rootPage.frames.current(page))) fail('Page or frame session changed; observe again', 'PAGE_DETACHED')
         if (!humanRead && !stillActive()) fail('Task state or page session changed; observe again')
+        if (method === 'task_captcha') {
+          await this.captcha.ready
+          if (args.action === 'inspect') return { enabled: this.captcha.enabled,
+            challenges: this.captcha.enabled ? await page.captcha.inspect() : [], captchaStats: this.captcha.statistics(task.taskId) }
+          if (!this.captcha.enabled) fail('CAPTCHA service is disabled.', 'CAPTCHA_DISABLED')
+          beginSensitive(task, this.pages(task).values(), { input: true })
+          request.dispatched = true
+          return startCaptchaJob({ service: this.captcha, task, page, challengeId: args.challengeId, stillActive,
+            deliver: operation => this.serialize(task, () => this.slots.run(operation)) })
+        }
         if (method === 'task_sensitive') {
           if (args.action === 'begin') {
             beginSensitive(task, this.pages(task).values())
@@ -1083,6 +1108,7 @@ export class AgentBroker {
     if (this.stopping) return
     this.stopping = true
     this.privateInputs.close()
+    this.captcha.close()
     clearInterval(this.lifecycleTimer)
     for (const pending of this.pendingAttachments.values()) clearTimeout(pending.timer)
     this.pendingAttachments.clear()
@@ -1094,6 +1120,10 @@ export class AgentBroker {
       else for (const page of this.pages(task).values()) page.dispose()
     }
     try { await this.browser.close() }
-    finally { this.unbindBrowser(); await this.trace?.close() }
+    finally {
+      this.unbindBrowser()
+      await Promise.allSettled([...this.tasks.values()].flatMap(task => [...(task.captchaJobs?.values() ?? [])].map(job => job.work)))
+      await this.trace?.close()
+    }
   }
 }

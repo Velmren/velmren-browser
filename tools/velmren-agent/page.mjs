@@ -4,6 +4,7 @@ import * as formControls from './form-controls.mjs'
 import * as documentObservation from './document-observation.mjs'
 import * as sensitiveRenderer from './sensitive-renderer.mjs'
 import { sanitizePublicError } from './privacy.mjs'
+import { CaptchaPage } from './captcha-page.mjs'
 
 const { prepareElement, applyFormValue, verifyElementValue } = formControls
 const { observeDocument, listSelectOptions } = documentObservation
@@ -51,6 +52,7 @@ export class AgentPage {
   constructor(browser, targetId, sessionId, { frameId = null, rootPage = null, parentFrameId = null } = {}) {
     this.documentId = randomUUID()
     Object.assign(this, { browser, targetId, pageId: targetId, sessionId, epoch: 0, frameId, rootPage, parentFrameId, world: null, observation: null, dialog: null, chooser: null, interceptFileChooser: true, url: 'about:blank', title: '' })
+    this.captcha = new CaptchaPage(this)
     this.dialogWaiters = new Set()
     this.pendingCommands = new Set()
     if (rootPage) {
@@ -473,5 +475,5 @@ export class AgentPage {
   async screenshot() { return {mimeType:'image/png',...(await this.send('Page.captureScreenshot',{format:'png',captureBeyondViewport:false}))} }
   async prepareFrame() { if (this.rootPage?.frames) await this.rootPage.frames.prepare(this) }
   async toRootPoint(point) { return this.rootPage?.frames ? this.rootPage.frames.toRootPoint(this, point) : point }
-  dispose() { this.disposed = true; this.chooser = null; this.observation = null; this.frames?.dispose(); this.browser.off('protocol',this.listener) }
+  dispose() { this.disposed = true; this.captcha.dispose(); this.chooser = null; this.observation = null; this.frames?.dispose(); this.browser.off('protocol',this.listener) }
 }

@@ -37,7 +37,7 @@ export async function validateProfileLoginRecovery({ executable, stateDir, polic
   throw new ManualProfileError('The recorded manual sign-in broker process is still running or cannot be verified. Keep automation stopped.', 'BROKER_STILL_RUNNING')
 }
 
-export async function startBroker({executable,stateDir,policy={},port=0,browserArgs=[],browserFactory=options=>BrowserPipe.launch(options),manualSession,profileLoginRecovery,signal,beforeProfileLoginComplete}) {
+export async function startBroker({executable,stateDir,policy={},port=0,browserArgs=[],browserFactory=options=>BrowserPipe.launch(options),manualSession,profileLoginRecovery,signal,beforeProfileLoginComplete,captchaService}) {
   stateDir=path.resolve(stateDir)
   await mkdir(stateDir,{recursive:true,mode:0o700})
   const lock=await open(path.join(stateDir,'broker.lock'),'wx',0o600).catch(()=>{throw new Error('State directory is already in use. Use a fresh state directory, or remove a stale broker.lock only after checking its PID.')})
@@ -63,12 +63,12 @@ export async function startBroker({executable,stateDir,policy={},port=0,browserA
       }
       // Restore the gate without opening a browser or sending any CDP commands.
       browser=Object.assign(new EventEmitter(),{closed:true,close:async()=>{}})
-      broker=new AgentBroker(browser,stateDir,policy,{manualSession,browserFactory:launch})
+      broker=new AgentBroker(browser,stateDir,policy,{manualSession,browserFactory:launch,captchaService})
       broker.profileLogin={phase:'manual',loginId:recoveryReceipt.id,owner:recoveryReceipt.owner}
       signal?.throwIfAborted()
     }else{
       browser=await launch()
-      broker=new AgentBroker(browser,stateDir,policy,{manualSession,browserFactory:launch})
+      broker=new AgentBroker(browser,stateDir,policy,{manualSession,browserFactory:launch,captchaService})
       await broker.init()
     }
     descriptor={endpoint:'',pid:process.pid,adminToken:token(),clients:Object.fromEntries(CLIENTS.map(client=>[client,{token:token()}]))}

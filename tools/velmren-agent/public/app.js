@@ -26,6 +26,165 @@ function element(tag, className, text) {
 function announce(text) { $('announcement').textContent = text }
 function showError(node, message) { node.textContent = message; node.hidden = !message }
 
+let captchaSettings = null
+let captchaBusy = false
+let captchaTotals = null
+const captchaLimits = [
+  ['captcha-daily', 'maxRequestsPerDay', 1000],
+  ['captcha-task', 'maxAttemptsPerTask', 10],
+  ['captcha-concurrent', 'maxConcurrent', 5]
+]
+
+function captchaStats(stats) {
+  return Object.fromEntries(['solutionsDelivered', 'failed', 'cancelled', 'uncertain'].map(name => [
+    name, Number.isSafeInteger(stats?.[name]) && stats[name] >= 0 ? stats[name] : 0
+  ]))
+}
+
+function captchaOutcomeText(stats) {
+  const counts = captchaStats(stats)
+  return `CAPTCHA solutions: ${counts.solutionsDelivered.toLocaleString()} · Failed: ${counts.failed.toLocaleString()} · Cancelled: ${counts.cancelled.toLocaleString()} · Uncertain: ${counts.uncertain.toLocaleString()}`
+}
+
+function renderCaptchaTotals(stats) {
+  captchaTotals = captchaStats(stats)
+  $('captcha-total').textContent = captchaTotals.solutionsDelivered.toLocaleString()
+  $('captcha-outcomes').textContent = captchaOutcomeText(captchaTotals) + (stats?.persisted === false ? ' · Latest counts could not be saved' : '')
+}
+
+function updateCaptchaControls() {
+  const unavailable = !captchaSettings?.storageAvailable
+  $('captcha-fields').disabled = captchaBusy || unavailable
+  $('captcha-save').disabled = captchaBusy || unavailable
+  $('captcha-check').disabled = captchaBusy || unavailable || !captchaSettings?.hasKey || !!$('captcha-key').value
+  $('captcha-remove').disabled = captchaBusy || !captchaSettings?.hasKey
+  $('captcha-retry').disabled = captchaBusy
+  $('captcha-form').setAttribute('aria-busy', String(captchaBusy))
+}
+
+function clearCaptchaValidation() {
+  for (const id of ['captcha-key', ...captchaLimits.map(([id]) => id)]) {
+    $(id).removeAttribute('aria-invalid')
+    showError($(id + '-error'), '')
+  }
+}
+
+function renderCaptchaSettings(result) {
+  // Keep only fields used by this view; never retain or render credential data.
+  if (result?.provider !== 'capsolver' || typeof result.enabled !== 'boolean' ||
+      typeof result.hasKey !== 'boolean' || typeof result.storageAvailable !== 'boolean' ||
+      !captchaLimits.every(([, name, max]) => Number.isInteger(result.limits?.[name]) && result.limits[name] >= 1 && result.limits[name] <= max) ||
+      !['unchecked', 'valid', 'error'].includes(result.verification?.status) ||
+      ![result.usage?.requestsLast24Hours, result.usage?.active].every(value => Number.isInteger(value) && value >= 0)) {
+    throw new Error('Invalid settings response')
+  }
+  captchaSettings = { enabled: result.enabled, hasKey: result.hasKey, storageAvailable: result.storageAvailable }
+  $('captcha-enabled').checked = result.enabled
+  for (const [id, name] of captchaLimits) $(id).value = result.limits[name]
+  $('captcha-key-state').textContent = result.hasKey ? 'A key is saved' : 'No key saved'
+  $('captcha-summary').textContent = result.enabled ? 'Enabled · CapSolver' : 'Disabled · CapSolver'
+  $('captcha-storage').hidden = result.storageAvailable
+  $('captcha-account').hidden = false
+  const verification = result.verification
+  let message = !result.hasKey ? 'Save a key to check your CapSolver balance.'
+    : verification.status === 'valid' ? 'Key verified'
+    : verification.status === 'error' ? 'Key check failed. Check your saved key and CapSolver account.' : 'Key not checked'
+  if (result.hasKey && verification.status === 'valid' && Number.isFinite(verification.balanceUsd) && verification.balanceUsd >= 0) {
+    message += ` · Balance: ${verification.balanceUsd.toLocaleString(undefined, { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 4 })} USD`
+  }
+  const checkedAt = typeof verification.checkedAt === 'string' ? new Date(verification.checkedAt) : null
+  if (result.hasKey && checkedAt && Number.isFinite(checkedAt.getTime())) message += ` · Checked ${checkedAt.toLocaleString()}`
+  $('captcha-verification').textContent = message
+  $('captcha-usage').textContent = `${result.usage.requestsLast24Hours} paid attempts in the last 24 hours · ${result.usage.active} active`
+  if (!captchaTotals) renderCaptchaTotals(result.usage)
+}
+
+async function runCaptchaAction(action, args = {}) {
+  if (captchaBusy || disposed) return
+  const focus = document.activeElement
+  captchaBusy = true
+  $('captcha-key').value = ''
+  showError($('captcha-error'), '')
+  $('captcha-retry').hidden = true
+  $('captcha-status').textContent = { get: 'Loading settings…', save: 'Saving settings…', check: 'Checking saved key and balance…', remove_key: 'Removing key…' }[action]
+  updateCaptchaControls()
+  try {
+    const pending = rpc('captcha_settings', { action, ...args })
+    delete args.key
+    const result = await pending
+    if (disposed) return
+    renderCaptchaSettings(result)
+    $('captcha-status').textContent = {
+      get: 'Settings loaded.', save: 'Settings saved.',
+      check: result.hasKey && result.verification.status === 'valid' ? 'Balance check completed.' : 'Balance check failed.',
+      remove_key: !result.hasKey && !result.enabled ? 'Key removed. CapSolver is disabled.' : 'Settings updated. Review the saved key and enabled state.'
+    }[action]
+  } catch {
+    if (disposed) return
+    // A provider error must never echo a submitted key into dashboard content.
+    showError($('captcha-error'), {
+      get: 'Could not load CAPTCHA settings. Use the private admin dashboard link and try again.',
+      save: 'Could not save settings. Check the key and limits, then try again. Re-enter a new key if you were replacing it.',
+      check: 'Could not check the balance. Check your saved key, CapSolver account and connection, then try again.',
+      remove_key: 'Could not remove the key. Try again.'
+    }[action])
+    if (action === 'check') $('captcha-verification').textContent = 'Latest balance check failed. The current balance is unavailable.'
+    $('captcha-status').textContent = ''
+    $('captcha-retry').hidden = action !== 'get'
+    if (action === 'get') {
+      captchaSettings = null
+      $('captcha-summary').textContent = 'Unavailable · CapSolver'
+      $('captcha-key-state').textContent = 'Key status unavailable'
+      $('captcha-account').hidden = true
+      $('captcha-storage').hidden = true
+    }
+  } finally {
+    delete args.key
+    $('captcha-key').value = ''
+    captchaBusy = false
+    updateCaptchaControls()
+    if (!disposed && $('captcha-settings').open && document.activeElement === document.body && $('captcha-form').contains(focus)) {
+      const next = !focus.matches(':disabled') ? focus : !$('captcha-save').disabled ? $('captcha-save') : $('captcha-settings-heading')
+      next.focus({ preventScroll: true })
+    }
+  }
+}
+
+$('captcha-settings').addEventListener('toggle', () => {
+  $('captcha-key').value = ''
+  clearCaptchaValidation()
+  if ($('captcha-settings').open) runCaptchaAction('get')
+})
+$('captcha-retry').addEventListener('click', () => runCaptchaAction('get'))
+$('captcha-key').addEventListener('input', updateCaptchaControls)
+$('captcha-form').addEventListener('submit', event => {
+  event.preventDefault()
+  if (captchaBusy || !captchaSettings?.storageAvailable) return
+  clearCaptchaValidation()
+  const args = { enabled: $('captcha-enabled').checked }
+  let firstInvalid
+  const invalid = (id, message) => {
+    $(id).setAttribute('aria-invalid', 'true')
+    showError($(id + '-error'), message)
+    firstInvalid ||= $(id)
+  }
+  if (args.enabled && !captchaSettings.hasKey && !$('captcha-key').value.trim()) invalid('captcha-key', 'Enter your CapSolver API key before enabling the service.')
+  for (const [id, name, max] of captchaLimits) {
+    const value = Number($(id).value)
+    if (!Number.isInteger(value) || value < 1 || value > max) invalid(id, `Enter a whole number from 1 to ${max.toLocaleString()}.`)
+    else args[name] = value
+  }
+  if (firstInvalid) {
+    $('captcha-status').textContent = 'Settings were not sent. Correct the highlighted fields.'
+    firstInvalid.focus()
+    return
+  }
+  if ($('captcha-key').value.trim()) args.key = $('captcha-key').value.trim()
+  runCaptchaAction('save', args)
+})
+$('captcha-check').addEventListener('click', () => runCaptchaAction('check'))
+$('captcha-remove').addEventListener('click', () => runCaptchaAction('remove_key'))
+
 async function rpc(method, args = {}) {
   if (!token) throw new Error('Open the private dashboard link printed by the CLI. The link is required again after reloading this page.')
   const response = await fetch('/rpc', {
@@ -55,7 +214,8 @@ function makeCard(taskId) {
   const meta = element('div', 'task-meta')
   const owner = element('span')
   const id = element('code')
-  meta.append(owner, element('span', '', '·'), id)
+  const captchaCount = element('span', 'task-captcha-count')
+  meta.append(owner, element('span', '', '·'), id, element('span', '', '·'), captchaCount)
   const url = element('p', 'url')
   const reason = element('p', 'human-reason')
   const blocked = element('p', 'blocked-origins')
@@ -87,7 +247,7 @@ function makeCard(taskId) {
   error.hidden = true
   card.append(top, meta, url, pageLabel, reason, blocked, actions, error)
   $('tasks').append(card)
-  return { card, title, badge, owner, id, url, pageLabel, pageSelect, reason, blocked, buttons, error }
+  return { card, title, badge, owner, id, captchaCount, url, pageLabel, pageSelect, reason, blocked, buttons, error }
 }
 
 function updateCard(task) {
@@ -101,6 +261,7 @@ function updateCard(task) {
   view.badge.dataset.state = task.state
   view.owner.textContent = task.owner || 'Local client'
   view.id.textContent = id
+  view.captchaCount.textContent = `CAPTCHA solutions: ${captchaStats(task.captchaStats).solutionsDelivered.toLocaleString()}`
   view.url.textContent = task.url || 'Waiting for a page'
   view.reason.textContent = task.reason || (task.state === 'needs-human' ? 'Human input is needed. Choose Show to inspect the task.' : '')
   view.reason.hidden = !view.reason.textContent
@@ -143,6 +304,7 @@ function filterTasks() {
 }
 
 function renderStatus(status) {
+  renderCaptchaTotals(status.captchaStats)
   tasks = status.tasks ?? []
   const ids = new Set(tasks.map(task => task.taskId))
   for (const [id, view] of cards) if (!ids.has(id)) { view.card.remove(); cards.delete(id) }
@@ -154,6 +316,7 @@ function renderStatus(status) {
     clearScreenshot()
   }
   const selected = tasks.find(task => task.taskId === selectedTaskId)
+  $('inspection-captcha-outcomes').textContent = captchaOutcomeText(selected?.captchaStats)
   if (selected?.privacy?.active) protectInspection()
   $('screenshot').disabled = !selected || terminal(selected.state) || busy.has(selectedTaskId) || selected.privacy?.active === true
   $('inspect-again').disabled = !selected || terminal(selected.state) || busy.has(selectedTaskId)
@@ -219,6 +382,7 @@ function renderObservation(taskId, observation) {
   $('inspector-empty').hidden = true
   $('inspection').hidden = false
   const task = tasks.find(task => task.taskId === taskId)
+  $('inspection-captcha-outcomes').textContent = captchaOutcomeText(task?.captchaStats)
   if (observation.privacy?.active || task?.privacy?.active) {
     if (task && observation.privacy?.active) task.privacy = observation.privacy
     protectInspection()
@@ -338,5 +502,5 @@ document.addEventListener('visibilitychange', () => {
   clearTimeout(pollTimer)
   if (!document.hidden) refresh()
 })
-window.addEventListener('pagehide', () => { disposed = true; clearTimeout(pollTimer) })
+window.addEventListener('pagehide', () => { disposed = true; clearTimeout(pollTimer); $('captcha-key').value = '' })
 refresh()

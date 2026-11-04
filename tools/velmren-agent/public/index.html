@@ -39,6 +39,7 @@
         <div id="inspector-empty" class="inspector-empty"><svg viewBox="0 0 48 48" aria-hidden="true"><rect x="7" y="10" width="34" height="28" rx="4"/><path d="M7 18h34M14 14h1m4 0h1M15 25h18m-18 6h12"/></svg><h3>Look into a task</h3><p>Choose Observe to read the page and its controls. Capture an image when you need a visual check.</p></div>
         <div id="inspection" hidden>
           <p id="inspection-owner" class="eyebrow"></p><h3 id="inspection-title" class="inspection-title"></h3><p id="inspection-url" class="url"></p><p id="inspection-stamp" class="muted"></p>
+          <div class="task-captcha-summary"><p id="inspection-captcha-outcomes" class="captcha-outcomes"></p><p class="settings-help">Solutions delivered to widgets; site acceptance may differ. Paid attempts may still count after cancellation.</p></div>
           <div class="inspector-actions"><button id="inspect-again" class="button" type="button">Observe again</button><button id="screenshot" class="button" type="button">Capture screenshot</button></div>
           <div id="inspection-error" class="inline-error" role="alert" hidden></div>
           <figure id="screenshot-view" class="screenshot-view" hidden><img id="screenshot-image" alt="On-demand screenshot of the selected browser task"><figcaption id="screenshot-caption"></figcaption></figure>
@@ -48,6 +49,38 @@
         </div>
       </aside>
     </div>
+    <details id="captcha-settings" class="settings-panel">
+      <summary id="captcha-settings-heading"><span>CAPTCHA service</span><span class="settings-summary"><span class="captcha-counter">CAPTCHA solutions <strong id="captcha-total">—</strong></span><span id="captcha-summary">Optional · CapSolver</span></span></summary>
+      <div class="settings-content">
+        <p class="settings-copy">Use your own CapSolver account. Paid attempts use your CapSolver balance; there is no shared Velmren account.</p>
+        <p class="settings-copy">When enabled, Velmren sends the website origin and CAPTCHA widget parameters to CapSolver. Form contents and cookies are not sent.</p>
+        <p id="captcha-storage" class="settings-warning" hidden>Windows secure storage is unavailable. Saving a key and enabling this service are unavailable on this computer.</p>
+        <p id="captcha-error" class="inline-error" role="alert" hidden></p>
+        <button id="captcha-retry" class="button" type="button" hidden>Retry loading settings</button>
+        <form id="captcha-form" autocomplete="off" novalidate aria-labelledby="captcha-settings-heading" aria-busy="false">
+          <fieldset id="captcha-fields" disabled>
+            <legend class="sr-only">CapSolver settings</legend>
+            <label class="settings-toggle" for="captcha-enabled"><input id="captcha-enabled" type="checkbox" aria-describedby="captcha-enabled-help"><span>Enable CapSolver</span></label>
+            <p id="captcha-enabled-help" class="settings-help">Off by default. Save settings to apply changes.</p>
+            <div class="settings-field settings-key">
+              <label for="captcha-key">CapSolver API key</label>
+              <input id="captcha-key" type="password" autocomplete="off" autocapitalize="none" spellcheck="false" aria-describedby="captcha-key-help captcha-key-state captcha-key-error">
+              <p id="captcha-key-state" class="settings-key-state">Key status not loaded</p>
+              <p id="captcha-key-help" class="settings-help">Leave blank to keep a saved key. Save a new key before checking its balance. The input is cleared after sending.</p>
+              <p id="captcha-key-error" class="settings-field-error" hidden></p>
+            </div>
+            <div class="settings-limits">
+              <div class="settings-field"><label for="captcha-daily">Paid attempts per rolling 24 hours</label><input id="captcha-daily" type="number" min="1" max="1000" step="1" value="100" inputmode="numeric" aria-describedby="captcha-daily-help captcha-daily-error"><p id="captcha-daily-help" class="settings-help">1–1,000 attempts</p><p id="captcha-daily-error" class="settings-field-error" hidden></p></div>
+              <div class="settings-field"><label for="captcha-task">Paid attempts per browser task</label><input id="captcha-task" type="number" min="1" max="10" step="1" value="3" inputmode="numeric" aria-describedby="captcha-task-help captcha-task-error"><p id="captcha-task-help" class="settings-help">1–10 attempts</p><p id="captcha-task-error" class="settings-field-error" hidden></p></div>
+              <div class="settings-field"><label for="captcha-concurrent">Concurrent paid attempts</label><input id="captcha-concurrent" type="number" min="1" max="5" step="1" value="2" inputmode="numeric" aria-describedby="captcha-concurrent-help captcha-concurrent-error"><p id="captcha-concurrent-help" class="settings-help">1–5 attempts</p><p id="captcha-concurrent-error" class="settings-field-error" hidden></p></div>
+            </div>
+          </fieldset>
+          <div id="captcha-account" class="settings-account" hidden><p id="captcha-verification"></p><p id="captcha-usage" class="settings-help"></p><p class="settings-help">All-time outcomes</p><p id="captcha-outcomes" class="captcha-outcomes"></p><p class="settings-help">Solutions delivered to widgets; site acceptance may differ. Paid attempts may still count after cancellation. Uncertain outcomes are shown separately from failures.</p></div>
+          <div class="settings-actions"><button id="captcha-save" class="button primary" type="submit" disabled>Save settings</button><button id="captcha-check" class="button" type="button" disabled>Check balance</button><button id="captcha-remove" class="button danger" type="button" disabled>Remove key and disable</button></div>
+          <p id="captcha-status" class="settings-status" role="status" aria-live="polite" aria-atomic="true"></p>
+        </form>
+      </div>
+    </details>
     <footer><span id="updated">Waiting for the local broker</span><span>Task pages stay in the background until you choose Show.</span></footer>
   </main>
 </body>

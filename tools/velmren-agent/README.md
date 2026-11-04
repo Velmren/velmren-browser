@@ -29,6 +29,51 @@ Its sign-ins and site storage survive task completion and browser restarts.
 Tasks share that profile's origin storage while retaining separate page ownership.
 The default `"isolated"` mode remains available for disposable, independent sessions.
 
+### Optional CapSolver integration
+
+Open **CAPTCHA service** in the local control panel to save your own CapSolver
+key, set attempt limits, check its balance, and explicitly enable the service.
+It is disabled by default. Windows DPAPI protects the saved key for the current
+OS user; the service directory grants access only to that user and SYSTEM.
+Keys are sent through anonymous pipes for protection and directly to
+`https://api.capsolver.com` for provider calls. They never appear in MCP, CLI,
+process arguments, browser pages, or request traces. Removing the key disables
+the service without resetting usage or outcome statistics.
+
+`velmren_captcha` / `task_captcha` supports `inspect`, `solve`, `status`, and
+`cancel`. Inspect the intended task/page/frame first, then pass its opaque
+`challengeId` to solve. Solve returns a `jobId` promptly; poll status instead of
+holding a tool call open. A repeated solve for that challenge returns the same
+job. The adapter never automatically repeats `createTask` after a lost response.
+Each attempt is reserved durably before sending it and counts toward the rolling
+24-hour and per-task limits, even if the outcome becomes uncertain. The service
+also limits simultaneous provider requests.
+
+Supported variants are visible reCAPTCHA v2, visible reCAPTCHA v2 Enterprise,
+and standalone Turnstile widgets with an unambiguous response field or captured
+completion callback. Open shadow roots and ordinary frames are supported.
+Invisible widgets, hCaptcha, Cloudflare interstitials, closed-shadow-only
+widgets, and results requiring a different User-Agent are rejected. Enabling
+before navigation captures explicit anonymous render callbacks; callbacks
+already registered before enabling may be unavailable. Provider requests carry
+only the site origin, site key, and supported widget metadata, never cookies or
+page content. Origin-only requests may be insufficient on some sites.
+
+Solutions remain inside the broker and are bound to the original page session,
+document, widget, response field and callback. Changes invalidate delivery.
+Applying a token enables the task's sensitive-output protection and does not
+submit a form itself; a site's completion callback may navigate or submit.
+Successful widget delivery is not proof that the website accepted it. Follow
+the sensitive-phase transition below before revealing a safe destination.
+
+The panel keeps separate totals for **delivered**, **failed**, **cancelled**, and
+**uncertain** outcomes, plus the current task's totals. Failed includes rejected
+or stale delivery. Cancelled attempts may still incur provider charges.
+Interrupted dispatched jobs become uncertain after restart. A lost result or
+callback exception is not counted as success. Paid-attempt usage remains
+separate from these outcome counts. Global totals persist locally; per-task
+totals belong to that broker session. Actual provider billing is authoritative.
+
 ### Sensitive inputs and outputs
 
 Public responses expose HTTP(S) origins only, including URLs inside text. They

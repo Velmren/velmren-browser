@@ -6,7 +6,7 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const identifier = value => typeof value === 'string' && (uuid.test(value) || /^[0-9a-f]{32}$/i.test(value))
 const ref = value => typeof value === 'string' && /^e[1-9][0-9]{0,8}$/.test(value)
 const urlKey = key => /(?:url|uri|href|src|origin)$/i.test(key)
-const privateKeys = new Set(['secret', 'secretRef', 'password', 'token', 'adminToken', 'authorization', 'cookie', '__proto__', 'constructor', 'prototype'])
+const privateKeys = new Set(['secret', 'secretRef', 'password', 'token', 'adminToken', 'apiKey', 'clientKey', 'encryptedKey', 'authorization', 'cookie', '__proto__', 'constructor', 'prototype'])
 
 // An unknown path can contain a credential. No path or parameter is public.
 export function safePublicUrl(raw) {
@@ -20,6 +20,23 @@ export function safePublicUrl(raw) {
 
 const publicText = value => value.replace(/\b(?:https?:|wss?:|ftp:|file:|blob:|data:|javascript:|about:)[^\s]+|(?<![:/])\/\/[^\s]+/gi, safePublicUrl)
 const errorMessages = Object.freeze({
+  CAPTCHA_AUTH_REQUIRED: 'Save a valid CapSolver key in the local settings.',
+  CAPTCHA_NO_BALANCE: 'The CapSolver account has insufficient balance.',
+  CAPTCHA_PROVIDER_ERROR: 'The CAPTCHA provider could not complete the request.',
+  CAPTCHA_DELIVERY_UNCERTAIN: 'The provider request may have been accepted. Do not repeat it automatically.',
+  CAPTCHA_TIMEOUT: 'The CAPTCHA operation timed out; its result may be unknown.',
+  CAPTCHA_CANCELLED: 'CAPTCHA delivery was cancelled. A dispatched attempt may still be charged.',
+  CAPTCHA_LIMIT_REACHED: 'The configured CAPTCHA attempt limit was reached.',
+  CAPTCHA_ALREADY_ATTEMPTED: 'This challenge already has a paid attempt. Inspect its result.',
+  CAPTCHA_DISABLED: 'Enable CapSolver in the local settings first.',
+  CAPTCHA_STORAGE_UNAVAILABLE: 'Local encrypted service storage is unavailable.',
+  CAPTCHA_STALE: 'The CAPTCHA destination changed; its solution was not applied.',
+  CAPTCHA_ALREADY_SOLVED: 'This widget already has a solution.',
+  CAPTCHA_UNSUPPORTED: 'This CAPTCHA variant cannot be delivered by this integration.',
+  CAPTCHA_CONTEXT_UNAVAILABLE: 'The CAPTCHA document is unavailable.',
+  CAPTCHA_PAGE_FAILED: 'The CAPTCHA widget operation failed.',
+  CAPTCHA_INVALID_TOKEN: 'The provider returned an invalid solution.',
+  CAPTCHA_BUSY: 'This browser task already has a pending CAPTCHA job.',
   BROKER_ERROR: 'Browser operation failed.',
   BROKER_INCOMPATIBLE: 'The running broker lacks this agent protocol. Reconnect after existing clients finish and the old broker exits.',
   TOOL_ERROR: 'Browser tool failed.',
@@ -105,6 +122,14 @@ const choices = {
   checked: ['mixed'], pressed: ['mixed'],
   owner: ['admin', 'codex', 'claude', 'scripts']
 }
+for (const key of ['jobId', 'challengeId']) ids.add(key)
+for (const key of ['captchaStats', 'challenges', 'receipt']) containers.add(key)
+for (const key of ['supported', 'alreadySolved', 'applied', 'callbackInvoked', 'deliveryUncertain', 'persisted']) booleans.add(key)
+for (const key of ['solutionsDelivered', 'failed', 'cancelled', 'uncertain']) numbers.add(key)
+choices.status.push('pending', 'delivered', 'failed', 'cancelled', 'uncertain')
+choices.provider = ['capsolver', 'recaptcha-v2', 'recaptcha-v2-enterprise', 'turnstile', 'unsupported']
+choices.code = Object.keys(errorMessages)
+choices.reason.push('hcaptcha', 'cloudflare-interstitial', 'unknown-provider', 'ambiguous-widget', 'conflicting-sitekey', 'conflicting-provider', 'missing-sitekey', 'invisible-widget', 'callback-unavailable', 'unsupported-metadata', 'ambiguous-response-field', 'response-target-unavailable', 'widget-removed', 'already-solved')
 const enums = new Map(Object.entries(choices).map(([key, values]) => [key, new Set(values)]))
 const actions = new Set(['click', 'fill', 'select', 'press', 'setChecked', 'uploadFiles'])
 

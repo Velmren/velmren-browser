@@ -1,13 +1,13 @@
 # Managed MCP connection
 
-The MCP catalog has 22 tools, including `velmren_sensitive`. Begin a protected
+The MCP catalog has 23 tools, including `velmren_sensitive` and `velmren_captcha`. Begin a protected
 phase before credential or activation work; use a locally staged `secretRef`
 for secret input. All response paths use the same output projection, including
 errors and task/page lists. URLs disclose only origins, and protected phases
 block screenshots and free page content. See the [input and phase contract](README.md#sensitive-inputs-and-outputs).
 The private staging callback is intentionally absent from the tool catalog and
 CLI; it does not require writing credentials to a file.
-Managed startup requires broker `agentProtocol: 2` before registration. A newer
+Managed startup requires broker `agentProtocol: 3` before registration. A newer
 adapter cannot reuse an older broker without the protected-output contract.
 `BROKER_INCOMPATIBLE` preserves existing clients and tasks; reconnect after those
 clients finish and the old broker exits normally.

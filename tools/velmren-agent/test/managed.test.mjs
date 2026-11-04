@@ -302,7 +302,7 @@ test('an older or unknown broker protocol cannot be reused or replace existing c
   const existing = createClient(first)
   await existing.call('task_list')
   const descriptor = await readManagedDescriptor(config.stateDir)
-  for (const version of [undefined, 1, 3, '2']) {
+  for (const version of [undefined, 1, 2, 4, '3']) {
     await adminRpc(descriptor, 'set_agent_protocol', { version })
     let spawned = false
     await assert.rejects(connectManaged(config, { spawnDaemon: () => { spawned = true } }), { code: 'BROKER_INCOMPATIBLE' })
