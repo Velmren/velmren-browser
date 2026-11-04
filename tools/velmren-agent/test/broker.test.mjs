@@ -122,7 +122,7 @@ test('HTTP error envelope forwards only the structured action whitelist',()=>{
     results:[{index:0,type:'fill',ref:'e1',delivery:'delivered_verified',value:'secret',verification:{scope:'element',status:'matched',actual:'secret'}}],
     recovery:{retry:'failed_action_only',observe:true,reason:'not_dispatched',prompt:'secret'},args:{password:'secret'}
   }})
-  assert.deepEqual(rpcErrorResponse(error),{ok:false,error:'Action failed',code:'STALE_OBSERVATION',actionResult:{
+  assert.deepEqual(rpcErrorResponse(error),{ok:false,error:'Page observation changed; observe again.',code:'STALE_OBSERVATION',actionResult:{
     completed:1,failedIndex:1,delivery:'not_delivered',
     results:[{index:0,type:'fill',ref:'e1',delivery:'delivered_verified',verification:{scope:'element',status:'matched'}}],
     recovery:{retry:'failed_action_only',observe:true,reason:'not_dispatched'}

@@ -1,11 +1,11 @@
 import { pathToFileURL } from 'node:url'
 import { connectClient, dashboardUrl, METHODS, parseOptions } from './client.mjs'
-import { sanitizeActionResult, sanitizeWaitResult } from './action-result.mjs'
+import { sanitizePublicError, sanitizePublicResult } from './privacy.mjs'
 
 export async function main(argv = process.argv.slice(2)) {
   const options = parseOptions(argv)
   if (options.help) {
-    process.stdout.write(`Usage:\n  node cli.mjs --state-dir <directory> --client scripts <method> '<json>'\n  node cli.mjs --state-dir <directory> dashboard\n  node cli.mjs --state-dir <directory> --client codex mcp\n\nMethods: ${METHODS.join(', ')}\nDashboard prints a private admin link. Do not share it.\n`)
+    process.stdout.write(`Usage:\n  node cli.mjs --state-dir <directory> --client scripts <method> '<json>'\n  node cli.mjs --state-dir <directory> dashboard\n  node cli.mjs --state-dir <directory> --client codex mcp\n\nMethods: ${METHODS.filter(method => !['task_private_input', 'agent_protocol'].includes(method)).join(', ')}\nDashboard prints a private admin link. Do not share it.\n`)
     return
   }
   const [method, json, ...extra] = options.positional
@@ -21,15 +21,15 @@ export async function main(argv = process.argv.slice(2)) {
     return startMcp(options)
   }
   let args
+  if (method === 'task_private_input') throw new Error('Use the local private-input callback adapter')
   try { args = json === undefined ? {} : JSON.parse(json) } catch { throw new Error('Arguments must be a valid JSON object') }
   const result = await (await connectClient(options.stateDir, options.client)).call(method, args)
-  process.stdout.write(`${JSON.stringify({ ok: true, result }, null, 2)}\n`)
+  process.stdout.write(`${JSON.stringify({ ok: true, result: sanitizePublicResult(result, { sensitive: result?.privacy?.active === true }) }, null, 2)}\n`)
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch(error => {
-    const actionResult = sanitizeActionResult(error.actionResult), waitResult = sanitizeWaitResult(error.waitResult)
-    process.stderr.write(`${JSON.stringify({ ok: false, error: error.message, code: error.code ?? 'CLI_ERROR', ...(actionResult ? { actionResult } : {}), ...(waitResult ? { waitResult } : {}) })}\n`)
+    process.stderr.write(`${JSON.stringify({ ok: false, ...sanitizePublicError(error) })}\n`)
     process.exitCode = 1
   })
 }

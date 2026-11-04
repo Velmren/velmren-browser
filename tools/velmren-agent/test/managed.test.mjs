@@ -295,6 +295,23 @@ test('an unhealthy broker is rejected without spawning or registering another cl
   assert.equal(spawned, false)
 })
 
+test('an older or unknown broker protocol cannot be reused or replace existing clients', async t => {
+  const config = await options()
+  t.after(() => stop(config.stateDir))
+  const first = await connectManaged(config)
+  const existing = createClient(first)
+  await existing.call('task_list')
+  const descriptor = await readManagedDescriptor(config.stateDir)
+  for (const version of [undefined, 1, 3, '2']) {
+    await adminRpc(descriptor, 'set_agent_protocol', { version })
+    let spawned = false
+    await assert.rejects(connectManaged(config, { spawnDaemon: () => { spawned = true } }), { code: 'BROKER_INCOMPATIBLE' })
+    assert.equal(spawned, false)
+    assert.equal((await adminRpc(descriptor, 'broker_status')).clients, 1)
+    assert.deepEqual((await existing.call('task_list')).tasks, [])
+  }
+})
+
 test('a live manual-login controller accepts peers without starting another browser', async t => {
   const config = await options()
   t.after(() => stop(config.stateDir))

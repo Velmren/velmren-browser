@@ -2,11 +2,13 @@ import { randomUUID } from 'node:crypto'
 import { actionResult } from './action-result.mjs'
 import * as formControls from './form-controls.mjs'
 import * as documentObservation from './document-observation.mjs'
+import * as sensitiveRenderer from './sensitive-renderer.mjs'
+import { sanitizePublicError } from './privacy.mjs'
 
 const { prepareElement, applyFormValue, verifyElementValue } = formControls
 const { observeDocument, listSelectOptions } = documentObservation
 const formPrelude = Object.values(formControls).map(fn => fn.toString()).join('\n')
-const rendererPrelude = formPrelude + '\n' + Object.values(documentObservation).map(fn => fn.toString()).join('\n')
+const rendererPrelude = formPrelude + '\n' + Object.values(documentObservation).map(fn => fn.toString()).join('\n') + '\n' + Object.values(sensitiveRenderer).map(fn => fn.toString()).join('\n')
 
 class DialogOpened extends Error {}
 
@@ -47,6 +49,7 @@ function waitForCondition({ text, predicate, timeoutMs }) {
 
 export class AgentPage {
   constructor(browser, targetId, sessionId, { frameId = null, rootPage = null, parentFrameId = null } = {}) {
+    this.documentId = randomUUID()
     Object.assign(this, { browser, targetId, pageId: targetId, sessionId, epoch: 0, frameId, rootPage, parentFrameId, world: null, observation: null, dialog: null, chooser: null, interceptFileChooser: true, url: 'about:blank', title: '' })
     this.dialogWaiters = new Set()
     this.pendingCommands = new Set()
@@ -58,6 +61,8 @@ export class AgentPage {
       if (message.sessionId !== this.sessionId) return
       if (message.method === 'Page.frameNavigated' && (this.rootPage ? message.params.frame.id === this.frameId : !message.params.frame.parentId)) {
         this.frameId = message.params.frame.id
+        this.documentId = randomUUID()
+        this.loaderId = message.params.frame.loaderId
         this.url = message.params.frame.url
         this.epoch++; this.world = null; this.observation = null; this.chooser = null
       }
@@ -132,7 +137,14 @@ export class AgentPage {
     try {
       result = await this.interruptOnDialog(this.send('Runtime.evaluate', { expression:`(()=>{${rendererPrelude};return (${fn.toString()})(${JSON.stringify(args) ?? ''})})()`, contextId:this.world, awaitPromise:true, returnByValue }))
     } catch (error) { if (!(error instanceof DialogOpened)) error.deliveryUncertain = true; throw error }
-    if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description || result.exceptionDetails.text)
+    if (result.exceptionDetails) {
+      const firstLine = String(result.exceptionDetails.exception?.description || result.exceptionDetails.text).split('\n')[0].replace(/^Error:\s*/, '').trim()
+      const code = /^(?:Element|Frame) is obscured$/.test(firstLine) ? 'ELEMENT_OBSCURED'
+        : /^(?:Element is disabled|Element is not visible|Private input target is unavailable)$/.test(firstLine) ? 'ELEMENT_UNAVAILABLE'
+        : /^Private input (?:target|observation|origin|document) changed$/.test(firstLine) ? 'PRIVATE_INPUT_BINDING_CHANGED'
+        : /^(?:Stale observation|Unknown element reference|Element reference is stale|Page changed since observation)/.test(firstLine) ? 'STALE_OBSERVATION' : 'ACTION_FAILED'
+      throw Object.assign(new Error(sanitizePublicError({ code }).error), { code })
+    }
     return returnByValue ? result.result.value : result.result
   }
   async observe(readOnly = false, options = {}) {
@@ -184,11 +196,27 @@ export class AgentPage {
     await loaded
     return this.observe()
   }
-  async act(observationId, actions, stillActive = () => true) {
+  async act(observationId, actions, stillActive = () => true, privateInput) {
     const epoch = this.epoch, results = []
     let completed = 0, current = 0, dispatched = false, focusEnabled = false
     const record = (action, delivery, verification) => ({ index: current, type: action.type,
       ...(/^e[1-9][0-9]{0,8}$/.test(action.ref ?? '') ? { ref: action.ref } : {}), delivery, ...(verification ? { verification } : {}) })
+    const fillSensitive = async action => {
+      if (!privateInput) throw new Error('Private input context is unavailable')
+      privateInput.begin()
+      const target = await this.preparePrivateInput(observationId, action.ref, undefined, true)
+      if (!stillActive() || epoch !== this.epoch) throw new Error('Task paused during private input preparation')
+      const deliver = async value => {
+        if (!stillActive() || epoch !== this.epoch) throw new Error('Task paused before private input')
+        dispatched = true
+        return this.evaluate(sensitiveRenderer.applyPrivateValue, { ref: action.ref, revision: this.observation.revision, origin: target.origin, value })
+      }
+      const verification = action.secretRef !== undefined
+        ? await privateInput.consume(action.secretRef, target, action.ref, deliver)
+        : await deliver(action.value)
+      completed++
+      results.push(record(action, verification.status === 'matched' ? 'delivered_verified' : 'delivered_unverified', verification))
+    }
     try {
       if (actions.length === 1 && actions[0].type === 'handleDialog') {
         if (!stillActive()) throw new Error('Task is paused')
@@ -212,14 +240,22 @@ export class AgentPage {
         dispatched = false
         try {
           if (!stillActive() || epoch !== this.epoch) throw new Error('Task state or document changed; remaining actions stopped')
+          const sensitiveFill = action.type === 'fill' && (action.secretRef !== undefined || action.sensitive === true ||
+            privateInput && await this.evaluate(sensitiveRenderer.isSensitiveTarget, { ref: action.ref }))
+          if (sensitiveFill) {
+            await fillSensitive(action)
+            continue
+          }
           if (action.type === 'press') {
-            const keys = { Enter:13, Tab:9, Escape:27, ArrowDown:40, ArrowUp:38, Backspace:8 }
+            const keys = { Enter:13, Tab:9, Escape:27, ArrowDown:40, ArrowUp:38, ArrowLeft:37, ArrowRight:39, Backspace:8, Delete:46, Home:36, End:35, PageUp:33, PageDown:34, Space:32, Spacebar:32 }
             if (!Object.hasOwn(keys, action.key)) throw new Error('Unsupported key')
             if (action.ref) { await this.prepareFrame(); await this.evaluate(prepareElement, action) }
             if (!stillActive() || epoch !== this.epoch) throw new Error('Task paused during action preparation')
             dispatched = true
-            await this.interruptOnDialog(this.send('Input.dispatchKeyEvent', { type:'keyDown', key:action.key, windowsVirtualKeyCode:keys[action.key], ...(action.key === 'Enter' ? { text:'\r' } : {}) }))
-            await this.interruptOnDialog(this.send('Input.dispatchKeyEvent', { type:'keyUp', key:action.key, windowsVirtualKeyCode:keys[action.key] }))
+            const space = keys[action.key] === 32
+            const key = { key: space ? ' ' : action.key, code: space ? 'Space' : action.key, windowsVirtualKeyCode: keys[action.key] }
+            await this.interruptOnDialog(this.send('Input.dispatchKeyEvent', { type:'keyDown', ...key, ...(space ? { text:' ' } : action.key === 'Enter' ? { text:'\r' } : {}) }))
+            await this.interruptOnDialog(this.send('Input.dispatchKeyEvent', { type:'keyUp', ...key }))
           } else {
             if (!['click', 'fill', 'select', 'setChecked'].includes(action.type)) throw new Error('Unsupported action')
             await this.prepareFrame()
@@ -227,6 +263,12 @@ export class AgentPage {
             const clicking = ['click', 'setChecked'].includes(action.type) && !point.noOp
             if (clicking) point = await this.toRootPoint(point)
             if (!stillActive() || epoch !== this.epoch) throw new Error('Task paused during action preparation')
+            // Scroll/focus handlers can turn an ordinary text field into a
+            // password or OTP. Reclassify the prepared node before delivery.
+            if (action.type === 'fill' && privateInput && await this.evaluate(sensitiveRenderer.isSensitiveTarget, { ref: action.ref })) {
+              await fillSensitive(action)
+              continue
+            }
             if (action.type === 'select' || action.type === 'fill' && point.inputMode === 'native') {
               dispatched = true
               const { expectedValue } = await this.evaluate(applyFormValue, action)
@@ -242,11 +284,17 @@ export class AgentPage {
             }
           }
           completed++
+          if (action.type === 'fill' && privateInput) {
+            try {
+              if (epoch !== this.epoch || await this.evaluate(sensitiveRenderer.isSensitiveTarget, { ref: action.ref })) privateInput.begin()
+            } catch (error) { privateInput.begin(); throw error }
+          }
           const verification = ['fill', 'select', 'setChecked'].includes(action.type)
             ? epoch === this.epoch ? await this.evaluate(verifyElementValue, verificationAction) : { scope: 'element', status: 'unavailable' }
             : undefined
           results.push(record(action, verification?.status === 'matched' ? 'delivered_verified' : 'delivered_unverified', verification))
         } catch (error) {
+          if (action.type === 'fill' && privateInput && dispatched) privateInput.begin()
           if (completed > current) {
             // Input was acknowledged; a failed readback must not change its delivery.
             results.push(record(action, 'delivered_unverified', { scope: 'element', status: 'unavailable' }))
@@ -282,6 +330,19 @@ export class AgentPage {
       error.message = `${error.message} (completed ${completed}/${actions.length}; do not blindly replay)`
       throw error
     } finally { if (focusEnabled && !this.dialog) await this.send('Emulation.setFocusEmulationEnabled', { enabled:false }).catch(()=>{}) }
+  }
+  async preparePrivateInput(observationId, ref, origin, focusAlreadyEnabled = false) {
+    if (!this.observation || this.observation.id !== observationId || this.observation.epoch !== this.epoch) throw new Error('Private input observation changed')
+    if (this.dialog) throw new Error('Handle the open dialog before private input')
+    const observation = this.observation, epoch = this.epoch
+    let focusEnabled = false
+    try {
+      if (!focusAlreadyEnabled) { await this.send('Emulation.setFocusEmulationEnabled', { enabled: true }); focusEnabled = true }
+      await this.prepareFrame()
+      const target = await this.evaluate(sensitiveRenderer.preparePrivateTarget, { ref, revision: observation.revision, origin })
+      if (this.observation !== observation || this.epoch !== epoch) throw new Error('Private input document changed')
+      return target
+    } finally { if (focusEnabled && !this.dialog) await this.send('Emulation.setFocusEmulationEnabled', { enabled: false }).catch(() => {}) }
   }
   async uploadFiles({ observationId, ref, chooserId }, files, stillActive) {
     const observation = this.observation, epoch = this.epoch

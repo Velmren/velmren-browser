@@ -117,7 +117,7 @@ test('unmatched attachments are bounded and failed creation closes only its prov
     await f.attach('failed-root', { type: 'other' })
     throw new Error('Create failed')
   }
-  await assert.rejects(f.create('A'), /Create failed/)
+  await assert.rejects(f.create('A'), { code: 'BROKER_ERROR', message: 'Browser operation failed.' })
   assert.equal(f.infos.has('failed-root'), false)
   assert.equal(f.infos.has(peer.selectedPageId), true)
   for (let index = 0; index < 129; index++) await f.attach(`unmatched-frame-${index}`, { type: 'iframe' })

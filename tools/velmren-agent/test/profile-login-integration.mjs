@@ -76,9 +76,9 @@ try {
   const firstBrowserPid = app.broker.browser.process.pid
   const owner = await connect('scripts'), peer = await connect('claude')
   const catalog = await owner.listTools()
-  assert.equal(catalog.tools.length, 21)
+  assert.equal(catalog.tools.length, 22)
   for (const name of ['velmren_profile_login_start', 'velmren_profile_login_status', 'velmren_profile_login_finish']) assert.ok(catalog.tools.some(tool => tool.name === name))
-  report.cases.push('actual MCP exposes 21 tools including the three profile login controls')
+  report.cases.push('actual MCP exposes 22 tools including profile login and sensitive input controls')
 
   const task = await call(owner, 'velmren_create_task', { url: `${origin}/seed` })
   await call(owner, 'velmren_profile_login_start', { url: `${origin}/manual`, userConfirmed: true }, 'PROFILE_LOGIN_BUSY')

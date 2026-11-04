@@ -4,8 +4,10 @@ import { EventEmitter } from 'node:events'
 import { mkdtemp, mkdir } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { AgentBroker } from '../broker.mjs'
+import { BrowserPipe } from '../cdp.mjs'
 import { validateArguments } from '../client.mjs'
 import { effectivePolicyIdentity, normalizeEffectivePolicy } from '../policy-identity.mjs'
+import { beginSensitive } from '../sensitive-state.mjs'
 
 const deferred = () => { let resolve, reject; const promise = new Promise((done, fail) => { resolve = done; reject = fail }); return { promise, resolve, reject } }
 
@@ -69,6 +71,109 @@ test('browser autoattach pauses targets before any page executes', async () => {
   assert.equal(task.selectedPageId, 'popup')
 })
 
+test('navigation-suspended bypass reply does not deadlock browser-side policy bootstrap', async () => {
+  const f = fixture({ webCompatibility: true }), task = f.addTask('one'), gate = deferred()
+  await f.attach(task, 'main')
+  const send = f.browser.send
+  f.browser.send = async (method, params, sessionId) => {
+    const result = await send(method, params, sessionId)
+    if (sessionId !== 'session-popup') return result
+    if (['Network.setBypassServiceWorker', 'Page.setInterceptFileChooserDialog'].includes(method)) return gate.promise
+    if (method === 'Runtime.runIfWaitingForDebugger') {
+      const methods = f.calls.filter(call => call.sessionId === sessionId).map(call => call.method)
+      assert.ok(methods.includes('Fetch.enable'))
+      assert.ok(methods.includes('Target.setAutoAttach'))
+      assert.ok(methods.includes('Page.setInterceptFileChooserDialog'))
+      assert.ok(!methods.includes('Runtime.enable'))
+      gate.resolve({})
+    }
+    return result
+  }
+  await f.attach(task, 'popup', 'main', 'other')
+  assert.equal(task.state, 'agent-active')
+  assert.equal(f.calls.filter(call => call.sessionId === 'session-popup' && call.method === 'Network.setBypassServiceWorker').length, 1)
+  assert.ok(f.broker.targets.get('popup').interceptionReady)
+})
+
+for (const [method, code, protocolCode, reason] of [
+  ['Network.setBypassServiceWorker', 'CDP_PROTOCOL_ERROR', -32601, 'unsupported-command'],
+  ['Fetch.enable', 'CDP_TIMEOUT', undefined, 'command-timeout'],
+  ['Page.setInterceptFileChooserDialog', 'CDP_PROTOCOL_ERROR', -32601, 'unsupported-command'],
+  ['Target.setAutoAttach', 'CDP_PROTOCOL_ERROR', -32000, 'enforcement-failed']
+]) test(`${method} enforcement failure never resumes its target or cancels a peer`, async () => {
+  const f = fixture({ webCompatibility: true }), task = f.addTask('one'), peer = f.addTask('two')
+  await f.attach(task, 'main'); await f.attach(peer, 'peer')
+  const send = f.browser.send
+  f.browser.send = async (command, params, sessionId) => {
+    if (command === method && sessionId === 'session-popup') throw Object.assign(new Error('Synthetic sensitive URL and page text must not escape'), { code, protocolCode })
+    return send(command, params, sessionId)
+  }
+  await assert.rejects(f.attach(task, 'popup', 'main', 'other'), error => error.code === 'TARGET_POLICY_FAILED' && error.message.includes(reason) && !error.message.includes('sensitive'))
+  assert.equal(task.state, 'cancelled'); assert.equal(peer.state, 'agent-active'); assert.equal(peer.pages.size, 1)
+  assert.ok(!f.calls.some(call => call.sessionId === 'session-popup' && call.method === 'Runtime.runIfWaitingForDebugger'))
+  assert.match(task.reason, /other target policy: popup;/)
+})
+
+test('a bypass timeout after navigation resume still fails closed without retrying commands', async () => {
+  const f = fixture({ webCompatibility: true }), task = f.addTask('one'), gate = deferred()
+  await f.attach(task, 'main')
+  const send = f.browser.send
+  f.browser.send = async (method, params, sessionId) => {
+    const result = await send(method, params, sessionId)
+    if (sessionId === 'session-popup' && method === 'Network.setBypassServiceWorker') return gate.promise
+    if (sessionId === 'session-popup' && method === 'Runtime.runIfWaitingForDebugger') gate.reject(Object.assign(new Error('timeout'), { code: 'CDP_TIMEOUT' }))
+    return result
+  }
+  await assert.rejects(f.attach(task, 'popup', 'main', 'other'), /service-worker-acknowledgement; command-timeout/)
+  assert.equal(task.state, 'cancelled')
+  assert.equal(f.calls.filter(call => call.sessionId === 'session-popup' && call.method === 'Runtime.runIfWaitingForDebugger').length, 1)
+})
+
+test('unsupported target kinds are closed without resuming or cancelling their owning page', async () => {
+  const f = fixture({ webCompatibility: true }), task = f.addTask('one')
+  await f.attach(task, 'main')
+  await f.attach(task, 'unsupported', undefined, 'worklet', 'session-main')
+  assert.equal(task.state, 'agent-active'); assert.equal(task.pages.size, 1)
+  assert.ok(f.calls.some(call => call.method === 'Target.closeTarget' && call.params.targetId === 'unsupported'))
+  assert.ok(!f.calls.some(call => call.sessionId === 'session-unsupported'))
+})
+
+test('CDP detach immediately rejects only commands for that closed session', async () => {
+  const browser = new BrowserPipe()
+  browser.process = { stdio: [null, null, null, { write() {} }] }
+  const closed = browser.send('Network.setBypassServiceWorker', {}, 'closing')
+  const peer = browser.send('Page.enable', {}, 'peer')
+  const rejected = assert.rejects(closed, { code: 'CDP_SESSION_CLOSED', method: 'Network.setBypassServiceWorker' })
+  browser.receive(Buffer.from(JSON.stringify({ method: 'Target.detachedFromTarget', params: { sessionId: 'closing' } }) + '\0'))
+  await rejected
+  assert.equal(browser.pending.size, 1)
+  browser.receive(Buffer.from(JSON.stringify({ id: 2, result: {} }) + '\0'))
+  await peer
+  assert.equal(browser.pending.size, 0)
+})
+
+test('transient popup destroyed during bootstrap leaves its parent active with a safe closed-target diagnostic', async () => {
+  const f = fixture({ webCompatibility: true }), task = f.addTask('one'), gate = deferred(), resuming = deferred(), events = []
+  f.broker.onEvent = event => events.push(event)
+  await f.attach(task, 'main')
+  const send = f.browser.send
+  f.browser.send = async (method, params, sessionId) => {
+    if (method === 'Network.setBypassServiceWorker' && sessionId === 'session-popup') return gate.promise
+    const result = await send(method, params, sessionId)
+    if (method === 'Runtime.runIfWaitingForDebugger' && sessionId === 'session-popup') resuming.resolve()
+    return result
+  }
+  const attaching = f.attach(task, 'popup', 'main', 'other')
+  await resuming.promise
+  await f.broker.onProtocol({ method: 'Target.targetDestroyed', params: { targetId: 'popup' } })
+  gate.reject(Object.assign(new Error('Sensitive target message'), { code: 'CDP_SESSION_CLOSED' }))
+  await attaching
+  assert.equal(task.state, 'agent-active'); assert.equal(task.selectedPageId, 'main'); assert.equal(task.pages.size, 1)
+  assert.equal(f.calls.filter(call => call.sessionId === 'session-popup' && call.method === 'Runtime.runIfWaitingForDebugger').length, 1)
+  assert.ok(events.some(event => event.type === 'target-policy-lifecycle' && event.reason === 'target-closed' && event.targetId === 'popup'))
+  assert.ok(!JSON.stringify(events).includes('Sensitive'))
+})
+
 test('queued manual Show remains bound to its requested page when a popup becomes selected', async () => {
   const f = fixture({ webCompatibility: true }), task = f.addTask('one'), gate = deferred()
   const main = await f.attach(task, 'main')
@@ -91,7 +196,7 @@ test('queued manual Show rejects a replaced page session before making it visibl
   const main = await f.attach(task, 'main')
   task.queue = gate.promise
   const showing = f.broker.rpc('one', 'task_request_human', { taskId: 'one', pageId: 'main', reason: 'Sign in', showWindow: true })
-  const rejected = assert.rejects(showing, /Page session changed/)
+  const rejected = assert.rejects(showing, { code: 'PAGE_DETACHED', message: 'Page or frame changed; observe again.' })
   main.sessionId = 'replaced-session'
   gate.resolve(); await rejected
   assert.equal(task.handoff.shown, false)
@@ -192,7 +297,7 @@ test('failed root creation closes provisional native WebContents before disposin
     if (method === 'Target.createTarget') throw new Error('Create response interrupted')
     return result
   }
-  await assert.rejects(f.broker.rpc('client', 'task_create', { url: 'http://localhost/' }), /Create response interrupted/)
+  await assert.rejects(f.broker.rpc('client', 'task_create', { url: 'http://localhost/' }), { code: 'BROKER_ERROR', message: 'Browser operation failed.' })
   const close = f.calls.findIndex(call => call.method === 'Target.closeTarget' && call.params.targetId === 'created-root')
   assert.ok(close >= 0 && close < f.calls.findIndex(call => call.method === 'Target.disposeBrowserContext'))
   assert.equal(f.infos.size, 0)
@@ -429,7 +534,7 @@ test('dedicated workers require a verified ancestor frame and nested workers ret
   assert.equal(f.broker.targets.get('nested').networkOwnerSessionId, 'session-main')
   assert.ok(f.calls.some(call => call.sessionId === 'session-nested' && call.method === 'Runtime.runIfWaitingForDebugger'))
   const unowned = f.addTask('unowned')
-  await assert.rejects(f.attach(unowned, 'orphan', undefined, 'worker'), /no verified frame network policy/)
+  await assert.rejects(f.attach(unowned, 'orphan', undefined, 'worker'), /worker-ancestor-policy; enforcement-failed/)
   assert.equal(unowned.state, 'cancelled')
   assert.ok(!f.calls.some(call => call.sessionId === 'session-orphan' && call.method === 'Runtime.runIfWaitingForDebugger'))
   assert.equal(task.state, 'agent-active')
@@ -588,7 +693,7 @@ for (const failingMethod of ['Target.closeTarget', 'Target.disposeBrowserContext
       if (method === failingMethod && ++attempts === 1) throw new Error('Transient cleanup failure')
       return send(method, params, sessionId)
     }
-    await assert.rejects(f.broker.rpc(owner.clientId, 'client_release'), /Transient cleanup failure/)
+    await assert.rejects(f.broker.rpc(owner.clientId, 'client_release'), { code: 'BROKER_ERROR', message: 'Browser operation failed.' })
     assert.equal(task.state, 'cancelled'); assert.equal(task.ending, null)
     assert.ok(task.contextId); assert.equal(f.broker.record(task).cleanupPending, true)
     const due = task.cleanupRetryAt
@@ -614,7 +719,7 @@ test('persistent cleanup failures have a bounded retry budget and support explic
     if (method === 'Target.disposeBrowserContext') { attempts++; if (failDisposal) throw new Error('Persistent cleanup failure') }
     return send(method, params, sessionId)
   }
-  await assert.rejects(f.broker.rpc('one', 'task_cancel', { taskId: 'one' }), /Persistent/)
+  await assert.rejects(f.broker.rpc('one', 'task_cancel', { taskId: 'one' }), { code: 'BROKER_ERROR', message: 'Browser operation failed.' })
   for (let index = 0; index < 8; index++) await f.broker.retryCleanup(Number.POSITIVE_INFINITY)
   assert.equal(attempts, 5); assert.equal(task.ending, null); assert.equal(task.cleanupRetryAt, null)
   assert.ok(task.contextId)
@@ -635,7 +740,7 @@ test('permanently retained contexts retire with the idle owned browser after all
     if (method === 'Target.disposeBrowserContext' && params.browserContextId === retainedContext) throw new Error('Persistent context failure')
     return send(method, params, sessionId)
   }
-  await assert.rejects(f.broker.rpc(owner.clientId, 'client_release'), /Persistent context/)
+  await assert.rejects(f.broker.rpc(owner.clientId, 'client_release'), { code: 'BROKER_ERROR', message: 'Browser operation failed.' })
   for (let index = 0; index < 4; index++) await f.broker.retryCleanup(Number.POSITIVE_INFINITY)
   assert.equal(task.cleanupRetryAt, null); assert.ok(task.contextId)
   let shutdowns = 0, closing
@@ -705,3 +810,29 @@ test('browser failure is unhealthy and schedules broker shutdown', async () => {
   const keepAlive = setTimeout(() => {}, 100)
   await ended.promise; clearTimeout(keepAlive)
 })
+
+for (const race of ['navigation', 'dialog', 'popup', 'observation-error', 'pause']) {
+  test(`sensitive release stays protected when ${race} interrupts the approved final observation`, async t => {
+    const f = fixture({ webCompatibility: true }), task = f.addTask('one')
+    t.after(() => f.broker.close())
+    const page = await f.attach(task, 'main')
+    await page.ready
+    page.url = 'http://localhost/auth'
+    const phase = beginSensitive(task, [page])
+    page.documentId = 'safe-document'; page.url = 'http://localhost/done'
+    page.observe = async () => {
+      if (race === 'navigation') { page.documentId = 'changed-document'; page.url = 'http://other.test/auth' }
+      if (race === 'dialog') page.dialog = { type: 'alert', message: 'SyntheticPrivateEcho' }
+      if (race === 'popup') task.pages.set('popup', { pageId: 'popup', url: 'http://localhost/auth', dispose() {} })
+      if (race === 'observation-error') throw new Error('SyntheticPrivateEcho')
+      if (race === 'pause') task.state = 'paused'
+      return { text: 'SyntheticPrivateEcho', pageId: page.pageId, url: page.url }
+    }
+    await assert.rejects(f.broker.rpc('one', 'task_sensitive', {
+      taskId: 'one', action: 'end', phaseId: phase.phaseId, documentId: 'safe-document',
+      expectedOrigin: 'http://localhost', safeToReveal: true
+    }), error => !error.message.includes('SyntheticPrivateEcho'))
+    assert.equal(task.sensitive.active, true)
+    assert.equal(JSON.stringify(await f.broker.rpc('one', 'task_list')).includes('SyntheticPrivateEcho'), false)
+  })
+}

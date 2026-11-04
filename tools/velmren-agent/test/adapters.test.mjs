@@ -8,7 +8,7 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
-import { connectClient, createClient, dashboardUrl, parseOptions, readConnection, validateArguments } from '../client.mjs'
+import { connectClient, createClient, dashboardUrl, parseOptions, readConnection, validateArguments, AGENT_PROTOCOL } from '../client.mjs'
 import { unknownActionResult } from '../action-result.mjs'
 
 const run = promisify(execFile)
@@ -16,7 +16,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const testRoot = resolve(root, 'test-results')
 const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jZ1kAAAAASUVORK5CYII='
 
-async function brokerFixture(t, override) {
+async function brokerFixture(t, override, protocolOptions = {}) {
   await mkdir(testRoot, { recursive: true })
   const stateDir = await mkdtemp(resolve(testRoot, 'adapters-'))
   const requests = []
@@ -27,10 +27,14 @@ async function brokerFixture(t, override) {
     const body = JSON.parse(raw)
     const owner = req.headers.authorization?.replace('Bearer test-', '')
     requests.push({ method: req.method, url: req.url, auth: req.headers.authorization, body })
-    if (override) return override(req, res, body)
     const send = (status, payload) => { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(payload)) }
     if (!['codex', 'claude', 'scripts'].includes(owner)) return send(401, { ok: false, error: 'Unauthorized', code: 'UNAUTHORIZED' })
     const { method, args } = body
+    if (method === 'agent_protocol') {
+      if (protocolOptions.unsupported) return send(400, { ok: false, code: 'UNKNOWN_METHOD', error: 'Unknown method' })
+      return send(200, { ok: true, result: { agentProtocol: Object.hasOwn(protocolOptions, 'version') ? protocolOptions.version : AGENT_PROTOCOL } })
+    }
+    if (override) return override(req, res, body)
     if (method === 'task_create') {
       const task = { taskId: `task-${tasks.size + 1}`, owner, label: args.label, url: args.url, state: 'agent-active', reason: '' }
       tasks.set(task.taskId, task)
@@ -86,10 +90,49 @@ test('client sends only the chosen credential and preserves arguments without ev
   const created = await client.call('task_create', { url: 'https://example.test/form', label })
   assert.equal(created.label, label)
   assert.equal(created.owner, 'scripts')
-  assert.deepEqual(fixture.requests[0], {
+  assert.deepEqual(fixture.requests[0].body, { method: 'agent_protocol', args: {} })
+  assert.deepEqual(fixture.requests[1], {
     method: 'POST', url: '/rpc', auth: 'Bearer test-scripts', body: { method: 'task_create', args: { url: 'https://example.test/form', label } }
   })
   assert.ok(!JSON.stringify(fixture.requests).includes(fixture.descriptor.adminToken))
+})
+
+test('direct and low-level clients refuse legacy protocols before any caller operation', async t => {
+  for (const options of [{ unsupported: true }, { version: undefined }, { version: 1 }, { version: 3 }, { version: '2' }]) {
+    const fixture = await brokerFixture(t, undefined, options)
+    await assert.rejects(connectClient(fixture.stateDir), { code: 'BROKER_INCOMPATIBLE' })
+    const client = createClient(await readConnection(fixture.stateDir))
+    await assert.rejects(client.call('task_act', { taskId: 't', observationId: 'o', actions: [{ type: 'fill', ref: 'e1', value: 'SyntheticPrivateFixture' }] }), { code: 'BROKER_INCOMPATIBLE' })
+    assert.ok(fixture.requests.every(request => request.body.method === 'agent_protocol' && request.auth === 'Bearer test-scripts'))
+    assert.equal(JSON.stringify(fixture.requests).includes('SyntheticPrivateFixture'), false)
+  }
+})
+
+test('concurrent direct operations share a single authenticated protocol check', async t => {
+  const fixture = await brokerFixture(t)
+  const client = createClient(await readConnection(fixture.stateDir))
+  await Promise.all([client.call('task_list'), client.call('task_list')])
+  assert.deepEqual(fixture.requests.map(request => request.body.method), ['agent_protocol', 'task_list', 'task_list'])
+})
+
+test('direct CLI and MCP reject an older broker without sending action arguments', async t => {
+  const fixture = await brokerFixture(t, undefined, { version: 1 })
+  const args = { taskId: 't', observationId: 'o', actions: [{ type: 'fill', ref: 'e1', value: 'SyntheticPrivateFixture' }] }
+  await assert.rejects(run(process.execPath, [resolve(root, 'cli.mjs'), '--state-dir', fixture.stateDir, 'task_act', JSON.stringify(args)]), error => {
+    assert.equal(JSON.parse(error.stderr).code, 'BROKER_INCOMPATIBLE')
+    assert.equal(error.stdout, '')
+    assert.equal(error.stderr.includes('SyntheticPrivateFixture'), false)
+    return true
+  })
+  const transport = new StdioClientTransport({ command: process.execPath, args: [resolve(root, 'mcp.mjs'), '--state-dir', fixture.stateDir], stderr: 'pipe' })
+  let stderr = ''
+  transport.stderr?.on('data', chunk => { stderr += chunk.toString() })
+  const client = new Client({ name: 'legacy-protocol-test', version: '1' })
+  try { await assert.rejects(client.connect(transport)) }
+  finally { await client.close() }
+  assert.match(stderr, /running broker lacks this agent protocol/)
+  assert.equal(stderr.includes('SyntheticPrivateFixture'), false)
+  assert.ok(fixture.requests.every(request => request.body.method === 'agent_protocol'))
 })
 
 test('connection descriptor refuses remote or credential-bearing endpoints before sending a token', async t => {
@@ -156,7 +199,7 @@ test('redirects are rejected without forwarding credentials', async t => {
   const client = await connectClient(fixture.stateDir)
   await assert.rejects(client.call('task_list'), { code: 'CONNECTION_ERROR' })
   assert.equal(redirected, false)
-  assert.equal(fixture.requests.length, 1)
+  assert.equal(fixture.requests.length, 2)
 })
 
 test('malformed broker responses produce a useful adapter error', async t => {
@@ -186,7 +229,7 @@ test('MCP stdio advertises bounded tools, carries observations/actions, and emit
   const fixture = await brokerFixture(t)
   const client = await mcpFixture(t, fixture.stateDir, 'codex')
   const listed = await client.listTools()
-  assert.equal(listed.tools.length, 21)
+  assert.equal(listed.tools.length, 22)
   assert.ok(listed.tools.every(tool => tool.name.startsWith('velmren_') && tool.inputSchema.additionalProperties === false))
   assert.ok(!listed.tools.some(tool => /evaluate|execute|cdp|control|shutdown/.test(tool.name)))
   const call = (name, args) => client.callTool({ name, arguments: args })
@@ -263,7 +306,7 @@ test('MCP relays manual show and matching user-confirmed resume without admin ac
   assert.equal(JSON.parse(shown.content[0].text).state, 'human')
   const resumed = await mcp.callTool({ name: 'velmren_resume', arguments: { taskId: 'owned', handoffId: 'handoff-current', userConfirmed: true } })
   assert.equal(JSON.parse(resumed.content[0].text).state, 'agent-active')
-  assert.deepEqual(fixture.requests.map(x => x.body.method), ['task_request_human', 'task_resume'])
+  assert.deepEqual(fixture.requests.map(x => x.body.method), ['agent_protocol', 'task_request_human', 'task_resume'])
   assert.ok(fixture.requests.every(x => x.auth === 'Bearer test-codex'))
   const calls = fixture.requests.length
   const denied = await mcp.callTool({ name: 'velmren_resume', arguments: { taskId: 'owned', handoffId: 'handoff-current', userConfirmed: false } })
@@ -289,7 +332,7 @@ test('HTTP, CLI and MCP preserve structured partial failure without forwarding e
   const result = await mcp.callTool({ name: 'velmren_act', arguments: args })
   assert.equal(result.isError, true); assert.deepEqual(JSON.parse(result.content[0].text).actionResult, actionResult)
   const tools = await mcp.listTools(), wait = tools.tools.find(tool => tool.name === 'velmren_wait')
-  assert.equal(tools.tools.length, 21); assert.ok(wait.inputSchema.properties.predicate); assert.equal(wait.annotations.readOnlyHint, true)
+  assert.equal(tools.tools.length, 22); assert.ok(wait.inputSchema.properties.predicate); assert.equal(wait.annotations.readOnlyHint, true)
   assert.ok(wait.inputSchema.properties.frameId)
   for (const name of ['velmren_list_frames', 'velmren_list_options']) assert.equal(tools.tools.find(tool => tool.name === name).annotations.readOnlyHint, true)
   assert.equal(JSON.stringify(result).includes('secret-value'), false)
@@ -308,12 +351,12 @@ test('client transport interruption and malformed mutation responses are unknown
   await assert.rejects(client.call('task_act', args), error => {
     assert.deepEqual(error.actionResult, unknownActionResult()); return true
   })
-  assert.equal(fixture.requests.length, 1)
+  assert.equal(fixture.requests.length, 2)
   const controller = new AbortController(); controller.abort()
   await assert.rejects(client.call('task_act', args, { signal: controller.signal }), error => {
     assert.deepEqual(error.actionResult, unknownActionResult()); assert.equal(JSON.stringify(error).includes('secret-value'), false); return true
   })
-  assert.equal(fixture.requests.length, 1)
+  assert.equal(fixture.requests.length, 2)
 })
 
 test('wait diagnostics survive HTTP and MCP errors as bounded booleans only', { timeout: 15000 }, async t => {

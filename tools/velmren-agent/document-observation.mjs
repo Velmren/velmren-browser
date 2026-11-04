@@ -59,9 +59,9 @@ export function observeDocument({ readOnly = false, query = '', offset = 0, limi
   for (const root of roots) for (const element of root.querySelectorAll('a,button,input,select,textarea,label,[role],[contenteditable="true"]')) {
     if (seen.has(element)) continue
     seen.add(element)
-    const { hidden, disabled, fileInput, availableActions } = elementCapabilities(element)
+    const { hidden, disabled, fileInput, labelProxy, availableActions } = elementCapabilities(element)
     if (element.tagName === 'LABEL' && element.control?.type !== 'file') continue
-    if (hidden && !fileInput) { counts.hiddenElements++; continue }
+    if (hidden && !fileInput && !labelProxy) { counts.hiddenElements++; continue }
     counts.eligibleElements++
     const name = elementName(element)
     if (needle && !`${name} ${element.getAttribute('name') ?? ''} ${element.getAttribute('role') ?? ''} ${element.type ?? ''}`.toLowerCase().includes(needle)) continue
@@ -76,7 +76,7 @@ export function observeDocument({ readOnly = false, query = '', offset = 0, limi
     truncation.metadata = Object.values(metadata.metadataTruncation ?? {}).some(Boolean)
     counts.truncatedMetadata += Number(truncation.metadata)
     const entry = { ref, tag: element.tagName.toLowerCase(), role: element.getAttribute('role') ?? '', name: name.slice(0, limits.name), type: element.type ?? '', value: value.slice(0, limits.value), disabled, hidden, availableActions, truncation,
-      ...metadata, ...(root !== document ? { shadowRoot: 'open' } : {}) }
+      ...metadata, ...(labelProxy && (hidden || element.getAttribute('role') === 'combobox') ? { interactionTarget: 'associated_label' } : {}), ...(root !== document ? { shadowRoot: 'open' } : {}) }
     if (fileInput) {
       const files = [...element.files]
       Object.assign(entry, { accept: element.accept, multiple: element.multiple, directory: element.webkitdirectory, files: files.slice(0, limits.files).map(file => ({ name: file.name, size: file.size })), fileCount: files.length })
@@ -106,7 +106,7 @@ export function observeDocument({ readOnly = false, query = '', offset = 0, limi
     complete: !truncated, truncated, limits, counts,
     pagination: { offset, limit, total: counts.matchedElements, nextOffset, query },
     textPagination: { offset: textOffset, limit: textLimit, total: text.length, nextOffset: nextTextOffset },
-    coverage: { scope: 'frame', childFrames: 'separate_frame_observations', shadowRoots: 'open', closedShadowRoots: 'excluded', hiddenElements: 'excluded_except_file_inputs', elements: query ? 'query_matches' : 'eligible_elements', completeness: 'eligible_elements_and_visible_text' } }
+    coverage: { scope: 'frame', childFrames: 'separate_frame_observations', shadowRoots: 'open', closedShadowRoots: 'excluded', hiddenElements: 'excluded_except_file_inputs_and_labelled_checkables', elements: query ? 'query_matches' : 'eligible_elements', completeness: 'eligible_elements_and_visible_text' } }
 }
 
 export function listSelectOptions({ ref, revision, query = '', offset = 0, limit = 50 }) {

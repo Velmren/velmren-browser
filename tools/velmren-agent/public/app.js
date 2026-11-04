@@ -154,8 +154,9 @@ function renderStatus(status) {
     clearScreenshot()
   }
   const selected = tasks.find(task => task.taskId === selectedTaskId)
-  $('screenshot').disabled = !selected || terminal(selected.state) || busy.has(selectedTaskId)
-  $('inspect-again').disabled = $('screenshot').disabled
+  if (selected?.privacy?.active) protectInspection()
+  $('screenshot').disabled = !selected || terminal(selected.state) || busy.has(selectedTaskId) || selected.privacy?.active === true
+  $('inspect-again').disabled = !selected || terminal(selected.state) || busy.has(selectedTaskId)
   $('count-active').textContent = tasks.filter(task => task.state === 'agent-active').length
   $('count-human').textContent = tasks.filter(task => ['needs-human', 'human'].includes(task.state)).length
   $('count-paused').textContent = tasks.filter(task => task.state === 'paused').length
@@ -199,6 +200,18 @@ function clearScreenshot() {
   $('screenshot-image').removeAttribute('src')
 }
 
+function protectInspection() {
+  clearScreenshot()
+  $('page-text').textContent = 'Page content is protected during sensitive input.'
+  $('inspection-title').textContent = 'Protected page'
+  $('elements').replaceChildren()
+  $('elements-summary').textContent = 'Page controls (protected)'
+  $('downloads').replaceChildren()
+  $('downloads-details').hidden = true
+  dialogMessage.textContent = ''; promptInput.value = ''; dialogPanel.hidden = true
+  $('screenshot').disabled = true
+}
+
 function renderObservation(taskId, observation) {
   selectedTaskId = taskId
   clearScreenshot()
@@ -206,6 +219,11 @@ function renderObservation(taskId, observation) {
   $('inspector-empty').hidden = true
   $('inspection').hidden = false
   const task = tasks.find(task => task.taskId === taskId)
+  if (observation.privacy?.active || task?.privacy?.active) {
+    if (task && observation.privacy?.active) task.privacy = observation.privacy
+    protectInspection()
+    return
+  }
   $('inspection-owner').textContent = `${task?.owner || 'Local client'} · ${stateNames[observation.state] || observation.state || ''}`
   $('inspection-title').textContent = observation.title || task?.label || 'Page observation'
   $('inspection-url').textContent = observation.url || ''
@@ -303,7 +321,7 @@ $('screenshot').addEventListener('click', async () => {
   try {
     const result = await rpc('task_screenshot', { taskId })
     if (result.mimeType !== 'image/png' || typeof result.data !== 'string' || !/^[A-Za-z0-9+/]+={0,2}$/.test(result.data)) throw new Error('The broker returned an invalid PNG screenshot.')
-    if (selectedTaskId === taskId) {
+    if (selectedTaskId === taskId && !tasks.find(task => task.taskId === taskId)?.privacy?.active) {
       $('screenshot-image').src = `data:image/png;base64,${result.data}`
       $('screenshot-view').hidden = false
       $('screenshot-caption').textContent = `Captured ${new Date().toLocaleTimeString()} · This image does not refresh automatically`

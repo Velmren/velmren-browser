@@ -95,13 +95,13 @@ test('file upload binds the observed input, verifies names and sizes, and never 
 for (const [name, change, pattern] of [
   ['stale observation', f => { f.page.observation.id = 'new' }, /Stale observation/],
   ['changed DOM', f => { f.state.revision++ }, /Page changed/],
-  ['missing ref', f => { f.state.refs.clear() }, /reference is stale/],
-  ['nonfile ref', f => { f.input.type = 'text' }, /not a file input/],
+  ['missing ref', f => { f.state.refs.clear() }, /Page observation changed; observe again/],
+  ['nonfile ref', f => { f.input.type = 'text' }, /Action failed; inspect the delivery receipt before retrying/],
   ['disabled input', f => { f.input.disabled = true }, /disabled/],
   ['input inside a disabled fieldset', f => { f.input.matches = selector => selector === ':disabled' }, /disabled/],
   ['ARIA-disabled input', f => { f.input.getAttribute = name => name === 'aria-disabled' ? 'true' : null }, /disabled/],
   ['directory input', f => { f.input.webkitdirectory = true }, /Directory uploads/],
-  ['disconnected input', f => { f.input.isConnected = false }, /reference is stale/],
+  ['disconnected input', f => { f.input.isConnected = false }, /Page observation changed; observe again/],
   ['manual picker mode', f => { f.page.interceptFileChooser = false }, /state or page session/]
 ]) test(`upload rejects ${name} before any file selection`, async () => {
   const f = pageFixture(); change(f)
@@ -220,7 +220,7 @@ test('pause during asynchronous filesystem inspection prevents selection even wh
   await inspecting
   const paused = broker.rpc('admin', 'task_control', { taskId: 'task', action: 'pause' })
   release()
-  await assert.rejects(pending, /changed during file validation/)
+  await assert.rejects(pending, { code: 'INVALID_STATE', message: 'Task state changed; inspect the task before continuing.' })
   await paused
   assert.equal(f.calls.filter(call => call.method === 'DOM.setFileInputFiles').length, 0)
 })

@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import { diagnostic, parseManagedOptions, resolveManagedOptions, runManagedBroker } from '../../managed-runtime.mjs'
 import { effectivePolicyIdentity } from '../../policy-identity.mjs'
+import { AGENT_PROTOCOL } from '../../client.mjs'
 
 async function startBroker({ stateDir, policy }) {
   if (policy.fail) throw new Error('Secret failure that must not escape: fake-admin-credential')
@@ -18,7 +19,7 @@ async function startBroker({ stateDir, policy }) {
   }
   const clients = new Map()
   const policyIdentity = effectivePolicyIdentity(policy)
-  let browserHealthy = true, releasedClients = 0, heartbeats = 0, profileLogin
+  let browserHealthy = true, releasedClients = 0, heartbeats = 0, profileLogin, agentProtocol = AGENT_PROTOCOL
   const descriptor = { pid: process.pid, adminToken: randomUUID(), endpoint: '' }
   const server = http.createServer(async (req, res) => {
     const token = req.headers.authorization?.replace(/^Bearer /, '')
@@ -28,12 +29,15 @@ async function startBroker({ stateDir, policy }) {
     try { request = JSON.parse(body) } catch { res.writeHead(400); res.end(); return }
     const admin = token === descriptor.adminToken
     let result
-    if (admin && request.method === 'broker_status') result = { tasks: [], policyIdentity, browserHealthy, clients: clients.size, releasedClients, heartbeats, profileLogin }
+    if (admin && request.method === 'broker_status') result = { tasks: [], policyIdentity, browserHealthy, clients: clients.size, releasedClients, heartbeats, profileLogin, agentProtocol }
     else if (admin && request.method === 'client_register') {
       if (request.args.policyIdentity !== policyIdentity || request.args.leaseMs !== 30000) { res.writeHead(400); res.end(JSON.stringify({ ok: false })); return }
       const clientId = randomUUID(), credential = randomUUID()
       clients.set(credential, clientId)
       result = { clientId, token: credential, leaseMs: 30000 }
+    } else if (admin && request.method === 'set_agent_protocol') {
+      agentProtocol = request.args.version
+      result = { agentProtocol }
     } else if (admin && request.method === 'set_browser_health') {
       browserHealthy = request.args.healthy
       profileLogin = request.args.profileLogin
@@ -41,7 +45,8 @@ async function startBroker({ stateDir, policy }) {
     } else if (admin && request.method === 'shutdown') {
       result = { stopping: true }
       setTimeout(() => { server.closeAllConnections(); server.close(() => process.exit(0)) }, 20)
-    } else if (clients.has(token) && request.method === 'task_list') result = { tasks: [], owner: clients.get(token) }
+    } else if (clients.has(token) && request.method === 'agent_protocol') result = { agentProtocol }
+    else if (clients.has(token) && request.method === 'task_list') result = { tasks: [], owner: clients.get(token) }
     else if (clients.has(token) && request.method === 'client_heartbeat') { heartbeats++; result = { leaseMs: 30000 } }
     else if (clients.has(token) && request.method === 'client_release') { clients.delete(token); releasedClients++; result = { released: true } }
     else { res.writeHead(401); res.end(JSON.stringify({ ok: false })); return }

@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { effectivePolicyIdentity } from './policy-identity.mjs'
 import { assertNoManualProfileSession } from './manual-profile.mjs'
+import { AGENT_PROTOCOL } from './client.mjs'
 
 const execute = promisify(execFile)
 const directory = path.dirname(fileURLToPath(import.meta.url))
@@ -125,6 +126,7 @@ async function healthy(descriptor, identity) {
   try { status = await adminRpc(descriptor, 'broker_status') } catch { return false }
   if (typeof status?.policyIdentity !== 'string' || typeof status.browserHealthy !== 'boolean') fail('BROKER_INCOMPATIBLE', 'The running broker does not support managed policy and health checks.')
   if (status.policyIdentity !== identity) fail('POLICY_MISMATCH', 'The running broker uses a different policy. Existing clients and tasks were preserved.')
+  if (status.agentProtocol !== AGENT_PROTOCOL) fail('BROKER_INCOMPATIBLE', 'The running broker does not support this agent protocol. Finish existing clients and reconnect after the broker exits; their tasks were preserved.')
   const manual = status.profileLogin?.automationConnected === false &&
     ['stopping-automation', 'manual', 'awaiting-confirmation', 'restarting'].includes(status.profileLogin.phase)
   if (!status.browserHealthy && !manual) fail('BROKER_UNHEALTHY', 'The managed browser is unavailable. Wait for its broker to stop before reconnecting.')

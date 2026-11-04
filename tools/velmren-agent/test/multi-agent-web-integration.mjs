@@ -117,7 +117,7 @@ const pageList = async index => {
   return value.pages
 }
 const popupFor = async index => {
-  const pages = await eventually(() => pageList(index), pages => pages.length === 2 && pages.some(page => page.url?.startsWith(`${fixture.origins[1]}/oauth?`)), `${AGENTS[index]} popup attachment`)
+  const pages = await eventually(() => pageList(index), pages => pages.length === 2 && pages.some(page => page.url === fixture.origins[1]), `${AGENTS[index]} popup attachment`)
   return pages.find(page => page.pageId !== tasks[index].mainPageId)
 }
 const assertOverlap = (entries, expected, name) => {
@@ -194,7 +194,8 @@ try {
   await Promise.all(tasks.map(async (task, index) => {
     assert.equal(task.owner, peers[index].owner)
     const observation = await observe(index)
-    assert.equal(observation.url, `${fixture.url}/signup/${AGENTS[index]}`)
+    assert.equal(observation.url, fixture.url)
+    assert.match(observation.text, new RegExp(`Synthetic signup ${AGENTS[index]}`))
     assert.equal(typeof observation.pageId, 'string')
     task.mainPageId = observation.pageId
     task.sessionMarker = /Session marker: ([0-9a-f-]{36})/.exec(observation.text)?.[1]
@@ -220,6 +221,8 @@ try {
     const selected = await call(index, 'velmren_select_page', { pageId: popup.pageId })
     const observation = selected.observation ?? selected
     assert.equal(observation.pageId, popup.pageId)
+    assert.equal(observation.url, fixture.origins[1])
+    assert.match(observation.text, new RegExp(`Synthetic authorization ${AGENTS[index]}`))
     assert.match(observation.text, /Opener available: yes/)
     await click(index, 'Authorize synthetic identity')
     await wait(index, `Authorization acknowledged: ${AGENTS[index]}`)
@@ -298,7 +301,11 @@ try {
     pass(`five parallel conversations complete ${round}`, await conversation(round))
   }
   await assert.rejects(call(0, 'velmren_navigate', { url: 'http://127.0.0.1:1/forbidden' }), /not permitted|denied/i)
-  assert.equal((await observe(0)).url, `${fixture.url}/signup/${AGENTS[0]}`)
+  const afterDenied = await observe(0)
+  assert.equal(afterDenied.url, fixture.url)
+  assert.equal(afterDenied.pageId, tasks[0].mainPageId)
+  assert.match(afterDenied.text, new RegExp(`Synthetic signup ${AGENTS[0]}`))
+  assert.match(afterDenied.text, new RegExp(tasks[0].sessionMarker))
   pass('explicit allowedOrigins still denies an off-policy navigation without changing the task')
 
   await click(0, 'Begin local sign-in')

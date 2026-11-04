@@ -8,7 +8,7 @@ import { BrowserPipe } from './cdp.mjs'
 import { AgentBroker } from './runtime.mjs'
 export { AgentBroker, originAllowed } from './runtime.mjs'
 import { CLIENTS } from './client.mjs'
-import { sanitizeActionResult, sanitizeWaitResult } from './action-result.mjs'
+import { sanitizePublicError } from './privacy.mjs'
 import { bindProfilePolicy } from './profile-state.mjs'
 import { effectivePolicyIdentity } from './policy-identity.mjs'
 import { ManualProfileError, ManualProfileSession, assertNoManualProfileSession, readManualProfileReceipt } from './manual-profile.mjs'
@@ -17,9 +17,7 @@ const token = () => randomBytes(32).toString('base64url')
 const publicDirectory = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public')
 
 export function rpcErrorResponse(error) {
-  const actionResult = sanitizeActionResult(error?.actionResult)
-  const waitResult = sanitizeWaitResult(error?.waitResult)
-  return { ok: false, error: error.message, code: error.code || 'BROKER_ERROR', ...(actionResult ? { actionResult } : {}), ...(waitResult ? { waitResult } : {}) }
+  return { ok: false, ...sanitizePublicError(error) }
 }
 
 export async function validateProfileLoginRecovery({ executable, stateDir, policy = {} }, recovery) {

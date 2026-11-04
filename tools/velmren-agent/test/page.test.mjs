@@ -4,6 +4,59 @@ import { EventEmitter } from 'node:events'
 import vm from 'node:vm'
 import { AgentPage } from '../page.mjs'
 
+for (const transition of ['preparation', 'delivery', 'delivery-error']) {
+  test(`ordinary fill enables protection when sensitivity changes during ${transition}`, async () => {
+    const browser = new EventEmitter(), calls = []
+    let protectedPhase = false, sensitive = false
+    browser.send = async method => {
+      calls.push(method)
+      if (method === 'Input.insertText') {
+        sensitive = true
+        if (transition === 'delivery-error') throw new Error('Synthetic delivery interrupted')
+      }
+      return {}
+    }
+    const page = new AgentPage(browser, 'target', 'session')
+    page.observation = { id: 'obs', epoch: 0, revision: 0 }
+    page.preparePrivateInput = async () => ({ origin: 'http://localhost' })
+    page.evaluate = async fn => {
+      if (!fn.name) return 0
+      if (fn.name === 'isSensitiveTarget') return sensitive
+      if (fn.name === 'prepareElement') { if (transition === 'preparation') sensitive = true; return { inputMode: 'text' } }
+      if (fn.name === 'applyPrivateValue') { assert.equal(protectedPhase, true); calls.push('bound-delivery') }
+      return { scope: 'element', status: 'matched' }
+    }
+    page.observe = async () => ({ pageId: 'target' })
+    const action = page.act('obs', [{ type: 'fill', ref: 'e1', value: 'SyntheticPrivateFixture' }], () => true, { begin() { protectedPhase = true } })
+    if (transition === 'delivery-error') await assert.rejects(action)
+    else assert.equal((await action).completed, 1)
+    assert.equal(protectedPhase, true)
+    if (transition === 'preparation') { assert.equal(calls.includes('Input.insertText'), false); assert.equal(calls.includes('bound-delivery'), true) }
+    page.dispose()
+  })
+}
+
+test('ordinary navigation keys and Space aliases dispatch normalized trusted key events', async () => {
+  for (const [key, code] of [['Space', 32], ['Spacebar', 32], ['End', 35], ['Home', 36], ['ArrowLeft', 37], ['ArrowRight', 39], ['Delete', 46], ['PageUp', 33], ['PageDown', 34]]) {
+    const browser = new EventEmitter(), calls = []
+    browser.send = async (method, params) => { calls.push({ method, params }); return {} }
+    const page = new AgentPage(browser, 'target', 'session')
+    page.observation = { id: 'obs', epoch: 0, revision: 0 }
+    page.evaluate = async () => 0; page.observe = async () => ({ pageId: 'target' })
+    await page.act('obs', [{ type: 'press', key }])
+    const events = calls.filter(call => call.method === 'Input.dispatchKeyEvent').map(call => call.params)
+    assert.equal(events.length, 2)
+    assert.deepEqual(events.map(event => event.type), ['keyDown', 'keyUp'])
+    for (const event of events) {
+      assert.equal(event.windowsVirtualKeyCode, code)
+      assert.equal(event.key, code === 32 ? ' ' : key)
+      assert.equal(event.code, code === 32 ? 'Space' : key)
+    }
+    if (code === 32) assert.equal(events[0].text, ' ')
+    page.dispose()
+  }
+})
+
 test('trusted input waits for frame commits and uses the final element geometry', async () => {
   const browser = new EventEmitter(), calls = [], frames = []
   let firstFrame, secondFrame, x = 10

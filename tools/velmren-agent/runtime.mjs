@@ -3,18 +3,21 @@ import { mkdir, lstat, realpath, rename } from 'node:fs/promises'
 import path from 'node:path'
 import { AgentPage } from './page.mjs'
 import { PageFrames } from './frames.mjs'
-import { validateArguments, BrokerError, CLIENTS } from './client.mjs'
+import { validateArguments, BrokerError, CLIENTS, AGENT_PROTOCOL } from './client.mjs'
 import { effectivePolicyIdentity } from './policy-identity.mjs'
 import { RequestTrace } from './trace.mjs'
 import { sanitizeActionResult, sanitizeWaitResult } from './action-result.mjs'
 import { requestHuman, resumeHuman } from './handoff.mjs'
 import { validateManualProfileUrl } from './manual-profile.mjs'
+import { sanitizePublicResult, sanitizePublicError } from './privacy.mjs'
+import { PrivateInputs } from './private-input.mjs'
+import { beginSensitive, endSensitive, validateSensitiveEnd, clearSensitiveObservations, rememberSensitiveDocument, sensitiveStatus } from './sensitive-state.mjs'
 
 const terminal = new Set(['completed', 'cancelled'])
 const fail = (message, code = 'INVALID_STATE') => { throw new BrokerError(message, code) }
 const autoAttach = { autoAttach: true, waitForDebuggerOnStart: true, flatten: true, filter: [{ type: 'browser', exclude: true }, { type: 'tab', exclude: true }, {}] }
 const taskAutoAttach = { ...autoAttach, filter: [{ type: 'shared_worker', exclude: true }, { type: 'service_worker', exclude: true }, ...autoAttach.filter] }
-const mutations = new Set(['task_create', 'task_act', 'task_navigate', 'task_upload_files', 'task_handle_dialog', 'task_close_page', 'task_finish', 'task_cancel', 'task_request_human', 'task_resume', 'task_control'])
+const mutations = new Set(['task_create', 'task_act', 'task_navigate', 'task_upload_files', 'task_handle_dialog', 'task_close_page', 'task_finish', 'task_cancel', 'task_request_human', 'task_resume', 'task_control', 'task_sensitive'])
 const addQueueTime = (request, key, started) => { if (request) request.trace[key] += performance.now() - started }
 
 export async function inspectUploadFiles(files) {
@@ -71,6 +74,7 @@ class Slots {
 
 export class AgentBroker {
   constructor(browser, stateDir, policy = {}, { trace, manualSession, browserFactory } = {}) {
+    this.privateInputs = new PrivateInputs()
     Object.assign(this, { browser, stateDir, tasks: new Map(), contexts: new Map(), sessions: new Map(), targets: new Map(), clients: new Map(), stopping: false })
     if (policy.allowedOrigins !== undefined && (!Array.isArray(policy.allowedOrigins) || policy.allowedOrigins.some(origin => {
       try { const url = new URL(origin); return !['http:', 'https:'].includes(url.protocol) || url.origin !== origin } catch { return true }
@@ -233,7 +237,11 @@ export class AgentBroker {
       throw error
     } finally { this.profileLoginFinishing = false }
   }
-  event(type, fields = {}) { this.onEvent?.({ type, ...fields, time: new Date().toISOString() }) }
+  event(type, fields = {}) {
+    const clean = { ...fields }
+    if (Object.hasOwn(clean, 'message')) clean.message = sanitizePublicError({ code: clean.code }).error
+    this.onEvent?.(sanitizePublicResult({ type, ...clean, time: new Date().toISOString() }))
+  }
   allowed(url) { return originAllowed(url, this.allowedOrigins, this.allowWeb) }
   pages(task) {
     // Keep compatibility with embedders that supplied the original single page.
@@ -243,10 +251,10 @@ export class AgentBroker {
     }
     return task.pages
   }
-  pageRecords(task) { return [...this.pages(task).values()].map(page => ({ pageId: page.pageId, openerId: page.openerId ?? null, url: page.url ?? task.url, title: page.title ?? '', attached: !page.detached, ...(page.dialog ? { dialog: page.dialog } : {}) })) }
+  pageRecords(task) { return [...this.pages(task).values()].map(page => sanitizePublicResult({ pageId: page.pageId, openerId: page.openerId ?? null, url: page.url ?? task.url, title: page.title ?? '', attached: !page.detached, ...(page.dialog ? { dialog: page.dialog } : {}) }, { sensitive: task.sensitiveHistory })) }
   record(task) {
     const { taskId, label, owner, state, reason, url, createdAt, downloads, blockedOrigins, selectedPageId } = task
-    return { taskId, label, owner, state, reason, url, createdAt, downloads, blockedOrigins, profileMode: this.profileMode, sharedProfile: this.sharedProfile, pages: this.pageRecords(task), selectedPageId: selectedPageId ?? task.selectedPageId, ...(task.handoff ? { handoff: { id: task.handoff.id, pageId: task.handoff.pageId, shown: task.handoff.shown } } : {}), ...(task.cleanupError ? { cleanupPending: true, cleanupError: task.cleanupError } : {}) }
+    return sanitizePublicResult({ taskId, label, owner, state, reason, url, createdAt, downloads, blockedOrigins, profileMode: this.profileMode, sharedProfile: this.sharedProfile, pages: this.pageRecords(task), selectedPageId: selectedPageId ?? task.selectedPageId, privacy: sensitiveStatus(task, task.page), ...(task.targetPolicy ? { targetPolicy: task.targetPolicy } : {}), ...(task.handoff ? { handoff: { id: task.handoff.id, pageId: task.handoff.pageId, shown: task.handoff.shown } } : {}), ...(task.cleanupError ? { cleanupPending: true, cleanupError: task.cleanupError } : {}) }, { sensitive: task.sensitiveHistory })
   }
   task(id, owner) {
     const task = this.tasks.get(id)
@@ -357,19 +365,59 @@ export class AgentBroker {
     if (entry?.type === 'worker') {
       // DedicatedWorkerDevToolsAgentHost has no Fetch handler. Its main script
       // and subresources use the ancestor frame's intercepted loader factory.
+      entry.policyPhase = 'worker-ancestor-policy'
       const owner = this.sessions.get(entry.networkOwnerSessionId)
       if (!owner?.interceptionReady || owner.task !== entry.task || !['page', 'iframe'].includes(owner.type)) throw new Error('Dedicated worker has no verified frame network policy')
+      entry.policyPhase = 'descendant-attachment'
       await this.browser.send('Target.setAutoAttach', this.sharedProfile ? taskAutoAttach : autoAttach, sessionId)
       return
     }
-    await this.browser.send('Network.setBypassServiceWorker', { bypass: !this.webCompatibility }, sessionId)
+    // NetworkHandler sets bypass synchronously, then falls through to the
+    // renderer. A noopener navigation suspends that reply until Runtime resume
+    // releases TargetHandler::RequestThrottle (devtools_session.cc). Keep the
+    // command ordered before Fetch/Target acknowledgements, but await its reply
+    // only after the browser-side policy is installed and navigation resumes.
+    entry.policyPhase = 'service-worker-bypass'
+    entry.bypassAcknowledgement = this.browser.send('Network.setBypassServiceWorker', { bypass: !this.webCompatibility }, sessionId)
+      .then(() => null, error => { entry.bypassError = error; return error })
     const patterns = [{ urlPattern: '*', requestStage: 'Request' }, { urlPattern: '*', resourceType: 'Document', requestStage: 'Response' }]
     // Chromium classifies worker main scripts as Other, imports as Script.
     // Their response CSP covers WebSockets, which Fetch cannot intercept.
     if (this.webCompatibility) for (const resourceType of ['Script', 'Other']) patterns.push({ urlPattern: '*', resourceType, requestStage: 'Response' })
+    entry.policyPhase = 'request-interception'
     await this.browser.send('Fetch.enable', { patterns }, sessionId)
     if (entry) entry.interceptionReady = true
+    entry.policyPhase = 'descendant-attachment'
     await this.browser.send('Target.setAutoAttach', this.sharedProfile ? taskAutoAttach : autoAttach, sessionId)
+    // Queue renderer-side chooser policy before resume as well; its reply is
+    // suspended during the same noopener navigation as the Network reply.
+    if (entry.page || entry.type === 'iframe') {
+      entry.policyPhase = 'file-chooser-interception'
+      entry.chooserAcknowledgement = this.browser.send('Page.setInterceptFileChooserDialog', { enabled: (entry.page ?? this.pages(entry.task).get(entry.ownerPageId))?.interceptFileChooser !== false }, sessionId)
+        .then(() => null, error => { entry.chooserError = error; return error })
+    }
+  }
+  async resumeSession(entry) {
+    if (this.targets.get(entry.targetId) !== entry) return false
+    if (entry.bypassError) { entry.policyPhase = 'service-worker-acknowledgement'; throw entry.bypassError }
+    if (entry.chooserError) { entry.policyPhase = 'file-chooser-interception'; throw entry.chooserError }
+    if (entry.type === 'worker' && !this.sessions.get(entry.networkOwnerSessionId)?.interceptionReady) throw new Error('Dedicated worker frame policy was detached')
+    entry.policyPhase = 'navigation-resume'
+    await this.browser.send('Runtime.runIfWaitingForDebugger', {}, entry.sessionId)
+    entry.policyPhase = 'service-worker-acknowledgement'
+    const error = await entry.bypassAcknowledgement
+    if (error) throw error
+    entry.policyPhase = 'file-chooser-interception'
+    const chooserError = await entry.chooserAcknowledgement
+    if (chooserError) throw chooserError
+    return this.targets.get(entry.targetId) === entry
+  }
+  targetPolicyDiagnostic(entry, reason) {
+    return {
+      targetId: /^[a-zA-Z0-9_-]{1,128}$/.test(entry.targetId ?? '') ? entry.targetId : 'unavailable',
+      targetType: ['page', 'other', 'iframe', 'worker', 'service_worker', 'shared_worker'].includes(entry.reportedType ?? entry.type) ? entry.reportedType ?? entry.type : 'unsupported',
+      phase: entry.policyPhase ?? 'classification', reason
+    }
   }
   sessionTask(sessionId) {
     return this.sessions.get(sessionId)?.task ?? [...this.tasks.values()].find(task => [...this.pages(task).values()].some(page => !page.detached && page.sessionId === sessionId))
@@ -442,7 +490,7 @@ export class AgentBroker {
     entry.ready = (async () => {
       try {
         await this.configureSession(sessionId, entry)
-        if (this.targets.get(info.targetId) === entry) await this.browser.send('Runtime.runIfWaitingForDebugger', {}, sessionId)
+        await this.resumeSession(entry)
       } catch (error) {
         await this.browser.send('Target.closeTarget', { targetId: info.targetId }).catch(() => {})
         if (!this.stopping && this.targets.get(info.targetId) === entry) throw error
@@ -502,13 +550,14 @@ export class AgentBroker {
     const isPopup = isPage && !priorPage && this.pages(task).size > 0
     if (!supported || (isPopup && !this.webCompatibility) || (isPage && !priorPage && this.pages(task).size >= 16)) {
       task.reason = 'Additional target blocked by the task policy'
+      this.event('target-policy-blocked', { taskId: task.taskId, ...this.targetPolicyDiagnostic({ targetId: info.targetId, type: info.type }, 'unsupported-target') })
       await this.browser.send('Target.closeTarget', { targetId: info.targetId })
       return
     }
     const frame = this.frameOwners.get(info.targetId) ?? this.frameOwners.get(info.parentFrameId)
     const parentEntry = this.sessions.get(message.sessionId) ?? this.targets.get(info.parentId) ?? this.sessions.get(frame?.sessionId) ?? [...this.targets.values()].find(entry => entry.task === task && entry.page?.frameId === info.parentFrameId && info.parentFrameId)
     const ownerPageId = parentEntry?.page?.pageId ?? parentEntry?.ownerPageId ?? (info.type === 'iframe' && this.pages(task).size === 1 ? this.pages(task).keys().next().value : undefined)
-    const entry = { task, sessionId: p.sessionId, parentSessionId: message.sessionId, targetId: info.targetId, type: isPage ? 'page' : info.type, ownerPageId,
+    const entry = { task, sessionId: p.sessionId, parentSessionId: message.sessionId, targetId: info.targetId, type: isPage ? 'page' : info.type, reportedType: info.type, ownerPageId,
       networkOwnerSessionId: parentEntry?.type === 'worker' ? parentEntry.networkOwnerSessionId : parentEntry?.sessionId }
     this.sessions.set(p.sessionId, entry); this.targets.set(info.targetId, entry)
     this.ownedTargets.set(info.targetId, task)
@@ -523,24 +572,31 @@ export class AgentBroker {
     }
     entry.ready = (async () => {
       try {
-        // All targets remain paused until interception and descendant attachment
-        // are active; page code cannot race setup via a popup or worker.
+        // Browser-side interception and descendant attachment are acknowledged
+        // before resume. Renderer-dependent initialization must follow resume.
         await this.configureSession(p.sessionId, entry)
-        if (this.targets.get(info.targetId) !== entry) return
+        if (terminal.has(task.state) || !await this.resumeSession(entry)) return
+        entry.policyPhase = 'page-initialization'
         if (entry.page) { await entry.page.init(); this.rememberFrame(entry.page.frameId, entry) }
         if (entry.type === 'iframe') {
           await this.browser.send('Page.enable', {}, entry.sessionId)
           await this.browser.send('Runtime.enable', {}, entry.sessionId)
-          await this.browser.send('Page.setInterceptFileChooserDialog', { enabled: this.pages(task).get(entry.ownerPageId)?.interceptFileChooser !== false }, entry.sessionId)
         }
-        if (terminal.has(task.state) || this.targets.get(info.targetId) !== entry) return
-        if (entry.type === 'worker' && !this.sessions.get(entry.networkOwnerSessionId)?.interceptionReady) throw new Error('Dedicated worker frame policy was detached')
-        await this.browser.send('Runtime.runIfWaitingForDebugger', {}, p.sessionId)
+        entry.policyPhase = 'ready'
       } catch (error) {
-        if (terminal.has(task.state) || this.targets.get(info.targetId) !== entry) return
-        task.reason = `Could not enforce ${info.type} target policy`
+        if (terminal.has(task.state)) return
+        if (this.targets.get(info.targetId) !== entry) {
+          const reason = this.targets.has(info.targetId) ? 'session-replaced' : entry.page && !this.pages(task).has(info.targetId) ? 'target-closed' : 'session-detached'
+          this.event('target-policy-lifecycle', { taskId: task.taskId, ...this.targetPolicyDiagnostic(entry, reason) })
+          return
+        }
+        const reason = error.code === 'CDP_TIMEOUT' ? 'command-timeout' : error.code === 'CDP_SESSION_CLOSED' ? 'session-closed' : error.protocolCode === -32601 ? 'unsupported-command' : 'enforcement-failed'
+        const diagnostic = this.targetPolicyDiagnostic(entry, reason)
+        task.targetPolicy = diagnostic
+        this.event('target-policy-failure', { taskId: task.taskId, ...diagnostic })
+        task.reason = `Could not enforce ${diagnostic.targetType} target policy: ${diagnostic.targetId}; ${diagnostic.phase}; ${reason}`
         await this.end(task, 'cancelled')
-        throw error
+        throw new BrokerError(task.reason, 'TARGET_POLICY_FAILED')
       }
     })()
     if (entry.page) entry.page.ready = entry.ready
@@ -631,6 +687,7 @@ export class AgentBroker {
     if ([...this.tasks.values()].filter(task => !terminal.has(task.state)).length >= this.maxTasks) fail('Task limit reached', 'LIMIT_REACHED')
     let initialized
     const task = { taskId: randomUUID(), label: args.label || 'Browser task', owner, state: 'agent-active', reason: '', url: args.url, createdAt: new Date().toISOString(), downloads: [], blockedOrigins: [], pages: new Map(), pendingRootAttachments: new Map(), queue: new Promise(resolve => { initialized = resolve }) }
+    if (args.sensitive) beginSensitive(task, [])
     this.tasks.set(task.taskId, task)
     if (request) { request.trace.taskId = task.taskId; request.dispatched = true }
     try {
@@ -706,6 +763,7 @@ export class AgentBroker {
     return this.record(task)
   }
   async end(task, state, { retry = false } = {}) {
+    this.privateInputs.discardTask(task.taskId)
     task.state = state
     task.handoff = null
     if (task.ending) return task.ending
@@ -804,7 +862,16 @@ export class AgentBroker {
       return this.record(task)
     }, request)
   }
-  decorate(task, observation) { return { ...observation, ...(task.fileChooserNotice ? { fileChooserNotice: task.fileChooserNotice } : {}), taskId: task.taskId, state: task.state, profileMode: this.profileMode, sharedProfile: this.sharedProfile, pages: this.pageRecords(task), selectedPageId: task.selectedPageId, downloads: task.downloads, contentTrust: 'untrusted' } }
+  decorate(task, observation) {
+    const page = this.pages(task).get(observation?.pageId) ?? task.page
+    rememberSensitiveDocument(task, page)
+    return { ...observation, ...(task.fileChooserNotice ? { fileChooserNotice: task.fileChooserNotice } : {}), taskId: task.taskId, state: task.state, profileMode: this.profileMode, sharedProfile: this.sharedProfile, pages: this.pageRecords(task), selectedPageId: task.selectedPageId, downloads: sanitizePublicResult(task.downloads, { sensitive: task.sensitiveHistory }), privacy: sensitiveStatus(task, page), contentTrust: 'untrusted' }
+  }
+  privateBinding(task, rootPage, page, ref, origin) {
+    return { owner: task.owner, taskId: task.taskId, pageId: rootPage.pageId, frameId: page.frameId,
+      observationId: page.observation?.id, ref, origin, topOrigin: new URL(rootPage.url).origin,
+      documentId: page.documentId, topDocumentId: rootPage.documentId }
+  }
   async waitPage(page, args, stillActive) {
     const started = performance.now(), timeoutMs = args.timeoutMs ?? 10000
     const elapsedMs = () => Math.max(0, Math.min(timeoutMs, Math.round(performance.now() - started)))
@@ -840,7 +907,13 @@ export class AgentBroker {
     try {
       const result = await this.dispatchRpc(owner, method, args, request)
       outcome = 'success'; actionResult = result?.actionResult
-      return result
+      // Credentials and locally staged capabilities never go through an agent
+      // tool. Their dedicated handshakes return only their explicit contract.
+      if (method === 'client_register' || method === 'task_private_input') return result
+      const task = this.tasks.get(request.trace.taskId)
+      const sensitive = task?.sensitive?.active === true
+      return sanitizePublicResult(task && result && typeof result === 'object'
+        ? { ...result, privacy: sensitiveStatus(task, this.pages(task).get(result.pageId ?? result.observation?.pageId ?? args.pageId ?? task.selectedPageId)) } : result, { sensitive })
     } catch (error) {
       actionResult = sanitizeActionResult(error?.actionResult)
       if (!actionResult && mutations.has(method)) {
@@ -853,7 +926,8 @@ export class AgentBroker {
         }
       }
       if (actionResult) error.actionResult = actionResult
-      throw error
+      const clean = sanitizePublicError(error, { sensitive: this.tasks.get(request.trace.taskId)?.sensitive?.active === true })
+      throw new BrokerError(clean.error, clean.code, clean.actionResult, clean.waitResult)
     } finally {
       try { this.trace?.record({ ...request.trace, outcome, durationMs: performance.now() - started, actionResult }) } catch {}
     }
@@ -877,7 +951,7 @@ export class AgentBroker {
         if (args.leaseMs) { this.managedMode = true; this.idleSince = null; this.scheduleLifecycle() }
         return { clientId, token, ...(args.leaseMs ? { leaseMs: 30000 } : {}) }
       }
-      if (method === 'broker_status') return { tasks: [...this.tasks.values()].map(task => this.record(task)), browserVersion: this.browser.version, browserHealthy: this.profileLogin.phase === 'automated' && !this.browser.closed, profileLogin: this.profileLoginView(), policyIdentity: this.policyIdentity, profileMode: this.profileMode, sharedProfile: this.sharedProfile, activeActions: this.slots.active, maxTasks: this.maxTasks, maxActiveActions: this.slots.max, allowedOrigins: this.allowedOrigins ?? [this.allowWeb ? 'http(s)' : 'loopback only'], webCompatibility: this.webCompatibility, webSocketPolicy: this.webSocketPolicy }
+      if (method === 'broker_status') return { agentProtocol: AGENT_PROTOCOL, tasks: [...this.tasks.values()].map(task => this.record(task)), browserVersion: this.browser.version, browserHealthy: this.profileLogin.phase === 'automated' && !this.browser.closed, profileLogin: this.profileLoginView(), policyIdentity: this.policyIdentity, profileMode: this.profileMode, sharedProfile: this.sharedProfile, activeActions: this.slots.active, maxTasks: this.maxTasks, maxActiveActions: this.slots.max, allowedOrigins: this.allowedOrigins ?? [this.allowWeb ? 'http(s)' : 'loopback only'], webCompatibility: this.webCompatibility, webSocketPolicy: this.webSocketPolicy }
       if (method === 'task_control') {
         this.assertAutomated()
         const task = this.task(args.taskId, owner); request.trace.taskId = task.taskId
@@ -887,6 +961,7 @@ export class AgentBroker {
     }
     validateArguments(method, args)
     request.validated = true
+    if (method === 'agent_protocol') return { agentProtocol: AGENT_PROTOCOL }
     if (method === 'profile_login_status') return this.profileLoginStatus()
     if (method === 'profile_login_start') return this.startProfileLogin(owner, args)
     if (method === 'profile_login_finish') return this.finishProfileLogin(owner, args)
@@ -907,6 +982,7 @@ export class AgentBroker {
     }, request)
     const task = this.task(args.taskId, owner)
     request.trace.taskId = task.taskId
+    if (method === 'task_private_input' && args.action === 'revoke') return this.privateInputs.revoke(args.secretRef, task.owner, task.taskId)
     if (method === 'task_cancel') { request.dispatched = true; task.controlGeneration = (task.controlGeneration ?? 0) + 1; task.state = 'cancelled'; return this.serialize(task, () => this.end(task, 'cancelled'), request) }
     if (method === 'task_request_human') return requestHuman(this, task, args, request)
     if (method === 'task_resume') return resumeHuman(this, task, args, request)
@@ -942,6 +1018,27 @@ export class AgentBroker {
         if (!humanRead) this.checkActive(task)
         if (this.pages(task).get(rootPage.pageId) !== rootPage || rootPage.detached || rootPage.sessionId !== rootSessionId || page.detached || page.sessionId !== sessionId || (rootPage.frames && !rootPage.frames.current(page))) fail('Page or frame session changed; observe again', 'PAGE_DETACHED')
         if (!humanRead && !stillActive()) fail('Task state or page session changed; observe again')
+        if (method === 'task_sensitive') {
+          if (args.action === 'begin') {
+            beginSensitive(task, this.pages(task).values())
+            return this.decorate(task, await rootPage.observe())
+          }
+          validateSensitiveEnd(task, [...this.pages(task).values()], rootPage, args)
+          clearSensitiveObservations(this.pages(task).values())
+          const observation = await rootPage.observe()
+          if (!stillActive()) fail('Task or client state changed; observe again')
+          // The approval binds the exact new document through the final read.
+          // Failed reads and navigation/dialog races must leave protection on.
+          endSensitive(task, [...this.pages(task).values()], rootPage, args, { freshObservation: true })
+          return this.decorate(task, observation)
+        }
+        if (method === 'task_private_input') {
+          if (args.action === 'provide') return this.privateInputs.provide(args.secretRef, task.owner, task.taskId, args.value)
+          const target = await page.preparePrivateInput(args.observationId, args.ref, args.origin)
+          if (!stillActive() || new URL(rootPage.url).origin !== args.topOrigin) fail('Private input destination changed', 'PRIVATE_INPUT_BINDING_CHANGED')
+          beginSensitive(task, this.pages(task).values(), { input: true })
+          return this.privateInputs.prepare(this.privateBinding(task, rootPage, page, args.ref, target.origin))
+        }
         if (method === 'task_select_page') this.select(task, page)
         if (method === 'task_list_frames') return { pageId: rootPage.pageId, mainFrameId: rootPage.frameId, frames: rootPage.frames.records() }
         if (['task_observe', 'task_select_page'].includes(method)) return this.decorate(task, await page.observe(owner === 'admin', args))
@@ -957,8 +1054,13 @@ export class AgentBroker {
           return { ...result, observation: this.decorate(task, result.observation) }
         }
         if (method === 'task_act') {
+          if (args.actions.some(action => action.secretRef !== undefined || action.sensitive === true)) beginSensitive(task, this.pages(task).values(), { input: true })
           request.dispatched = true
-          const result = await page.act(args.observationId, args.actions, stillActive)
+          const result = await page.act(args.observationId, args.actions, stillActive, {
+            begin: () => beginSensitive(task, this.pages(task).values(), { input: true }),
+            consume: (secretRef, target, ref, deliver) => this.privateInputs.consume(secretRef,
+              this.privateBinding(task, rootPage, page, ref, target.origin), deliver)
+          })
           return { ...result, observation: this.decorate(task, result.observation) }
         }
         if (method === 'task_navigate') {
@@ -966,7 +1068,10 @@ export class AgentBroker {
           request.dispatched = true
           return this.decorate(task, await page.navigate(args.url))
         }
-        if (method === 'task_screenshot') return page.screenshot()
+        if (method === 'task_screenshot') {
+          if (task.sensitive?.active) fail('Screenshots are unavailable during the sensitive phase', 'SENSITIVE_SCREENSHOT_BLOCKED')
+          return page.screenshot()
+        }
         fail('Unknown method', 'UNKNOWN_METHOD')
       }
       // A blocked network/page wait cannot monopolize another client's slot.
@@ -977,6 +1082,7 @@ export class AgentBroker {
     this.assertAutomated()
     if (this.stopping) return
     this.stopping = true
+    this.privateInputs.close()
     clearInterval(this.lifecycleTimer)
     for (const pending of this.pendingAttachments.values()) clearTimeout(pending.timer)
     this.pendingAttachments.clear()

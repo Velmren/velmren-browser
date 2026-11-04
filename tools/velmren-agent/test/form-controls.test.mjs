@@ -64,6 +64,90 @@ test('checked preparation is idempotent and never mutates other controls', async
   assert.equal(f.element.checked, true, 'Preparation must not click or assign checked')
 })
 
+test('hidden checkable refs use only associated visible labels and verify native state', async () => {
+  const f = fixture({ type: 'checkbox', getBoundingClientRect: () => ({ x: 0, y: 0, width: 0, height: 0 }) })
+  const label = { ...f.element, tagName: 'LABEL', type: undefined, control: f.element,
+    getBoundingClientRect: () => ({ x: 40, y: 60, width: 100, height: 30 }) }
+  f.element.labels = [label]; f.document.elementFromPoint = () => label
+  const capabilities = f.call('elementCapabilities', f.element)
+  assert.equal(capabilities.hidden, true); assert.equal(capabilities.labelProxy, true)
+  assert.deepEqual(Array.from(capabilities.availableActions), ['click', 'setChecked'])
+  assert.equal((await f.call('prepareElement', { ref: 'e1', type: 'setChecked', checked: true })).x, 90)
+  assert.equal(f.element.checked, false)
+  f.element.checked = true
+  assert.equal(f.call('verifyElementValue', { ref: 'e1', type: 'setChecked', checked: true }).status, 'matched')
+  assert.equal((await f.call('prepareElement', { ref: 'e1', type: 'setChecked', checked: true })).noOp, true)
+  label.control = {}
+  await assert.rejects(f.call('prepareElement', { ref: 'e1', type: 'setChecked', checked: false }), /not visible/)
+})
+
+test('associated label fallback rejects overlays and interactive label descendants', async () => {
+  const f = fixture({ type: 'checkbox' })
+  const label = { ...f.element, tagName: 'LABEL', type: undefined, control: f.element }
+  f.element.labels = [label]
+  for (const hit of [{}, { parentElement: label, matches: () => true }]) {
+    f.document.elementFromPoint = () => hit
+    await assert.rejects(f.call('prepareElement', { ref: 'e1', type: 'setChecked', checked: true }), /obscured/)
+    assert.equal(f.element.checked, false)
+  }
+  f.document.elementFromPoint = () => ({ parentElement: label, matches: () => false })
+  await f.call('prepareElement', { ref: 'e1', type: 'setChecked', checked: true })
+})
+
+test('styled select accepts only an exclusive decorative wrapper and rechecks before assignment', async () => {
+  const f = fixture({ tagName: 'SELECT', options: [{ value: 'abroad' }] })
+  const wrapper = { querySelectorAll: () => [f.element], matches: () => false, getBoundingClientRect: f.element.getBoundingClientRect }
+  const decoration = { parentElement: wrapper, matches: () => false, getAttribute: name => name === 'aria-hidden' ? 'true' : null, getBoundingClientRect: f.element.getBoundingClientRect }
+  f.element.parentElement = wrapper; f.document.elementFromPoint = () => decoration
+  await f.call('prepareElement', { ref: 'e1', type: 'select', value: 'abroad' })
+  f.document.elementFromPoint = () => ({})
+  assert.throws(() => f.call('applyFormValue', { ref: 'e1', type: 'select', value: 'abroad' }), /obscured/)
+  assert.equal(f.element.assigned, undefined)
+  f.document.elementFromPoint = () => decoration
+  wrapper.getBoundingClientRect = () => ({ x: 0, y: 0, width: 1280, height: 800 })
+  await assert.rejects(f.call('prepareElement', { ref: 'e1', type: 'select', value: 'abroad' }), /obscured/)
+  wrapper.getBoundingClientRect = f.element.getBoundingClientRect
+  decoration.getAttribute = () => null
+  await assert.rejects(f.call('prepareElement', { ref: 'e1', type: 'select', value: 'abroad' }), /obscured/)
+  decoration.getAttribute = name => name === 'aria-hidden' ? 'true' : null
+  decoration.matches = () => true
+  await assert.rejects(f.call('prepareElement', { ref: 'e1', type: 'select', value: 'abroad' }), /obscured/)
+  decoration.matches = () => false; wrapper.querySelectorAll = () => [f.element, {}]
+  await assert.rejects(f.call('prepareElement', { ref: 'e1', type: 'select', value: 'abroad' }), /obscured/)
+})
+
+test('keyboard preparation rejects a target that cannot take focus', async () => {
+  const f = fixture({ tagName: 'DIV', attributes: { role: 'checkbox', 'aria-checked': 'false' } })
+  f.document.activeElement = {}
+  await assert.rejects(f.call('prepareElement', { ref: 'e1', type: 'press', key: 'Space' }), /keyboard focus/)
+  f.element.focus = () => { f.document.activeElement = f.element }
+  await f.call('prepareElement', { ref: 'e1', type: 'press', key: 'Space' })
+})
+
+test('an offscreen labelled native combobox uses its explicit listbox relationship without assigning a selection', async () => {
+  const f = fixture({ attributes: { role: 'combobox', 'aria-haspopup': 'listbox', 'aria-controls': 'cities' },
+    getBoundingClientRect: () => ({ x: -10000, y: 20, width: 1, height: 20 }) })
+  f.descriptions.cities = { isConnected: true, ownerDocument: f.document, getAttribute: name => name === 'role' ? 'listbox' : null }
+  const label = { ...f.element, tagName: 'LABEL', type: undefined, attributes: {}, control: f.element,
+    getBoundingClientRect: () => ({ x: 40, y: 60, width: 100, height: 30 }), scrollIntoView: () => f.events.push('label-scroll') }
+  f.element.labels = [label]; f.document.elementFromPoint = () => label
+  f.element.focus = () => { f.document.activeElement = f.element; f.events.push('focus') }
+  assert.equal(f.call('elementCapabilities', f.element).labelProxy, true)
+  const prepared = await f.call('prepareElement', { ref: 'e1', type: 'fill', value: 'Abroad' })
+  assert.equal(prepared.x, 90)
+  assert.deepEqual(f.events, ['label-scroll', 'focus', 'select'])
+  assert.equal(f.element.value, '')
+  assert.throws(() => f.call('applyFormValue', { ref: 'e1', type: 'select', value: '503' }), /does not support/)
+  const rect = f.element.getBoundingClientRect
+  f.element.getBoundingClientRect = () => ({ x: 0, y: 0, width: 0, height: 0 })
+  assert.equal(f.call('elementCapabilities', f.element).labelProxy, false)
+  await assert.rejects(f.call('prepareElement', { ref: 'e1', type: 'fill', value: 'Abroad' }), /not visible/)
+  f.element.getBoundingClientRect = rect
+  f.descriptions.cities.getAttribute = () => 'dialog'
+  assert.equal(f.call('elementCapabilities', f.element).labelProxy, false)
+  await assert.rejects(f.call('prepareElement', { ref: 'e1', type: 'click' }), /obscured/)
+})
+
 test('radio refusal and malformed checked state happen before side effects', async () => {
   const f = fixture({ type: 'radio', checked: true })
   await assert.rejects(f.call('prepareElement', { ref: 'e1', type: 'setChecked', checked: false }), /Cannot unset/)

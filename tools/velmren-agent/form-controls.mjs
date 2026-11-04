@@ -3,6 +3,90 @@ export function composedParent(el) {
   return el?.assignedSlot || el?.parentElement || el?.getRootNode?.()?.host || null
 }
 
+export function labelledCombobox(el) {
+  if (el.tagName !== 'INPUT' || !['text', 'search'].includes(el.type) || el.getAttribute('role') !== 'combobox' || el.getAttribute('aria-haspopup') !== 'listbox') return false
+  const ids = (el.getAttribute('aria-controls') || '').trim().split(/\s+/).filter(Boolean)
+  const root = el.getRootNode?.() || el.ownerDocument
+  const listbox = ids.length === 1 ? root?.getElementById?.(ids[0]) : null
+  return !!(listbox?.isConnected && listbox.ownerDocument === el.ownerDocument && listbox.getAttribute('role') === 'listbox')
+}
+
+export function associatedControlLabels(el) {
+  if (!(el.tagName === 'INPUT' && ['checkbox', 'radio'].includes(el.type)) && !labelledCombobox(el)) return []
+  return [...(el.labels ?? [])].filter(label => {
+    if (!label.isConnected || label.ownerDocument !== el.ownerDocument || label.control !== el) return false
+    const capabilities = elementCapabilities(label)
+    if (capabilities.hidden || capabilities.disabled) return false
+    for (let node = label; node; node = composedParent(node)) if (getComputedStyle(node).opacity === '0') return false
+    return true
+  })
+}
+
+export function composedContains(el, candidate) {
+  const seen = new Set()
+  for (; candidate && !seen.has(candidate); candidate = composedParent(candidate)) {
+    if (candidate === el) return true
+    seen.add(candidate)
+  }
+  return false
+}
+
+export function controlHit(x, y) {
+  let hit = document.elementFromPoint(x, y)
+  const seen = new Set()
+  while (hit?.shadowRoot?.elementFromPoint && !seen.has(hit)) {
+    seen.add(hit)
+    const next = hit.shadowRoot.elementFromPoint(x, y)
+    if (!next || next === hit) break
+    hit = next
+  }
+  return hit
+}
+
+export function decorativeControlHit(surface, hit, control) {
+  if (!composedContains(surface, hit)) return false
+  // Links, other fields and custom widgets are never decorative activation areas.
+  for (let node = hit; node && node !== surface; node = composedParent(node)) {
+    if (node === control) return true
+    if (node.matches?.('a[href],button,input,select,textarea,[role],[tabindex],[contenteditable="true"]')) return false
+  }
+  return true
+}
+
+export function controlActionPoint(el, type) {
+  const point = box => ({ x: Math.max(0, Math.min(innerWidth - 1, box.x + box.width / 2)), y: Math.max(0, Math.min(innerHeight - 1, box.y + box.height / 2)) })
+  const box = el.getBoundingClientRect(), center = point(box)
+  const hit = controlHit(center.x, center.y)
+  if (box.width && box.height && (composedContains(el, hit) || el.contains?.(hit))) return center
+  if (el.tagName === 'SELECT' && type === 'select' && box.width && box.height) {
+    const wrapper = el.parentElement
+    // Accept an associated label or explicit decoration confined to the select.
+    // A broad single-control container is not enough to establish ownership.
+    const controls = wrapper?.querySelectorAll?.('input,select,textarea,button,a[href],[role],[tabindex],[contenteditable="true"]') ?? []
+    if (controls.length === 1 && controls[0] === el && !wrapper.matches?.('[role],[tabindex],[contenteditable="true"]') && decorativeControlHit(wrapper, hit, el)) {
+      if (wrapper.tagName === 'LABEL' && wrapper.control === el) return center
+      const confined = node => {
+        const rect = node.getBoundingClientRect?.()
+        return rect && rect.x >= box.x - 2 && rect.y >= box.y - 2 && rect.x + rect.width <= box.x + box.width + 2 && rect.y + rect.height <= box.y + box.height + 2
+      }
+      if (confined(wrapper)) for (let node = hit; node && node !== wrapper; node = composedParent(node)) {
+        if (node.getAttribute?.('aria-hidden') === 'true' && confined(node)) return center
+      }
+    }
+  }
+  if (['click', 'setChecked', 'press'].includes(type) || type === 'fill' && labelledCombobox(el)) {
+    for (const label of associatedControlLabels(el)) {
+      const rects = [...(label.getClientRects?.() ?? [label.getBoundingClientRect()])].slice(0, 20)
+      for (const rect of rects) for (const [horizontal, vertical] of [[.5, .5], [.15, .5], [.85, .5], [.5, .2], [.5, .8]]) {
+        const x = rect.x + rect.width * horizontal, y = rect.y + rect.height * vertical
+        if (x < 0 || x >= innerWidth || y < 0 || y >= innerHeight) continue
+        if (decorativeControlHit(label, controlHit(x, y), el)) return { x, y }
+      }
+    }
+  }
+  throw new Error('Element is obscured')
+}
+
 export function controlState(el) {
   const token = name => {
     const value = el.getAttribute(name)
@@ -38,9 +122,14 @@ export function elementCapabilities(el, measure = true) {
   const role = (el.getAttribute('role') || '').trim().split(/\s+/)[0]
   const state = controlState(el)
   const checkable = nativeCheckable || ['checkbox', 'switch', 'radio'].includes(role) && state.checked !== undefined
+  const labelProxy = measure && (nativeCheckable || !hidden && labelledCombobox(el)) && associatedControlLabels(el).length > 0
   const availableActions = []
   if (!disabled) {
     if (fileInput && !el.webkitdirectory) availableActions.push('uploadFiles')
+    if (hidden && labelProxy) {
+      availableActions.push('click')
+      if (nativeCheckable && !readOnly) availableActions.push('setChecked')
+    }
     if (!hidden) {
       availableActions.push('click', 'press')
       if ((textInput || nativeValueInput || el.tagName === 'TEXTAREA' || el.isContentEditable) && !readOnly) availableActions.push('fill')
@@ -48,7 +137,7 @@ export function elementCapabilities(el, measure = true) {
       if (el.tagName === 'SELECT' && !readOnly && [...el.options].some(option => !option.disabled && !(option.parentElement?.tagName === 'OPTGROUP' && option.parentElement.disabled))) availableActions.push('select')
     }
   }
-  return { hidden, disabled, fileInput, nativeValueInput, availableActions, ...state }
+  return { hidden, disabled, fileInput, nativeValueInput, labelProxy, availableActions, ...state }
 }
 
 export function fieldMetadata(el) {
@@ -132,7 +221,7 @@ export async function prepareElement({ ref, type, value, checked }) {
   const validate = () => {
     const capabilities = elementCapabilities(el)
     if (capabilities.disabled) throw new Error('Element is disabled')
-    if (capabilities.hidden) throw new Error('Element is not visible')
+    if (capabilities.hidden && !capabilities.labelProxy) throw new Error('Element is not visible')
     if (!capabilities.availableActions.includes(type)) throw new Error('Element does not support this action')
     if (type === 'setChecked') {
       if (typeof checked !== 'boolean') throw new Error('Checked state must be a boolean')
@@ -142,7 +231,8 @@ export async function prepareElement({ ref, type, value, checked }) {
   }
   let capabilities = validate(), preparedValue
   if (type === 'select' || type === 'fill' && capabilities.nativeValueInput) preparedValue = probeFormValue(el, type, value)
-  el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' })
+  const surface = capabilities.labelProxy ? associatedControlLabels(el)[0] : el
+  surface.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' })
   await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
   if (!el.isConnected || el.ownerDocument && el.ownerDocument !== document) throw new Error('Element reference is stale; observe again')
   capabilities = validate()
@@ -151,21 +241,7 @@ export async function prepareElement({ ref, type, value, checked }) {
   const x = Math.max(0, Math.min(innerWidth - 1, box.x + box.width / 2))
   const y = Math.max(0, Math.min(innerHeight - 1, box.y + box.height / 2))
   if (type === 'setChecked' && controlState(el).checked === checked) return { x, y, noOp: true }
-  let hit = document.elementFromPoint(x, y)
-  const seen = new Set()
-  while (hit?.shadowRoot?.elementFromPoint && !seen.has(hit)) {
-    seen.add(hit)
-    const next = hit.shadowRoot.elementFromPoint(x, y)
-    if (!next || next === hit) break
-    hit = next
-  }
-  let containsHit = false
-  const ancestors = new Set()
-  for (let candidate = hit; candidate && !ancestors.has(candidate); candidate = composedParent(candidate)) {
-    ancestors.add(candidate)
-    if (candidate === el) { containsHit = true; break }
-  }
-  if (!containsHit && hit !== el && !el.contains?.(hit)) throw new Error('Element is obscured')
+  const actionPoint = controlActionPoint(el, type)
   if (type === 'fill') {
     el.focus({ preventScroll: true })
     if (!capabilities.nativeValueInput) {
@@ -176,7 +252,12 @@ export async function prepareElement({ ref, type, value, checked }) {
     }
   }
   if (type === 'press') el.focus({ preventScroll: true })
-  return { x, y, ...(preparedValue || {}), ...(type === 'fill' && capabilities.nativeValueInput ? { inputMode: 'native' } : {}) }
+  if (type === 'press' || type === 'fill' && labelledCombobox(el)) {
+    let active = document.activeElement
+    while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement
+    if (active !== el) throw new Error('Element could not receive keyboard focus')
+  }
+  return { ...actionPoint, ...(preparedValue || {}), ...(type === 'fill' && capabilities.nativeValueInput ? { inputMode: 'native' } : {}) }
 }
 
 export function applyFormValue({ ref, type, value }) {
@@ -185,6 +266,7 @@ export function applyFormValue({ ref, type, value }) {
   const capabilities = elementCapabilities(el)
   if (!capabilities.availableActions.includes(type)) throw new Error('Element does not support this action')
   const { expectedValue } = probeFormValue(el, type, value)
+  controlActionPoint(el, type)
   const prototype = type === 'select' ? HTMLSelectElement.prototype : HTMLInputElement.prototype
   const setter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set
   if (!setter) throw new Error('Native form value setter is unavailable')

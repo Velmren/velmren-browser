@@ -245,7 +245,7 @@ test('replacement exit during receipt completion rejects finish and schedules no
 test('failed automated exit leaves the receipt and profile gate intact without native launch', async t => {
   const f = await fixture(t)
   f.browser.closeForManual = async () => { throw new Error('exit timeout') }
-  await assert.rejects(f.start(), /exit timeout/)
+  await assert.rejects(f.start(), { code: 'BROKER_ERROR', message: 'Browser operation failed.' })
   assert.equal(f.broker.profileLogin.phase, 'stopping-automation')
   assert.ok(f.manual.receipt)
   assert.ok(!f.manual.calls.includes('launch'))
@@ -258,7 +258,7 @@ test('failed rebind retains the receipt and permits an explicit retry after the 
   f.manual.open = false
   const send = f.replacement.send
   f.replacement.send = async () => { throw new Error('initialization failed') }
-  await assert.rejects(f.finish(loginId), /initialization failed/)
+  await assert.rejects(f.finish(loginId), { code: 'BROKER_ERROR', message: 'Browser operation failed.' })
   assert.ok(f.manual.receipt)
   assert.equal(f.broker.profileLogin.phase, 'awaiting-confirmation')
   assert.equal(f.replacement.closed, true)
@@ -293,7 +293,7 @@ test('failed replacement protocol work drains before another browser can be boun
     return send(method, params)
   }
   const finishing = f.finish(loginId)
-  const rejected = assert.rejects(finishing, /failed initialization/)
+  const rejected = assert.rejects(finishing, { code: 'BROKER_ERROR', message: 'Browser operation failed.' })
   await entered.promise
   await assert.rejects(f.finish(loginId, 'admin'), errorCode('PROFILE_LOGIN_ACTIVE'))
   gate.resolve()

@@ -87,7 +87,7 @@ try {
   const recovered = launch('profile-recovery.mjs', ['--login-id', login.loginId, '--user-confirmed', 'true'])
   controlledDescriptor = await descriptorFor(recovered)
   const peer = await connect(true)
-  assert.equal((await peer.listTools()).tools.length, 21)
+  assert.equal((await peer.listTools()).tools.length, 22)
   const status = await until(async () => {
     const status = await call(peer, 'velmren_profile_login_status')
     return status.phase === 'automated' ? status : null

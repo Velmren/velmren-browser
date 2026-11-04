@@ -1,5 +1,20 @@
 # Managed MCP connection
 
+The MCP catalog has 22 tools, including `velmren_sensitive`. Begin a protected
+phase before credential or activation work; use a locally staged `secretRef`
+for secret input. All response paths use the same output projection, including
+errors and task/page lists. URLs disclose only origins, and protected phases
+block screenshots and free page content. See the [input and phase contract](README.md#sensitive-inputs-and-outputs).
+The private staging callback is intentionally absent from the tool catalog and
+CLI; it does not require writing credentials to a file.
+Managed startup requires broker `agentProtocol: 2` before registration. A newer
+adapter cannot reuse an older broker without the protected-output contract.
+`BROKER_INCOMPATIBLE` preserves existing clients and tasks; reconnect after those
+clients finish and the old broker exits normally.
+Direct MCP, CLI and `createClient` connections also perform an authenticated
+`agent_protocol` handshake using only their scoped credential before operations.
+The direct adapter cannot fall back to an older broker's unprotected output.
+
 `Start-VelmrenMcp.ps1 -InstallRoot <installation>` is the stable Windows entry
 point. It asks the installed `Velmren.exe resolve` for the current signed payload,
 then relays stdin/stdout/stderr to its Node runtime and `agent/managed-mcp.mjs`.

@@ -75,14 +75,13 @@ try {
   assert.deepEqual(element(observation, 'Disabled upload').availableActions, [])
   pass('Observations advertise only supported capabilities, including hidden and disabled file controls')
 
-  for (const [name, action] of [['Full name', { type: 'fill', value: SENTINELS.field }], ['Password', { type: 'fill', value: SENTINELS.password }], ['Choice', { type: 'select', value: 'two' }]]) {
+  for (const [name, action] of [['Full name', { type: 'fill', value: SENTINELS.field }], ['Choice', { type: 'select', value: 'two' }]]) {
     const result = await act(name, action)
     assert.equal(result.actionResult.results[0].delivery, 'delivered_verified')
     assert.deepEqual(result.actionResult.results[0].verification, { scope: 'element', status: 'matched' })
     assert.ok(!JSON.stringify(result.actionResult).includes(action.value))
-    if (name === 'Password') assert.ok(!JSON.stringify(result).includes(SENTINELS.password))
   }
-  pass('Fill and select are read back at element scope; password and values are absent from action metadata')
+  pass('Fill and select are read back at element scope; values are absent from action metadata')
   const rewritten = await act('Rewritten value', { type: 'fill', value: 'requested-value' })
   assert.equal(rewritten.actionResult.results[0].verification.status, 'mismatch')
   assert.notEqual(rewritten.actionResult.results[0].delivery, 'delivered_verified')
@@ -151,6 +150,14 @@ try {
   assert.equal(large.elements.length, 150); assert.equal(large.text.length, 10000)
   report.largeObservation = { complete: large.complete, truncated: large.truncated, limits: large.limits, counts: large.counts }
   pass('Large pages explicitly report truncated controls, text, options and field summaries')
+  await tool('velmren_navigate', { url: `${fixture.origin}/` })
+  const password = await act('Password', { type: 'fill', value: SENTINELS.password })
+  assert.equal(password.actionResult.results[0].delivery, 'delivered_verified')
+  assert.deepEqual(password.actionResult.results[0].verification, { scope: 'element', status: 'matched' })
+  assert.equal(password.observation.privacy.active, true)
+  assert.ok(!JSON.stringify(password).includes(SENTINELS.password))
+  assert.equal(await app.broker.page(app.broker.tasks.get(task.taskId)).evaluate(value => document.querySelector('#password').value === value, SENTINELS.password), true)
+  pass('Password fill retains element verification while protecting all task output')
   await tool('velmren_finish')
   assert.equal((await app.broker.browser.send('Target.getBrowserContexts')).browserContextIds.length, 0)
   report.cleanup.contextsRestored = true

@@ -77,9 +77,8 @@ try {
   assert.equal(invalid.validity.patternMismatch, true); assert.ok(invalid.validationMessage)
   const number = (await observe('Constrained number')).element
   assert.equal(number.min, '1'); assert.equal(number.max, '11'); assert.equal(number.step, '2')
-  await action('Private field', { type: 'fill', value: 'SyntheticPrivate123' })
   const privateField = (await observe('Private field')).element
-  assert.equal(privateField.value, '[redacted]'); assert.ok(!JSON.stringify(privateField).includes('SyntheticPrivate123'))
+  assert.equal(privateField.value, '[redacted]')
   check('Field constraints, helper text and validation flags are visible while password values stay redacted')
 
   const dates = { 'Birth date': '1996-05-17', 'Meeting time': '08:45:12', 'Local meeting': '1996-05-17T08:45:12', 'Start month': '1996-05', 'Start week': '1996-W20' }
@@ -142,6 +141,17 @@ try {
   await call('wait', { text: 'Shadow form accepted', timeoutMs: 5000 })
   assert.deepEqual(fixture.records.find(x => x.kind === 'shadow'), { kind: 'shadow', name: 'Nested User', checked: true })
   check('Open and nested shadow controls, slotted fields, checked state and form submission work')
+  // Password input protects the entire task, so exercise it after ordinary controls.
+  await call('navigate', { url: `${fixture.origin}/controls` })
+  const passwordResult = await action('Private field', { type: 'fill', value: 'SyntheticPrivate123' })
+  assert.equal(passwordResult.actionResult.delivery, 'delivered_verified')
+  assert.equal(passwordResult.observation.privacy.active, true)
+  const protectedObservation = await call('observe')
+  assert.equal(protectedObservation.privacy.active, true)
+  assert.ok(!protectedObservation.text && protectedObservation.elements.every(element => !element.name && !element.value))
+  assert.ok(!JSON.stringify([passwordResult, protectedObservation]).includes('SyntheticPrivate123'))
+  assert.equal(await app.broker.page(app.broker.tasks.get(task.taskId)).evaluate(() => document.querySelector('#password').value === 'SyntheticPrivate123'), true)
+  check('Password fill is independently verified and suppresses page values and names for the entire task')
   await call('finish'); task = null
   report.passed = true
 } catch (error) { failure = error; report.error = error.message; report.stack = error.stack }

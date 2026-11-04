@@ -29,6 +29,57 @@ Its sign-ins and site storage survive task completion and browser restarts.
 Tasks share that profile's origin storage while retaining separate page ownership.
 The default `"isolated"` mode remains available for disposable, independent sessions.
 
+### Sensitive inputs and outputs
+
+Public responses expose HTTP(S) origins only, including URLs inside text. They
+never expose URL paths, queries, fragments or user information. Error responses
+use fixed messages and bounded action receipts; renderer exception text is not
+returned. Ordinary form values remain available outside a sensitive phase.
+
+Call `task_sensitive` with `{taskId, action: "begin"}` before activation links,
+credential navigation or manual sensitive input, or create a task with
+`sensitive: true`. A password or `autocomplete="one-time-code"` fill enables the
+same protection automatically. Other OTP controls require an explicit begin or
+`sensitive: true` on the fill. Protection covers every page and frame in the task,
+including delayed echoes, names, values, options, dialogs and downloads. Only
+structural IDs, control types, booleans, counts and action receipts remain.
+Screenshots are rejected before browser capture. Separate tasks are unaffected.
+
+For secret input, a trusted local integration imports `stagePrivateInput` from
+`private-input.mjs` and supplies a `readSecret` callback from its existing vault or
+OTP flow. It validates the latest `taskId`, `pageId`, optional `frameId`,
+`observationId`, `ref`, exact frame `origin` and `topOrigin` before reading the
+value. Only the returned opaque `secretRef` goes to the agent:
+
+```js
+const staged = await stagePrivateInput({
+  stateDir, taskId, pageId, frameId, observationId, ref, origin, topOrigin,
+  readSecret: () => existingPrivateProvider.read()
+})
+// Agent tool arguments contain only this short-lived reference.
+const action = { type: 'fill', ref, secretRef: staged.secretRef }
+```
+
+The callback runs locally; it is not an MCP tool or a CLI command. Do not put
+secret values in tool arguments, shell commands, logs, or new files. References
+expire after 60 seconds, bind the owning task and exact observed field/document,
+and are consumed before delivery. Failed or uncertain delivery cannot be
+replayed. A replacement node or changed origin requires new preparation.
+Storage is memory-only; buffers are cleared on disposal, while transient
+JavaScript strings remain garbage-collected. This protects the agent output
+channel, not the destination website from receiving its authorized input.
+
+Navigation, SPA changes and popup closure never end protection. Reach a known
+safe **new document**, close other task pages and dialogs, then call
+`task_sensitive` with `action: "end"`, the current `privacy.phaseId` and
+`privacy.documentId`, exact `expectedOrigin`, and `safeToReveal: true`. This is an
+explicit assertion about a safe destination, not a page-content classifier. The
+result supplies fresh ordinary observation refs. History metadata and downloads
+remain protected so ending a phase cannot reveal previously retained content.
+The first protected observation establishes each new task page's document
+baseline. Its initial document cannot be released; observe it while protected
+before navigating to the safe destination.
+
 ### Ordinary manual profile sign-in
 
 `request_human(showWindow: true)` shows the same task page but keeps the debugging

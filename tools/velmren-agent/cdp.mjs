@@ -50,9 +50,15 @@ export class BrowserPipe extends EventEmitter {
         if (!request) continue
         this.pending.delete(message.id)
         clearTimeout(request.timer)
-        if (message.error) request.reject(new Error(`${request.method}: ${message.error.message}`))
+        if (message.error) request.reject(Object.assign(new Error(`${request.method}: ${message.error.message}`), { code: 'CDP_PROTOCOL_ERROR', protocolCode: message.error.code, method: request.method }))
         else request.resolve(message.result)
       } else {
+        if (message.method === 'Target.detachedFromTarget' && typeof message.params?.sessionId === 'string') {
+          for (const [id, request] of this.pending) if (request.sessionId === message.params?.sessionId) {
+            this.pending.delete(id); clearTimeout(request.timer)
+            request.reject(Object.assign(new Error(`Browser target session closed: ${request.method}`), { code: 'CDP_SESSION_CLOSED', method: request.method }))
+          }
+        }
         this.emit('protocol', message)
       }
     }
@@ -64,9 +70,9 @@ export class BrowserPipe extends EventEmitter {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id)
-        reject(new Error(`Browser command timed out: ${method}`))
+        reject(Object.assign(new Error(`Browser command timed out: ${method}`), { code: 'CDP_TIMEOUT', method }))
       }, timeout)
-      this.pending.set(id, { resolve, reject, timer, method })
+      this.pending.set(id, { resolve, reject, timer, method, sessionId })
       this.process.stdio[3].write(JSON.stringify({ id, method, params, sessionId }) + '\0')
     })
   }

@@ -56,7 +56,12 @@ try {
   }
   const stale=await codex.call('task_observe',{taskId:task.taskId})
   await task.page.evaluate(()=>{document.querySelector('#status').textContent='Changed outside the agent'})
-  await assert.rejects(codex.call('task_act',{taskId:task.taskId,observationId:stale.observationId,actions:[{type:'click',ref:stale.elements.find(e=>e.name==='Save local record').ref}]}),/changed since observation/);pass('stale observation rejected before input')
+  const submissionsBeforeStale=fixture.submissions.length
+  await assert.rejects(codex.call('task_act',{taskId:task.taskId,observationId:stale.observationId,actions:[{type:'click',ref:stale.elements.find(e=>e.name==='Save local record').ref}]}),error=>{
+    assert.equal(error.code,'BROKER_ERROR');assert.equal(error.message,'Browser operation failed.')
+    assert.equal(error.actionResult.completed,0);assert.equal(error.actionResult.delivery,'not_delivered');return true
+  })
+  assert.equal(fixture.submissions.length,submissionsBeforeStale);pass('stale observation rejected before input')
   await assert.rejects(codex.call('task_navigate',{taskId:task.taskId,url:'https://example.com'}),/not permitted/)
   const denied=await task.page.evaluate(async()=>{try{await fetch('https://example.com/');return false}catch{return true}})
   assert.equal(denied,true);pass('top-level and page subresource origin restrictions')
