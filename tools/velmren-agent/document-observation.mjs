@@ -1,4 +1,4 @@
-import { elementCapabilities, fieldMetadata } from './form-controls.mjs'
+import { elementCapabilities, fieldMetadata, hasTransparentAncestor } from './form-controls.mjs'
 
 export function documentRoots() {
   const roots = [document]
@@ -10,7 +10,7 @@ export function documentRoots() {
   return roots
 }
 
-export function elementName(element) {
+export function elementName(element, { cardProxy } = {}) {
   const root = element.getRootNode?.() ?? document
   const labelled = (element.getAttribute('aria-labelledby') ?? '').trim().split(/\s+/).filter(Boolean)
     .map(id => root.getElementById?.(id)?.textContent ?? document.getElementById?.(id)?.textContent ?? '').join(' ')
@@ -19,7 +19,17 @@ export function elementName(element) {
     for (const child of copy.querySelectorAll('input,textarea,select')) child.remove()
     return copy.textContent
   }).join(' ')
-  return (labelled || element.getAttribute('aria-label') || labels || element.getAttribute('placeholder') || element.innerText || element.getAttribute('name') || '').replace(/\s+/g, ' ').trim()
+  const actionValue = element.tagName === 'INPUT' && ['button', 'submit', 'reset'].includes(element.type) ? element.value : ''
+  const imageName = element.getAttribute('alt') || [...(element.querySelectorAll?.('img[alt],svg title') ?? [])]
+    .filter(node => node.getAttribute('aria-hidden') !== 'true').slice(0, 5).map(node => node.getAttribute('alt') || node.textContent).join(' ')
+  let name = labelled || element.getAttribute('aria-label') || labels || actionValue || element.getAttribute('placeholder') || element.innerText || cardProxy?.innerText || imageName || element.getAttribute('title')
+  if (!name && element.isConnected && typeof getComputedStyle === 'function') {
+    name = ['::before', '::after'].map(pseudo => {
+      const content = getComputedStyle(element, pseudo).content
+      return /^(["']).*\1$/.test(content) ? content.slice(1, -1) : ''
+    }).join(' ').trim()
+  }
+  return (name || element.getAttribute('name') || '').replace(/\s+/g, ' ').trim()
 }
 
 export function visibleDocumentText(roots = documentRoots()) {
@@ -56,14 +66,34 @@ export function observeDocument({ readOnly = false, query = '', offset = 0, limi
   const elements = [], limits = { elements: limit, text: textLimit, name: 200, value: 300, options: 50, files: 10 }
   const counts = { eligibleElements: 0, matchedElements: 0, returnedElements: 0, hiddenElements: 0, truncatedNames: 0, truncatedValues: 0, truncatedMetadata: 0, omittedOptions: 0, truncatedOptionLabels: 0, truncatedOptionValues: 0, omittedFiles: 0 }
   const seen = new Set()
-  for (const root of roots) for (const element of root.querySelectorAll('a,button,input,select,textarea,label,[role],[contenteditable="true"]')) {
+  const semantic = 'a,button,input,select,textarea,label,summary,[role],[contenteditable="true"],[tabindex],[onclick]'
+  const interactive = 'a[href],button,input:not([type="hidden"]),select,textarea,label,summary,[tabindex],[onclick],[contenteditable="true"],[role="button"],[role="link"],[role="checkbox"],[role="radio"],[role="switch"],[role="combobox"],[role="option"],[role="menuitem"]'
+  const styles = new WeakMap()
+  const styleOf = element => {
+    if (!styles.has(element)) styles.set(element, getComputedStyle(element))
+    return styles.get(element)
+  }
+  for (const root of roots) for (const element of root.querySelectorAll('*')) {
     if (seen.has(element)) continue
     seen.add(element)
-    const { hidden, disabled, fileInput, labelProxy, availableActions } = elementCapabilities(element)
+    const explicit = element.matches?.(semantic) ?? ['A', 'BUTTON', 'INPUT', 'SELECT', 'TEXTAREA', 'LABEL', 'SUMMARY'].includes(element.tagName)
+    if (!explicit) {
+      if (['HTML', 'BODY', 'SCRIPT', 'STYLE', 'TEMPLATE'].includes(element.tagName)) continue
+      const style = styleOf(element), parent = element.assignedSlot || element.parentElement || root.host
+      // A cursor is inherited. Expose its owning surface, not every text/icon
+      // descendant, and leave containers of distinct native controls alone.
+      if (style.cursor !== 'pointer' || style.pointerEvents === 'none' || parent && styleOf(parent).cursor === 'pointer' || hasTransparentAncestor(element)) continue
+      if (parent?.closest?.(interactive)) continue
+      if ([...(element.querySelectorAll?.(interactive) ?? [])].some(child => {
+        const box = child.getBoundingClientRect(), childStyle = styleOf(child)
+        return box.width && box.height && childStyle.display !== 'none' && !['hidden', 'collapse'].includes(childStyle.visibility)
+      })) continue
+    }
+    const { hidden, disabled, fileInput, labelProxy, cardProxy, availableActions } = elementCapabilities(element)
     if (element.tagName === 'LABEL' && element.control?.type !== 'file') continue
-    if (hidden && !fileInput && !labelProxy) { counts.hiddenElements++; continue }
+    if (hidden && !fileInput && !labelProxy && !cardProxy) { counts.hiddenElements++; continue }
     counts.eligibleElements++
-    const name = elementName(element)
+    const name = elementName(element, { cardProxy })
     if (needle && !`${name} ${element.getAttribute('name') ?? ''} ${element.getAttribute('role') ?? ''} ${element.type ?? ''}`.toLowerCase().includes(needle)) continue
     const matchIndex = counts.matchedElements++
     if (matchIndex < offset || elements.length >= limit) continue
@@ -76,7 +106,7 @@ export function observeDocument({ readOnly = false, query = '', offset = 0, limi
     truncation.metadata = Object.values(metadata.metadataTruncation ?? {}).some(Boolean)
     counts.truncatedMetadata += Number(truncation.metadata)
     const entry = { ref, tag: element.tagName.toLowerCase(), role: element.getAttribute('role') ?? '', name: name.slice(0, limits.name), type: element.type ?? '', value: value.slice(0, limits.value), disabled, hidden, availableActions, truncation,
-      ...metadata, ...(labelProxy && (hidden || element.getAttribute('role') === 'combobox') ? { interactionTarget: 'associated_label' } : {}), ...(root !== document ? { shadowRoot: 'open' } : {}) }
+      ...metadata, ...(cardProxy ? { interactionTarget: 'checkable_card' } : labelProxy && (hidden || element.getAttribute('role') === 'combobox') ? { interactionTarget: 'associated_label' } : {}), ...(!explicit ? { discovery: 'pointer_surface' } : {}), ...(root !== document ? { shadowRoot: 'open' } : {}) }
     if (fileInput) {
       const files = [...element.files]
       Object.assign(entry, { accept: element.accept, multiple: element.multiple, directory: element.webkitdirectory, files: files.slice(0, limits.files).map(file => ({ name: file.name, size: file.size })), fileCount: files.length })
@@ -106,7 +136,7 @@ export function observeDocument({ readOnly = false, query = '', offset = 0, limi
     complete: !truncated, truncated, limits, counts,
     pagination: { offset, limit, total: counts.matchedElements, nextOffset, query },
     textPagination: { offset: textOffset, limit: textLimit, total: text.length, nextOffset: nextTextOffset },
-    coverage: { scope: 'frame', childFrames: 'separate_frame_observations', shadowRoots: 'open', closedShadowRoots: 'excluded', hiddenElements: 'excluded_except_file_inputs_and_labelled_checkables', elements: query ? 'query_matches' : 'eligible_elements', completeness: 'eligible_elements_and_visible_text' } }
+    coverage: { scope: 'frame', childFrames: 'separate_frame_observations', shadowRoots: 'open', closedShadowRoots: 'excluded', hiddenElements: 'excluded_except_file_inputs_and_associated_checkables', customControls: 'explicit_semantics_or_pointer_surfaces', elements: query ? 'query_matches' : 'eligible_elements', completeness: 'eligible_elements_and_visible_text' } }
 }
 
 export function listSelectOptions({ ref, revision, query = '', offset = 0, limit = 50 }) {

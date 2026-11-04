@@ -5,6 +5,7 @@ import * as documentObservation from './document-observation.mjs'
 import * as sensitiveRenderer from './sensitive-renderer.mjs'
 import { sanitizePublicError } from './privacy.mjs'
 import { CaptchaPage } from './captcha-page.mjs'
+import { annotateOperationError } from './operation-error.mjs'
 
 const { prepareElement, applyFormValue, verifyElementValue } = formControls
 const { observeDocument, listSelectOptions } = documentObservation
@@ -142,10 +143,14 @@ export class AgentPage {
     if (result.exceptionDetails) {
       const firstLine = String(result.exceptionDetails.exception?.description || result.exceptionDetails.text).split('\n')[0].replace(/^Error:\s*/, '').trim()
       const code = /^(?:Element|Frame) is obscured$/.test(firstLine) ? 'ELEMENT_OBSCURED'
-        : /^(?:Element is disabled|Element is not visible|Private input target is unavailable)$/.test(firstLine) ? 'ELEMENT_UNAVAILABLE'
+        : firstLine === 'Element is disabled' ? 'ELEMENT_DISABLED'
+        : firstLine === 'Element is not visible' ? 'ELEMENT_HIDDEN'
+        : firstLine === 'Private input target is unavailable' ? 'ELEMENT_UNAVAILABLE'
         : /^Private input (?:target|observation|origin|document) changed$/.test(firstLine) ? 'PRIVATE_INPUT_BINDING_CHANGED'
         : /^(?:Stale observation|Unknown element reference|Element reference is stale|Page changed since observation)/.test(firstLine) ? 'STALE_OBSERVATION' : 'ACTION_FAILED'
-      throw Object.assign(new Error(sanitizePublicError({ code }).error), { code })
+      const error = annotateOperationError(Object.assign(new Error(firstLine), { code }))
+      error.message = sanitizePublicError(error).error
+      throw error
     }
     return returnByValue ? result.result.value : result.result
   }
@@ -153,7 +158,7 @@ export class AgentPage {
     if (this.dialog) return this.dialogObservation()
     let result
     try { result = await this.evaluate(observeDocument, { ...options, readOnly }) }
-    catch (error) { if (error instanceof DialogOpened) return this.dialogObservation(); throw error }
+    catch (error) { if (error instanceof DialogOpened) return this.dialogObservation(); throw annotateOperationError(error, 'observe') }
     this.url = result.url; this.title = result.title
     result.frameId = this.frameId
     result.parentFrameId = this.parentFrameId
@@ -179,7 +184,7 @@ export class AgentPage {
     let cancel
     const loaded = new Promise((resolve, reject) => {
       const listener = message => { if(message.sessionId===this.sessionId && ['Page.loadEventFired', 'Page.javascriptDialogOpening'].includes(message.method)) done() }
-      const timer=setTimeout(()=>done(new Error('Page load timed out')),20000)
+      const timer=setTimeout(()=>done(annotateOperationError(new Error('Page load timed out'), 'navigate')),20000)
       const done=error=>{clearTimeout(timer);this.browser.off('protocol',listener);error?reject(error):resolve()}
       cancel=done
       this.browser.on('protocol',listener)
@@ -193,17 +198,18 @@ export class AgentPage {
       if (!result.loaderId) cancel()
     } catch (error) {
       if (error instanceof DialogOpened) { cancel(); return this.observe() }
-      cancel(error); throw error
+      cancel(error); throw annotateOperationError(error, 'navigate')
     }
     await loaded
     return this.observe()
   }
   async act(observationId, actions, stillActive = () => true, privateInput) {
     const epoch = this.epoch, results = []
-    let completed = 0, current = 0, dispatched = false, focusEnabled = false
+    let completed = 0, current = 0, dispatched = false, focusEnabled = false, phase = 'validation', diagnostic
     const record = (action, delivery, verification) => ({ index: current, type: action.type,
       ...(/^e[1-9][0-9]{0,8}$/.test(action.ref ?? '') ? { ref: action.ref } : {}), delivery, ...(verification ? { verification } : {}) })
     const fillSensitive = async action => {
+      phase = 'prepare'
       if (!privateInput) throw new Error('Private input context is unavailable')
       privateInput.begin()
       const target = await this.preparePrivateInput(observationId, action.ref, undefined, true)
@@ -211,6 +217,7 @@ export class AgentPage {
       const deliver = async value => {
         if (!stillActive() || epoch !== this.epoch) throw new Error('Task paused before private input')
         dispatched = true
+        phase = 'input'
         return this.evaluate(sensitiveRenderer.applyPrivateValue, { ref: action.ref, revision: this.observation.revision, origin: target.origin, value })
       }
       const verification = action.secretRef !== undefined
@@ -234,12 +241,14 @@ export class AgentPage {
       if (!this.observation || observationId !== this.observation.id || this.observation.epoch !== this.epoch) throw new Error('Stale observation; observe the page again')
       const revision = await this.evaluate(()=>globalThis.__velmrenAgent?.revision)
       if (revision !== this.observation?.revision) throw new Error('Page changed since observation; observe again')
+      phase = 'prepare'
       try { await this.send('Emulation.setFocusEmulationEnabled', { enabled: true }); focusEnabled = true }
       catch (error) { error.deliveryUncertain = true; throw error }
       for (current = 0; current < actions.length; current++) {
         const action = actions[current]
         let verificationAction = action
         dispatched = false
+        phase = 'prepare'
         try {
           if (!stillActive() || epoch !== this.epoch) throw new Error('Task state or document changed; remaining actions stopped')
           const sensitiveFill = action.type === 'fill' && (action.secretRef !== undefined || action.sensitive === true ||
@@ -254,6 +263,7 @@ export class AgentPage {
             if (action.ref) { await this.prepareFrame(); await this.evaluate(prepareElement, action) }
             if (!stillActive() || epoch !== this.epoch) throw new Error('Task paused during action preparation')
             dispatched = true
+            phase = 'input'
             const space = keys[action.key] === 32
             const key = { key: space ? ' ' : action.key, code: space ? 'Space' : action.key, windowsVirtualKeyCode: keys[action.key] }
             await this.interruptOnDialog(this.send('Input.dispatchKeyEvent', { type:'keyDown', ...key, ...(space ? { text:' ' } : action.key === 'Enter' ? { text:'\r' } : {}) }))
@@ -273,19 +283,23 @@ export class AgentPage {
             }
             if (action.type === 'select' || action.type === 'fill' && point.inputMode === 'native') {
               dispatched = true
+              phase = 'input'
               const { expectedValue } = await this.evaluate(applyFormValue, action)
               verificationAction = { ...action, value: expectedValue }
             } else if (action.type === 'fill') {
               dispatched = true
+              phase = 'input'
               await this.interruptOnDialog(this.send('Input.insertText', { text: action.value }))
             } else if (clicking) {
               dispatched = true
+              phase = 'input'
               const { x, y } = point
               await this.interruptOnDialog(this.send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 }))
               await this.interruptOnDialog(this.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 }))
             }
           }
           completed++
+          phase = 'verify'
           if (action.type === 'fill' && privateInput) {
             try {
               if (epoch !== this.epoch || await this.evaluate(sensitiveRenderer.isSensitiveTarget, { ref: action.ref })) privateInput.begin()
@@ -299,6 +313,7 @@ export class AgentPage {
           if (action.type === 'fill' && privateInput && dispatched) privateInput.begin()
           if (completed > current) {
             // Input was acknowledged; a failed readback must not change its delivery.
+            diagnostic = annotateOperationError(error, 'verify').diagnostic
             results.push(record(action, 'delivered_unverified', { scope: 'element', status: 'unavailable' }))
             break
           }
@@ -310,8 +325,9 @@ export class AgentPage {
       }
       let observation, observationUnavailable = false
       try { observation = await this.observe() }
-      catch {
+      catch (error) {
         // A failed follow-up read cannot change acknowledged input delivery.
+        diagnostic = annotateOperationError(error, 'observe').diagnostic
         this.observation = null
         observationUnavailable = true
         observation = { pageId: this.pageId, text: '', elements: [], complete: false, truncated: true,
@@ -320,8 +336,10 @@ export class AgentPage {
       const delivery = results.some(result => result.delivery === 'delivery_uncertain') ? 'delivery_uncertain'
         : results.every(result => result.delivery === 'delivered_verified') ? 'delivered_verified' : 'delivered_unverified'
       return { completed, ...(observationUnavailable ? { stopped: 'observation_unavailable' } : this.dialog ? { stopped: 'dialog' } : {}), observation,
+        ...(diagnostic ? { diagnostic } : {}),
         actionResult: actionResult(completed, null, results, delivery, delivery === 'delivery_uncertain' ? 'delivery_uncertain' : observationUnavailable ? 'observation_unavailable' : delivery === 'delivered_verified' ? 'completed' : 'verify_outcome') }
     } catch (error) {
+      annotateOperationError(error, phase)
       this.observation = null
       const delivery = dispatched || error.deliveryUncertain ? 'delivery_uncertain' : 'not_delivered'
       const failedIndex = current < actions.length ? current : null

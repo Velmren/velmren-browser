@@ -5,6 +5,7 @@ import { safePublicUrl, sanitizePublicResult, sanitizePublicError } from '../pri
 const id = 'c66d2cdc-96bc-42c7-b211-4e0da2ce08a6'
 const pageId = 'AABBCCDDEEFF00112233445566778899'
 const marker = 'synthetic-private-marker'
+const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAEElEQVR4AQEFAPr/AP////8J+wP9o9FJCgAAAABJRU5ErkJggg=='
 const actionResult = { completed: 1, failedIndex: null, delivery: 'delivered_verified',
   results: [{ index: 0, type: 'fill', ref: 'e1', delivery: 'delivered_verified', verification: { scope: 'element', status: 'matched' } }],
   recovery: { retry: 'none', observe: false, reason: 'completed' } }
@@ -15,7 +16,8 @@ const absent = (value, strings = [marker]) => {
 }
 
 test('normal PNG bytes survive every projection while protected images remain suppressed', () => {
-  const screenshot = { mimeType: 'image/png', data: 'AAA//AAA' }
+  const screenshot = { mimeType: 'image/png', data: png }
+  assert.ok(png.includes('//'))
   const once = sanitizePublicResult(screenshot)
   assert.deepEqual(once, screenshot)
   assert.deepEqual(sanitizePublicResult(once), screenshot)
@@ -120,7 +122,7 @@ test('projection is detached from inputs, handles cycles, and does not invoke pr
 })
 
 test('ordinary images survive and sensitive projections never carry image data', () => {
-  const input = { mimeType: 'image/png', data: 'c3ludGhldGljLWltYWdl', screenshot: { mimeType: 'image/png', data: marker } }
+  const input = { mimeType: 'image/png', data: png, screenshot: { mimeType: 'image/png', data: marker } }
   assert.equal(sanitizePublicResult(input).data, input.data)
   const output = sanitizePublicResult(input, { sensitive: true })
   absent(output)

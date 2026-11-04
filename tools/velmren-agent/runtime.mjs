@@ -10,6 +10,7 @@ import { sanitizeActionResult, sanitizeWaitResult } from './action-result.mjs'
 import { requestHuman, resumeHuman } from './handoff.mjs'
 import { validateManualProfileUrl } from './manual-profile.mjs'
 import { sanitizePublicResult, sanitizePublicError } from './privacy.mjs'
+import { annotateOperationError, sanitizeDiagnostic } from './operation-error.mjs'
 import { PrivateInputs } from './private-input.mjs'
 import { CaptchaService } from './capsolver-service.mjs'
 import { installCaptchaSession } from './captcha-page.mjs'
@@ -746,7 +747,14 @@ export class AgentBroker {
       const observation = await page.navigate(args.url)
       this.event('task-created', { taskId: task.taskId, owner })
       return { ...this.record(task), observation: this.decorate(task, observation) }
-    } catch (error) { await this.end(task, 'cancelled'); throw error }
+    } catch (error) {
+      error.taskId = task.taskId
+      if (request?.trace.pageId) error.pageId = request.trace.pageId
+      if (!sanitizeDiagnostic(error.diagnostic)) annotateOperationError(error, 'create')
+      // Cleanup records its own retry state; preserve the initiating failure.
+      await this.end(task, 'cancelled').catch(() => {})
+      throw error
+    }
     finally { task.creatingRoot = false; initialized() }
   }
   async removePage(task, pageId) {
@@ -935,8 +943,15 @@ export class AgentBroker {
         }
       }
       if (actionResult) error.actionResult = actionResult
+      if (!sanitizeDiagnostic(error.diagnostic)) {
+        const phase = !request.dispatched ? 'validation' : method === 'task_create' ? 'create' : method === 'task_navigate' ? 'navigate'
+          : method === 'task_wait' ? 'wait' : method === 'task_act' ? 'prepare' : method === 'task_observe' ? 'observe' : 'protocol'
+        annotateOperationError(error, phase)
+      }
+      // IDs come from the validated owner context, never from a page message.
+      for (const key of ['taskId', 'pageId', 'frameId']) if (request.trace[key]) error[key] = request.trace[key]
       const clean = sanitizePublicError(error, { sensitive: this.tasks.get(request.trace.taskId)?.sensitive?.active === true })
-      throw new BrokerError(clean.error, clean.code, clean.actionResult, clean.waitResult)
+      throw new BrokerError(clean.error, clean.code, clean.actionResult, clean.waitResult, clean)
     } finally {
       try { this.trace?.record({ ...request.trace, outcome, durationMs: performance.now() - started, actionResult }) } catch {}
     }
@@ -1022,6 +1037,7 @@ export class AgentBroker {
           await rootPage.frames.refresh()
           page = rootPage.frames.select(args.frameId)
         }
+        request.trace.frameId = page.frameId
         const sessionId = page.sessionId
         const stillActive = () => this.profileLogin.phase === 'automated' && !this.stopping && task.state === 'agent-active' && task.controlGeneration === controlGeneration && task.owner === taskOwner &&
           this.tasks.get(task.taskId) === task && this.pages(task).get(rootPage.pageId) === rootPage && !rootPage.detached && rootPage.sessionId === rootSessionId && !page.detached && page.sessionId === sessionId &&

@@ -12,12 +12,12 @@ try {
   if(!$item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)){throw 'Invalid directory'}
   $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User
   $acl=New-Object Security.AccessControl.DirectorySecurity
-  $acl.SetOwner($sid)
   $acl.SetAccessRuleProtection($true,$false)
   foreach($principal in @($sid,(New-Object Security.Principal.SecurityIdentifier('S-1-5-18')))){
    $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($principal,'FullControl','ContainerInherit, ObjectInherit','None','Allow')))
   }
-  Set-Acl -LiteralPath $Directory -AclObject $acl
+  # Persist only the DACL. Set-Acl also attempts SACL access on protected directories.
+  [IO.Directory]::SetAccessControl($item.FullName,$acl)
   [Console]::Out.Write('ok')
  } else {
   Add-Type -AssemblyName System.Security

@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import { resolve, isAbsolute } from 'node:path'
 import { sanitizeActionResult, sanitizeWaitResult, unknownActionResult } from './action-result.mjs'
+import { sanitizeErrorContext } from './operation-error.mjs'
 
 export const CLIENTS = ['codex', 'claude', 'scripts']
 export const AGENT_PROTOCOL = 3
@@ -12,7 +13,7 @@ export const METHODS = [
 ]
 
 export class BrokerError extends Error {
-  constructor(message, code = 'BROKER_ERROR', result, waitResult) {
+  constructor(message, code = 'BROKER_ERROR', result, waitResult, context) {
     super(message)
     this.name = 'BrokerError'
     this.code = code
@@ -20,6 +21,7 @@ export class BrokerError extends Error {
     if (clean) this.actionResult = clean
     const cleanWait = sanitizeWaitResult(waitResult)
     if (cleanWait) this.waitResult = cleanWait
+    Object.assign(this, sanitizeErrorContext(context))
   }
 }
 
@@ -258,7 +260,7 @@ export function createClient(connection) {
     }
     if (!response.ok || payload?.ok !== true) {
       throw new BrokerError(typeof payload?.error === 'string' ? payload.error : `Broker request failed (HTTP ${response.status})`,
-        typeof payload?.code === 'string' ? payload.code : 'BROKER_ERROR', sanitizeActionResult(payload?.actionResult) ?? unknown(), payload?.waitResult)
+        typeof payload?.code === 'string' ? payload.code : 'BROKER_ERROR', sanitizeActionResult(payload?.actionResult) ?? unknown(), payload?.waitResult, payload)
     }
     if (!Object.hasOwn(payload, 'result')) throw new BrokerError('Broker response is missing its result', 'INVALID_RESPONSE', unknown())
     return payload.result
@@ -267,6 +269,8 @@ export function createClient(connection) {
     if (result?.agentProtocol !== AGENT_PROTOCOL) throw new BrokerError('Incompatible browser agent protocol.', 'BROKER_INCOMPATIBLE')
   }, error => {
     if (['UNKNOWN_METHOD', 'BROKER_ERROR', 'INVALID_ARGUMENTS'].includes(error.code)) throw new BrokerError('Incompatible browser agent protocol.', 'BROKER_INCOMPATIBLE')
+    // A later explicit call may recheck readiness; never replay its operation.
+    if (error.code === 'CONNECTION_ERROR') readiness = undefined
     throw error
   })
   return {

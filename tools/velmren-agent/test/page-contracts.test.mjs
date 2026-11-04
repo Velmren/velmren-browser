@@ -13,7 +13,7 @@ function fixture(specs = [{}], text = '') {
     const el = { tagName: 'INPUT', type: 'text', value: '', innerText: '', isConnected: true, ownerDocument: document,
       labels: [], options: [], files: [], hidden: false, disabled: false, readOnly: false,
       getAttribute(name) { return name === 'aria-label' ? this.name ?? '' : null },
-      matches() { return this.disabled }, closest() { return null },
+      matches(selector) { return selector.split(',').some(part => part === ':disabled' ? this.disabled : part.toUpperCase() === this.tagName) }, closest() { return null },
       getBoundingClientRect() { return { x: 0, y: 0, width: this.hidden ? 0 : 20, height: 20 } },
       scrollIntoView() { document.point = this }, contains() { return false },
       focus() { document.focused = this }, select() {}, dispatchEvent() { this.onChange?.() }, ...spec }

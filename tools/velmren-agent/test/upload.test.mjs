@@ -19,7 +19,7 @@ const files = [{ path: filePath, name: 'synthetic-resume.pdf', size: 9 }]
 
 function pageFixture() {
   const browser = new EventEmitter(), calls = [], document = {}
-  const input = { isConnected: true, ownerDocument: document, tagName: 'INPUT', type: 'file', multiple: false, disabled: false, webkitdirectory: false, files: [], matches: () => false, getAttribute: () => null }
+  const input = { isConnected: true, ownerDocument: document, tagName: 'INPUT', type: 'file', multiple: false, disabled: false, webkitdirectory: false, files: [], matches: selector => selector.split(',').includes('input'), getAttribute: () => null }
   const state = { revision: 0, refs: new Map([['e1', input]]) }
   const context = vm.createContext({ document, __velmrenAgent: state })
   let hook = () => {}, active = true, selection = files
@@ -98,7 +98,7 @@ for (const [name, change, pattern] of [
   ['missing ref', f => { f.state.refs.clear() }, /Page observation changed; observe again/],
   ['nonfile ref', f => { f.input.type = 'text' }, /Action failed; inspect the delivery receipt before retrying/],
   ['disabled input', f => { f.input.disabled = true }, /disabled/],
-  ['input inside a disabled fieldset', f => { f.input.matches = selector => selector === ':disabled' }, /disabled/],
+  ['input inside a disabled fieldset', f => { f.input.matches = selector => selector === ':disabled' || selector.split(',').includes('input') }, /disabled/],
   ['ARIA-disabled input', f => { f.input.getAttribute = name => name === 'aria-disabled' ? 'true' : null }, /disabled/],
   ['directory input', f => { f.input.webkitdirectory = true }, /Directory uploads/],
   ['disconnected input', f => { f.input.isConnected = false }, /Page observation changed; observe again/],
@@ -172,7 +172,7 @@ test('a detached chooser input from another document is rejected before selectio
 
 test('effective fieldset disabled state also prevents ordinary action preparation', async () => {
   const f = pageFixture()
-  f.input.matches = selector => selector === ':disabled'
+  f.input.matches = selector => selector === ':disabled' || selector.split(',').includes('input')
   assert.equal(f.input.disabled, false)
   await assert.rejects(f.page.act('obs', [{ type: 'click', ref: 'e1' }], () => true), /Element is disabled/)
   assert.equal(f.calls.filter(call => call.method === 'DOM.setFileInputFiles' || call.method.startsWith('Input.')).length, 0)
@@ -237,7 +237,7 @@ test('observations expose hidden file inputs and metadata without the browser fa
   assert.equal(observed.elements[0].value, '')
   assert.equal(observed.elements[0].files[0].name, 'synthetic.pdf')
   assert.ok(!JSON.stringify(observed).includes('fakepath'))
-  f.input.matches = selector => selector === ':disabled'
+  f.input.matches = selector => selector === ':disabled' || selector.split(',').includes('input')
   assert.equal(f.input.disabled, false)
   assert.equal((await AgentPage.prototype.observe.call(f.page, true)).elements[0].disabled, true)
   f.page.dispose()

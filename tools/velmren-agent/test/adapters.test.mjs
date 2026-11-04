@@ -14,7 +14,7 @@ import { unknownActionResult } from '../action-result.mjs'
 const run = promisify(execFile)
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const testRoot = resolve(root, 'test-results')
-const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jZ1kAAAAASUVORK5CYII='
+const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAEElEQVR4AQEFAPr/AP////8J+wP9o9FJCgAAAABJRU5ErkJggg=='
 
 async function brokerFixture(t, override, protocolOptions = {}) {
   await mkdir(testRoot, { recursive: true })
@@ -31,6 +31,7 @@ async function brokerFixture(t, override, protocolOptions = {}) {
     if (!['codex', 'claude', 'scripts'].includes(owner)) return send(401, { ok: false, error: 'Unauthorized', code: 'UNAUTHORIZED' })
     const { method, args } = body
     if (method === 'agent_protocol') {
+      if (protocolOptions.connectionFailures > 0) { protocolOptions.connectionFailures--; return req.socket.destroy() }
       if (protocolOptions.unsupported) return send(400, { ok: false, code: 'UNKNOWN_METHOD', error: 'Unknown method' })
       return send(200, { ok: true, result: { agentProtocol: Object.hasOwn(protocolOptions, 'version') ? protocolOptions.version : AGENT_PROTOCOL } })
     }
@@ -81,6 +82,24 @@ test('CLI options reject missing state, unknown clients, and unexpected flags', 
   assert.throws(() => parseOptions([]), /state-dir is required/)
   assert.throws(() => parseOptions(['--state-dir', 'x', '--client', 'admin']), /must be codex/)
   assert.throws(() => parseOptions(['--token', 'secret']), /Unknown option/)
+})
+
+test('transient readiness failure permits only a later explicit protocol check', async t => {
+  const fixture = await brokerFixture(t, undefined, { connectionFailures: 1 })
+  const client = createClient(await readConnection(fixture.stateDir))
+  const first = await Promise.allSettled([client.ready(), client.ready()])
+  assert.ok(first.every(result => result.status === 'rejected' && result.reason.code === 'CONNECTION_ERROR'))
+  assert.equal(fixture.requests.length, 1)
+  const created = await client.call('task_create', { url: 'https://example.test/' })
+  assert.ok(created.taskId)
+  assert.deepEqual(fixture.requests.map(item => item.body.method), ['agent_protocol', 'agent_protocol', 'task_create'])
+})
+
+test('an interrupted mutation is never replayed by readiness recovery', async t => {
+  const fixture = await brokerFixture(t, req => req.socket.destroy())
+  const client = createClient(await readConnection(fixture.stateDir))
+  await assert.rejects(client.call('task_create', { url: 'https://example.test/' }), error => error.code === 'CONNECTION_ERROR' && error.actionResult.recovery.retry === 'none')
+  assert.deepEqual(fixture.requests.map(item => item.body.method), ['agent_protocol', 'task_create'])
 })
 
 test('client sends only the chosen credential and preserves arguments without evaluation', async t => {

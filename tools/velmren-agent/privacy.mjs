@@ -1,4 +1,6 @@
 import { sanitizeActionResult, sanitizeWaitResult } from './action-result.mjs'
+import { sanitizeDiagnostic, sanitizeErrorContext } from './operation-error.mjs'
+import { inflateSync } from 'node:zlib'
 
 const invalidUrl = '[invalid URL]'
 const privateUrl = '[redacted URL]'
@@ -7,18 +9,151 @@ const identifier = value => typeof value === 'string' && (uuid.test(value) || /^
 const ref = value => typeof value === 'string' && /^e[1-9][0-9]{0,8}$/.test(value)
 const urlKey = key => /(?:url|uri|href|src|origin)$/i.test(key)
 const privateKeys = new Set(['secret', 'secretRef', 'password', 'token', 'adminToken', 'apiKey', 'clientKey', 'encryptedKey', 'authorization', 'cookie', '__proto__', 'constructor', 'prototype'])
+const entities = { amp: '&', colon: ':', sol: '/', bsol: '\\', percnt: '%', quest: '?', num: '#', commat: '@', period: '.', equals: '=', tab: '\t', newline: '\n' }
+const urlStart = /(?:https?:|wss?:|ftp:|file:|blob:|data:|javascript:|about:|mailto:|tel:|sms:|urn:|[a-z][a-z0-9+.-]*:[/\\])|(?<![:/\\])[/\\]{2}/i
+const knownUrlStart = /https?:|wss?:|ftp:|file:|blob:|data:|javascript:|about:|mailto:|tel:|sms:|urn:/i
+
+// Decode URL spelling, not arbitrary page content. A token is replaced only
+// when its decoded spelling contains a URL; its entire tail is then private.
+function decodeUrlSpelling(value) {
+  for (let pass = 0; pass < 32; pass++) {
+    const next = value.replace(/%([0-9a-f]{2})|\\(?:u\{([0-9a-f]{1,6})\}|u([0-9a-f]{4})|x([0-9a-f]{2})|([/\\]))|&#(x[0-9a-f]+|[0-9]+);?|&([a-z]+);/gi,
+      (match, percent, braced, unicode, hex, slash, numeric, named) => {
+        if (slash) return slash
+        if (named) return entities[named.toLowerCase()] ?? match
+        const point = percent ? parseInt(percent, 16) : numeric ? (numeric[0].toLowerCase() === 'x' ? parseInt(numeric.slice(1), 16) : Number(numeric)) : parseInt(braced ?? unicode ?? hex, 16)
+        // Keep UTF-8 URL bytes intact for URL's host/IDNA parser.
+        return point <= 0x10ffff && (!percent || point < 128) ? String.fromCodePoint(point) : match
+      })
+    if (next === value) return value
+    value = next
+  }
+  return undefined
+}
 
 // An unknown path can contain a credential. No path or parameter is public.
 export function safePublicUrl(raw) {
   if (typeof raw !== 'string') return invalidUrl
-  if (raw === 'about:blank' || raw === 'about:srcdoc') return raw
+  const decoded = decodeUrlSpelling(raw)
+  if (decoded === undefined) return privateUrl
+  if (decoded === 'about:blank' || decoded === 'about:srcdoc') return decoded
   try {
-    const parsed = new URL(raw)
+    const parsed = new URL(decoded)
     return ['http:', 'https:'].includes(parsed.protocol) ? parsed.origin : privateUrl
   } catch { return invalidUrl }
 }
 
-const publicText = value => value.replace(/\b(?:https?:|wss?:|ftp:|file:|blob:|data:|javascript:|about:)[^\s]+|(?<![:/])\/\/[^\s]+/gi, safePublicUrl)
+const publicText = value => value.replace(/\S+/g, token => {
+  const decoded = decodeUrlSpelling(token)
+  if (decoded === undefined) return privateUrl
+  const match = urlStart.exec(decoded)
+  if (!match) return token
+  const start = match.index + (knownUrlStart.exec(match[0])?.index ?? 0)
+  return decoded.slice(0, start) + safePublicUrl(decoded.slice(start))
+})
+
+const pngSignature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])
+const maxPngBytes = 64 * 1024 * 1024
+const pngDepths = { 0: [1, 2, 4, 8, 16], 2: [8, 16], 3: [1, 2, 4, 8], 4: [8, 16], 6: [8, 16] }
+const pngChannels = { 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 }
+const crcTable = Uint32Array.from({ length: 256 }, (_, value) => {
+  for (let bit = 0; bit < 8; bit++) value = value & 1 ? 0xedb88320 ^ (value >>> 1) : value >>> 1
+  return value >>> 0
+})
+
+function pngLayout(header) {
+  const width = header.readUInt32BE(0), height = header.readUInt32BE(4), depth = header[8], color = header[9]
+  if (!width || !height || width > 32768 || height > 32768 || width * height > 16 * 1024 * 1024 ||
+      !pngDepths[color]?.includes(depth) || header[10] !== 0 || header[11] !== 0 || header[12] > 1) return undefined
+  const pattern = header[12] ? [[0, 0, 8, 8], [4, 0, 8, 8], [0, 4, 4, 8], [2, 0, 4, 4], [0, 2, 2, 4], [1, 0, 2, 2], [0, 1, 1, 2]] : [[0, 0, 1, 1]]
+  const passes = []
+  let size = 0
+  for (const [x, y, dx, dy] of pattern) {
+    const columns = Math.max(0, Math.ceil((width - x) / dx)), rows = Math.max(0, Math.ceil((height - y) / dy))
+    if (!columns || !rows) continue
+    const rowBytes = Math.ceil(columns * pngChannels[color] * depth / 8)
+    size += rows * (rowBytes + 1)
+    if (size > maxPngBytes) return undefined
+    passes.push({ columns, rows, rowBytes })
+  }
+  return { size, passes, depth, color }
+}
+
+function pngPixels(chunks, layout, paletteSize) {
+  try {
+    const compressed = Buffer.concat(chunks)
+    // Bound inflation by the exact dimensions before allocating any pixels.
+    const { buffer: pixels, engine } = inflateSync(compressed, { maxOutputLength: layout.size, info: true })
+    if (pixels.length !== layout.size || engine.bytesWritten !== compressed.length) return false
+    let offset = 0
+    for (const { columns, rows, rowBytes } of layout.passes) {
+      let previous = layout.color === 3 ? Buffer.alloc(rowBytes) : undefined
+      for (let row = 0; row < rows; row++) {
+        const filter = pixels[offset++]
+        if (filter > 4) return false
+        if (layout.color === 3) {
+          const current = Buffer.alloc(rowBytes)
+          for (let index = 0; index < rowBytes; index++) {
+            const left = index ? current[index - 1] : 0, above = previous[index], diagonal = index ? previous[index - 1] : 0
+            const predictor = left + above - diagonal
+            const leftDistance = Math.abs(predictor - left), aboveDistance = Math.abs(predictor - above), diagonalDistance = Math.abs(predictor - diagonal)
+            const paeth = leftDistance <= aboveDistance && leftDistance <= diagonalDistance ? left : aboveDistance <= diagonalDistance ? above : diagonal
+            let value = pixels[offset + index]
+            if (filter === 1) value += left
+            else if (filter === 2) value += above
+            else if (filter === 3) value += Math.floor((left + above) / 2)
+            else if (filter === 4) value += paeth
+            current[index] = value
+          }
+          for (let column = 0; column < columns; column++) {
+            const bit = column * layout.depth, sample = current[bit >> 3] >> (8 - layout.depth - (bit & 7)) & ((1 << layout.depth) - 1)
+            if (sample >= paletteSize) return false
+          }
+          previous = current
+        }
+        offset += rowBytes
+      }
+    }
+    return offset === pixels.length
+  } catch { return false }
+}
+
+function pngData(descriptors) {
+  if (descriptors.mimeType?.value !== 'image/png' || descriptors.type && descriptors.type.value !== 'image') return undefined
+  const data = descriptors.data?.value
+  if (typeof data !== 'string' || data.length > Math.ceil(maxPngBytes / 3) * 4 || data.length % 4 || !/^[A-Za-z0-9+/]+={0,2}$/.test(data)) return undefined
+  const bytes = Buffer.from(data, 'base64')
+  if (bytes.toString('base64') !== data || bytes.length < 57 || !bytes.subarray(0, 8).equals(pngSignature)) return undefined
+  let offset = 8, layout, paletteSize = 0, pixelsEnded = false, chunkCount = 0
+  const chunks = []
+  while (offset + 12 <= bytes.length) {
+    if (++chunkCount > 4096) return undefined
+    const length = bytes.readUInt32BE(offset), type = bytes.toString('ascii', offset + 4, offset + 8)
+    if (length > bytes.length - offset - 12 || !/^[A-Za-z]{2}[A-Z][A-Za-z]$/.test(type)) return undefined
+    let crc = 0xffffffff
+    for (let index = offset + 4; index < offset + 8 + length; index++) crc = crcTable[(crc ^ bytes[index]) & 0xff] ^ (crc >>> 8)
+    if (((crc ^ 0xffffffff) >>> 0) !== bytes.readUInt32BE(offset + 8 + length)) return undefined
+    if (!layout) {
+      if (type !== 'IHDR' || length !== 13) return undefined
+      layout = pngLayout(bytes.subarray(offset + 8, offset + 21))
+      if (!layout) return undefined
+    } else if (type === 'IHDR') return undefined
+    else if (type === 'PLTE') {
+      if (paletteSize || chunks.length || !length || length % 3 || length > 768 || [0, 4].includes(layout.color)) return undefined
+      paletteSize = length / 3
+      if (layout.color === 3 && paletteSize > 2 ** layout.depth) return undefined
+    } else if (type === 'IDAT') {
+      if (pixelsEnded || layout.color === 3 && !paletteSize) return undefined
+      chunks.push(bytes.subarray(offset + 8, offset + 8 + length))
+    } else {
+      if (chunks.length) pixelsEnded = true
+      if (type !== 'IEND' && type[0] === type[0].toUpperCase()) return undefined
+    }
+    offset += length + 12
+    if (type === 'IEND') return length === 0 && chunks.length && offset === bytes.length && pngPixels(chunks, layout, paletteSize) ? data : undefined
+  }
+  return undefined
+}
 const errorMessages = Object.freeze({
   CAPTCHA_AUTH_REQUIRED: 'Save a valid CapSolver key in the local settings.',
   CAPTCHA_NO_BALANCE: 'The CapSolver account has insufficient balance.',
@@ -51,6 +186,9 @@ const errorMessages = Object.freeze({
   UNKNOWN_METHOD: 'Unknown browser method.',
   POLICY_MISMATCH: 'Browser policy does not match the requested policy.',
   CONNECTION_ERROR: 'Browser connection interrupted; verify the outcome before retrying.',
+  BROWSER_CLOSED: 'Browser closed; inspect task state before continuing.',
+  NAVIGATION_FAILED: 'Page navigation failed; inspect the destination and task state.',
+  NAVIGATION_TIMEOUT: 'Page navigation timed out; inspect the task before retrying.',
   INVALID_RESPONSE: 'Browser returned an invalid response.',
   ACTION_FAILED: 'Action failed; inspect the delivery receipt before retrying.',
   PROFILE_LOGIN_ACTIVE: 'Manual profile login is active.',
@@ -89,6 +227,8 @@ const errorMessages = Object.freeze({
   OWNERSHIP_MISMATCH: 'Managed runtime ownership does not match.',
   USER_CONFIRMATION_REQUIRED: 'Explicit user confirmation is required.',
   ELEMENT_OBSCURED: 'Element is obscured by another control.',
+  ELEMENT_DISABLED: 'Element is disabled.',
+  ELEMENT_HIDDEN: 'Element is not visible.',
   ELEMENT_UNAVAILABLE: 'Element is hidden, disabled, or no longer available.',
   TASK_FORBIDDEN: 'This client cannot access the requested task.'
 })
@@ -138,6 +278,7 @@ export function sanitizePublicResult(value, { sensitive = false } = {}) {
   const seen = new WeakSet()
   const project = (input, key = '', depth = 0, parent = '') => {
     if (depth > 32 || privateKeys.has(key)) return undefined
+    if (key === 'diagnostic') return sanitizeDiagnostic(input)
     if (key === 'actionResult') return sanitizeActionResult(input)
     if (key === 'waitResult') {
       const clean = sanitizeWaitResult(input)
@@ -170,15 +311,27 @@ export function sanitizePublicResult(value, { sensitive = false } = {}) {
     if (input instanceof Error) return sanitizePublicError(input, { sensitive })
     seen.add(input)
     try {
-      if (Array.isArray(input)) return input.map(item => project(item, '', depth + 1, key)).filter(item => item !== undefined)
+      if (Array.isArray(input)) {
+        const output = []
+        for (let index = 0; index < input.length; index++) {
+          const descriptor = Object.getOwnPropertyDescriptor(input, index)
+          if (!descriptor || !Object.hasOwn(descriptor, 'value')) continue
+          const clean = project(descriptor.value, '', depth + 1, key)
+          if (clean !== undefined) output.push(clean)
+        }
+        return output
+      }
       const output = {}
-      const png = !sensitive && Object.getOwnPropertyDescriptor(input, 'mimeType')?.value === 'image/png'
-      for (const [name, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(input))) {
+      const descriptors = Object.getOwnPropertyDescriptors(input)
+      const png = sensitive ? undefined : pngData(descriptors)
+      const declaredPng = descriptors.mimeType?.value === 'image/png' && (!descriptors.type || descriptors.type.value === 'image')
+      for (const [name, descriptor] of Object.entries(descriptors)) {
         if (!Object.hasOwn(descriptor, 'value') || !descriptor.enumerable) continue
         // PNG base64 can contain "//"; it is binary transport, not URL text.
-        const clean = png && name === 'data' && typeof descriptor.value === 'string' && /^[A-Za-z0-9+/]+={0,2}$/.test(descriptor.value)
-          ? descriptor.value : project(descriptor.value, name, depth + 1, key)
-        if (clean !== undefined) Object.defineProperty(output, name, { value: clean, enumerable: true, writable: true, configurable: true })
+        const clean = declaredPng && name === 'data' ? png : project(descriptor.value, name, depth + 1, key)
+        // Page-controlled metadata can put a URL in the key as well as its value.
+        const publicName = sensitive ? name : publicText(name)
+        if (clean !== undefined && !privateKeys.has(publicName) && !Object.hasOwn(output, publicName)) Object.defineProperty(output, publicName, { value: clean, enumerable: true, writable: true, configurable: true })
       }
       return output
     } finally { seen.delete(input) }
@@ -189,10 +342,12 @@ export function sanitizePublicResult(value, { sensitive = false } = {}) {
 export function sanitizePublicError(error, { sensitive = false } = {}) {
   const own = key => error && typeof error === 'object' ? Object.getOwnPropertyDescriptor(error, key)?.value : undefined
   const candidate = own('code')
+  const message = own('message')
   const code = typeof candidate === 'string' && Object.hasOwn(errorMessages, candidate) ? candidate : 'BROKER_ERROR'
   const actionResult = sanitizeActionResult(own('actionResult'))
   const waitResult = sanitizeWaitResult(own('waitResult'))
-  return { error: (trustedMessages.has(own('message')) || /^Task is (?:agent-active|paused|needs-human|human|completed|cancelled); agent actions are paused$/.test(own('message') ?? '')) ? own('message') : errorMessages[code], code,
+  return { error: typeof message === 'string' && (trustedMessages.has(message) || /^Task is (?:agent-active|paused|needs-human|human|completed|cancelled); agent actions are paused$/.test(message)) ? message : errorMessages[code], code,
+    ...sanitizeErrorContext(error),
     ...(actionResult ? { actionResult } : {}),
     ...(waitResult && (!sensitive || identifier(waitResult.pageId)) ? { waitResult } : {}) }
 }

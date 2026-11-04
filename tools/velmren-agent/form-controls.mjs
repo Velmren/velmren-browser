@@ -3,6 +3,15 @@ export function composedParent(el) {
   return el?.assignedSlot || el?.parentElement || el?.getRootNode?.()?.host || null
 }
 
+export function hasTransparentAncestor(el) {
+  const seen = new Set()
+  for (let node = el; node && !seen.has(node); node = composedParent(node)) {
+    seen.add(node)
+    if (getComputedStyle(node).opacity === '0') return true
+  }
+  return false
+}
+
 export function labelledCombobox(el) {
   if (el.tagName !== 'INPUT' || !['text', 'search'].includes(el.type) || el.getAttribute('role') !== 'combobox' || el.getAttribute('aria-haspopup') !== 'listbox') return false
   const ids = (el.getAttribute('aria-controls') || '').trim().split(/\s+/).filter(Boolean)
@@ -17,9 +26,31 @@ export function associatedControlLabels(el) {
     if (!label.isConnected || label.ownerDocument !== el.ownerDocument || label.control !== el) return false
     const capabilities = elementCapabilities(label)
     if (capabilities.hidden || capabilities.disabled) return false
-    for (let node = label; node; node = composedParent(node)) if (getComputedStyle(node).opacity === '0') return false
-    return true
+    return !hasTransparentAncestor(label)
   })
+}
+
+export function checkableCard(el) {
+  if (el.tagName !== 'INPUT' || !['checkbox', 'radio'].includes(el.type) || el.labels?.length) return null
+  // Some card widgets render an unlabelled checkable under a small pointer
+  // surface. Require a single field and no competing interactive descendants.
+  let surface = composedParent(el)
+  for (let depth = 0; surface && depth < 3; depth++, surface = composedParent(surface)) {
+    if (surface.ownerDocument !== el.ownerDocument || surface.matches?.('body,html,form,fieldset,a,button,label,[role],[tabindex],[contenteditable="true"]')) return null
+    const style = getComputedStyle(surface)
+    if (style.pointerEvents === 'none' || style.opacity === '0' || ['hidden', 'collapse'].includes(style.visibility) || style.display === 'none') return null
+    const text = (surface.innerText || '').replace(/\s+/g, ' ').trim()
+    if (style.cursor !== 'pointer' || !text || text.length > 300) continue
+    const parent = composedParent(surface)
+    if (parent && getComputedStyle(parent).cursor === 'pointer') continue
+    const fields = surface.querySelectorAll('a[href],button,input,select,textarea,[role],[tabindex],[onclick],[contenteditable="true"]')
+    if (fields.length !== 1 || fields[0] !== el) return null
+    const box = surface.getBoundingClientRect()
+    if (!box.width || !box.height || box.width > 800 || box.height > 600) return null
+    if (hasTransparentAncestor(surface)) return null
+    return surface
+  }
+  return null
 }
 
 export function composedContains(el, candidate) {
@@ -75,7 +106,8 @@ export function controlActionPoint(el, type) {
     }
   }
   if (['click', 'setChecked', 'press'].includes(type) || type === 'fill' && labelledCombobox(el)) {
-    for (const label of associatedControlLabels(el)) {
+    const card = checkableCard(el)
+    for (const label of [...associatedControlLabels(el), ...(card ? [card] : [])]) {
       const rects = [...(label.getClientRects?.() ?? [label.getBoundingClientRect()])].slice(0, 20)
       for (const rect of rects) for (const [horizontal, vertical] of [[.5, .5], [.15, .5], [.85, .5], [.5, .2], [.5, .8]]) {
         const x = rect.x + rect.width * horizontal, y = rect.y + rect.height * vertical
@@ -106,14 +138,15 @@ export function controlState(el) {
 
 export function elementCapabilities(el, measure = true) {
   const box = measure ? el.getBoundingClientRect() : null, style = measure ? getComputedStyle(el) : null
-  const hidden = !!(measure && (!box.width || !box.height || ['hidden', 'collapse'].includes(style.visibility) || style.display === 'none'))
-  let inert = false
+  const hidden = !!(measure && (!box.width || !box.height || ['hidden', 'collapse'].includes(style.visibility) || style.display === 'none' || hasTransparentAncestor(composedParent(el))))
+  let inert = false, ariaDisabled = false
   const ancestors = new Set()
   for (let parent = el; parent && !ancestors.has(parent); parent = composedParent(parent)) {
     ancestors.add(parent)
+    ariaDisabled ||= parent.getAttribute?.('aria-disabled') === 'true'
     if (parent.inert || parent.hasAttribute?.('inert')) { inert = true; break }
   }
-  const disabled = !!el.disabled || !!el.matches?.(':disabled') || el.getAttribute('aria-disabled') === 'true' || inert
+  const disabled = !!el.disabled || !!el.matches?.(':disabled') || ariaDisabled || inert
   const readOnly = !!el.readOnly || el.getAttribute('aria-readonly') === 'true'
   const fileInput = el.tagName === 'INPUT' && el.type === 'file'
   const textInput = el.tagName === 'INPUT' && ['text', 'search', 'email', 'url', 'tel', 'password', 'number'].includes(el.type)
@@ -123,10 +156,11 @@ export function elementCapabilities(el, measure = true) {
   const state = controlState(el)
   const checkable = nativeCheckable || ['checkbox', 'switch', 'radio'].includes(role) && state.checked !== undefined
   const labelProxy = measure && (nativeCheckable || !hidden && labelledCombobox(el)) && associatedControlLabels(el).length > 0
+  const cardProxy = measure && nativeCheckable ? checkableCard(el) : null
   const availableActions = []
   if (!disabled) {
     if (fileInput && !el.webkitdirectory) availableActions.push('uploadFiles')
-    if (hidden && labelProxy) {
+    if (hidden && (labelProxy || cardProxy)) {
       availableActions.push('click')
       if (nativeCheckable && !readOnly) availableActions.push('setChecked')
     }
@@ -137,7 +171,7 @@ export function elementCapabilities(el, measure = true) {
       if (el.tagName === 'SELECT' && !readOnly && [...el.options].some(option => !option.disabled && !(option.parentElement?.tagName === 'OPTGROUP' && option.parentElement.disabled))) availableActions.push('select')
     }
   }
-  return { hidden, disabled, fileInput, nativeValueInput, labelProxy, availableActions, ...state }
+  return { hidden, disabled, fileInput, nativeValueInput, labelProxy, cardProxy, availableActions, ...state }
 }
 
 export function fieldMetadata(el) {
@@ -221,7 +255,7 @@ export async function prepareElement({ ref, type, value, checked }) {
   const validate = () => {
     const capabilities = elementCapabilities(el)
     if (capabilities.disabled) throw new Error('Element is disabled')
-    if (capabilities.hidden && !capabilities.labelProxy) throw new Error('Element is not visible')
+    if (capabilities.hidden && !capabilities.labelProxy && !capabilities.cardProxy) throw new Error('Element is not visible')
     if (!capabilities.availableActions.includes(type)) throw new Error('Element does not support this action')
     if (type === 'setChecked') {
       if (typeof checked !== 'boolean') throw new Error('Checked state must be a boolean')
@@ -231,7 +265,7 @@ export async function prepareElement({ ref, type, value, checked }) {
   }
   let capabilities = validate(), preparedValue
   if (type === 'select' || type === 'fill' && capabilities.nativeValueInput) preparedValue = probeFormValue(el, type, value)
-  const surface = capabilities.labelProxy ? associatedControlLabels(el)[0] : el
+  const surface = capabilities.labelProxy ? associatedControlLabels(el)[0] : capabilities.cardProxy || el
   surface.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' })
   await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
   if (!el.isConnected || el.ownerDocument && el.ownerDocument !== document) throw new Error('Element reference is stale; observe again')

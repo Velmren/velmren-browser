@@ -35,6 +35,8 @@ Open **CAPTCHA service** in the local control panel to save your own CapSolver
 key, set attempt limits, check its balance, and explicitly enable the service.
 It is disabled by default. Windows DPAPI protects the saved key for the current
 OS user; the service directory grants access only to that user and SYSTEM.
+Repeated storage writes update only the directory DACL and preserve ownership;
+they do not require elevation or Windows audit-security privileges.
 Keys are sent through anonymous pipes for protection and directly to
 `https://api.capsolver.com` for provider calls. They never appear in MCP, CLI,
 process arguments, browser pages, or request traces. Removing the key disables
@@ -370,6 +372,11 @@ characters. Use `query` to find controls by name, or follow
 `pagination.nextOffset` in a subsequent observation. For text, use
 `textPagination.nextOffset` as `textOffset`. Every observation replaces that
 frame's previous refs, including when changing the query or offset.
+Discovery includes explicit keyboard/click semantics and bounded visible pointer
+surfaces, including icon controls. Native submit/button values participate in
+names and queries. A custom checkable card can supply its sole native control's
+name and visible activation surface; disabled, obscured, origin and post-action
+state checks still apply. These heuristics do not guarantee every custom widget.
 Initial select previews contain at most 50 options and may shorten values.
 Use `list_options` to search labels/values or follow its `pagination.nextOffset`.
 This read preserves the observation ID and returns complete selectable values;
@@ -446,7 +453,18 @@ Replace the uppercase placeholders with values from this task's latest
 responses. The CLI emits `{ok:true,result}` on success, or `{ok:false,error,code}`
 to stderr with a nonzero exit status. It never retries actions automatically.
 Errors also preserve sanitized `actionResult` and `waitResult` when available.
+`diagnostic` adds an enumerated `reason` and `phase`; navigation failures may also
+carry an allowlisted `networkError`. No raw browser/site exception, field value,
+or URL is included. Validated task/page/frame IDs identify the owned context;
+a failed create can return its already-cancelled task ID for inspection. A failed
+readback or final observation keeps acknowledged delivery and adds its diagnostic.
 After an interrupted request, inspect the task before retrying a mutation.
+An initial `CONNECTION_ERROR` permits a new protocol check on the next explicit
+client call. It never replays the interrupted operation. Incompatible protocols
+remain rejected.
+Public text and metadata keys reduce literal and encoded URLs to origins.
+Validated PNG image payloads remain byte-identical; sensitive phases still
+suppress screenshots and page text.
 The MCP screenshot tool returns an image content block; the CLI returns the PNG
 as base64 JSON. `node cli.mjs --state-dir .runtime --client codex mcp` is an
 alternate stdio entry point.

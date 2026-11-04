@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { mkdir } from 'node:fs/promises'
 import { persistentBrowserArgs } from './profile-state.mjs'
+import { annotateOperationError } from './operation-error.mjs'
 
 // The browser endpoint stays on inherited pipes; no browser-wide TCP port.
 export class BrowserPipe extends EventEmitter {
@@ -29,7 +30,7 @@ export class BrowserPipe extends EventEmitter {
     transport.process.on('exit', code => {
       transport.processExited = true
       transport.closed = true
-      transport.fail(new Error(`Browser exited (${code}): ${transport.stderr.slice(-1500)}`))
+      transport.fail(Object.assign(new Error('Browser exited'), { code: 'BROWSER_CLOSED' }))
       transport.emit('closed')
     })
     try { transport.version = await transport.send('Browser.getVersion') }
@@ -50,13 +51,13 @@ export class BrowserPipe extends EventEmitter {
         if (!request) continue
         this.pending.delete(message.id)
         clearTimeout(request.timer)
-        if (message.error) request.reject(Object.assign(new Error(`${request.method}: ${message.error.message}`), { code: 'CDP_PROTOCOL_ERROR', protocolCode: message.error.code, method: request.method }))
+        if (message.error) request.reject(annotateOperationError(Object.assign(new Error(`${request.method}: ${message.error.message}`), { code: 'CDP_PROTOCOL_ERROR', protocolCode: message.error.code, method: request.method })))
         else request.resolve(message.result)
       } else {
         if (message.method === 'Target.detachedFromTarget' && typeof message.params?.sessionId === 'string') {
           for (const [id, request] of this.pending) if (request.sessionId === message.params?.sessionId) {
             this.pending.delete(id); clearTimeout(request.timer)
-            request.reject(Object.assign(new Error(`Browser target session closed: ${request.method}`), { code: 'CDP_SESSION_CLOSED', method: request.method }))
+            request.reject(annotateOperationError(Object.assign(new Error('Browser target session closed'), { code: 'CDP_SESSION_CLOSED', method: request.method })))
           }
         }
         this.emit('protocol', message)
@@ -65,12 +66,12 @@ export class BrowserPipe extends EventEmitter {
   }
 
   send(method, params = {}, sessionId, timeout = 20000) {
-    if (this.closed) return Promise.reject(new Error('Browser connection closed'))
+    if (this.closed) return Promise.reject(annotateOperationError(Object.assign(new Error('Browser connection closed'), { code: 'BROWSER_CLOSED' })))
     const id = ++this.sequence
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id)
-        reject(Object.assign(new Error(`Browser command timed out: ${method}`), { code: 'CDP_TIMEOUT', method }))
+        reject(annotateOperationError(Object.assign(new Error('Browser command timed out'), { code: 'CDP_TIMEOUT', method })))
       }, timeout)
       this.pending.set(id, { resolve, reject, timer, method, sessionId })
       this.process.stdio[3].write(JSON.stringify({ id, method, params, sessionId }) + '\0')
@@ -80,7 +81,7 @@ export class BrowserPipe extends EventEmitter {
   fail(error) {
     for (const request of this.pending.values()) {
       clearTimeout(request.timer)
-      request.reject(error)
+      request.reject(annotateOperationError(error))
     }
     this.pending.clear()
   }

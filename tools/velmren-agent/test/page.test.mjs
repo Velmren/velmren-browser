@@ -4,6 +4,30 @@ import { EventEmitter } from 'node:events'
 import vm from 'node:vm'
 import { AgentPage } from '../page.mjs'
 
+for (const phase of ['verify', 'observe']) test(`acknowledged input keeps delivery when ${phase} fails`, async () => {
+  const browser = new EventEmitter()
+  browser.send = async () => ({})
+  const page = new AgentPage(browser, 'target', 'session')
+  page.observation = { id: 'obs', epoch: 0, revision: 0 }
+  const failure = () => Object.assign(new Error('Browser connection closed'), { code: 'CONNECTION_ERROR' })
+  page.evaluate = async fn => {
+    if (!fn.name) return 0
+    if (fn.name === 'prepareElement') return { inputMode: 'text' }
+    if (fn.name === 'verifyElementValue') {
+      if (phase === 'verify') throw failure()
+      return { scope: 'element', status: 'matched' }
+    }
+  }
+  page.observe = async () => { if (phase === 'observe') throw failure(); return { pageId: 'target' } }
+  const result = await page.act('obs', [{ type: 'fill', ref: 'e1', value: 'synthetic' }])
+  assert.equal(result.actionResult.completed, 1)
+  assert.equal(result.actionResult.failedIndex, null)
+  assert.equal(result.actionResult.recovery.retry, 'none')
+  assert.deepEqual(result.diagnostic, { reason: 'transport', phase })
+  assert.equal(result.actionResult.results[0].delivery, phase === 'observe' ? 'delivered_verified' : 'delivered_unverified')
+  page.dispose()
+})
+
 for (const transition of ['preparation', 'delivery', 'delivery-error']) {
   test(`ordinary fill enables protection when sensitivity changes during ${transition}`, async () => {
     const browser = new EventEmitter(), calls = []
