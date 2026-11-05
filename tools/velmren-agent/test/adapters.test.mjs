@@ -117,7 +117,7 @@ test('client sends only the chosen credential and preserves arguments without ev
 })
 
 test('direct and low-level clients refuse legacy protocols before any caller operation', async t => {
-  for (const options of [{ unsupported: true }, { version: undefined }, { version: 1 }, { version: 2 }, { version: AGENT_PROTOCOL + 1 }, { version: String(AGENT_PROTOCOL) }]) {
+  for (const options of [{ unsupported: true }, { version: undefined }, { version: 1 }, { version: 2 }, { version: 3 }, { version: AGENT_PROTOCOL + 1 }, { version: String(AGENT_PROTOCOL) }]) {
     const fixture = await brokerFixture(t, undefined, options)
     await assert.rejects(connectClient(fixture.stateDir), { code: 'BROKER_INCOMPATIBLE' })
     const client = createClient(await readConnection(fixture.stateDir))
@@ -248,7 +248,7 @@ test('MCP stdio advertises bounded tools, carries observations/actions, and emit
   const fixture = await brokerFixture(t)
   const client = await mcpFixture(t, fixture.stateDir, 'codex')
   const listed = await client.listTools()
-  assert.equal(listed.tools.length, 23)
+  assert.equal(listed.tools.length, 24)
   assert.ok(listed.tools.every(tool => tool.name.startsWith('velmren_') && tool.inputSchema.additionalProperties === false))
   assert.ok(!listed.tools.some(tool => /evaluate|execute|cdp|control|shutdown/.test(tool.name)))
   const call = (name, args) => client.callTool({ name, arguments: args })
@@ -351,7 +351,7 @@ test('HTTP, CLI and MCP preserve structured partial failure without forwarding e
   const result = await mcp.callTool({ name: 'velmren_act', arguments: args })
   assert.equal(result.isError, true); assert.deepEqual(JSON.parse(result.content[0].text).actionResult, actionResult)
   const tools = await mcp.listTools(), wait = tools.tools.find(tool => tool.name === 'velmren_wait')
-  assert.equal(tools.tools.length, 23); assert.ok(wait.inputSchema.properties.predicate); assert.equal(wait.annotations.readOnlyHint, true)
+  assert.equal(tools.tools.length, 24); assert.ok(wait.inputSchema.properties.predicate); assert.equal(wait.annotations.readOnlyHint, true)
   assert.ok(wait.inputSchema.properties.frameId)
   for (const name of ['velmren_list_frames', 'velmren_list_options']) assert.equal(tools.tools.find(tool => tool.name === name).annotations.readOnlyHint, true)
   assert.equal(JSON.stringify(result).includes('secret-value'), false)

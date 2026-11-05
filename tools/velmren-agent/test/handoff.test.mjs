@@ -11,6 +11,7 @@ function fixture() {
     pages: () => pages,
     select: (t, page) => { t.selectedPageId = page.pageId },
     serialize: (t, fn) => { const result = t.queue.then(fn); t.queue = result.catch(() => {}); return result },
+    syncTaskFocus: async () => { for (const page of pages.values()) await page.send('Emulation.setFocusEmulationEnabled', { enabled: false }) },
     record: t => ({ state: t.state, selectedPageId: t.selectedPageId, reason: t.reason, handoff: t.handoff ? { ...t.handoff } : null }),
     control: async (t, action) => { calls.push([action, t.selectedPageId]); t.controlGeneration++; t.state = action === 'show' ? 'human' : 'agent-active' }
   }

@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import vm from 'node:vm'
-import { documentRoots, elementName, visibleDocumentText, observeDocument, listSelectOptions } from '../document-observation.mjs'
+import { documentRoots, elementNameText, elementNameHost, elementName, visibleDocumentText, observeDocument, listSelectOptions } from '../document-observation.mjs'
 
 function fixture(count = 220) {
   const document = { body: { innerText: 'Start '.repeat(3000) + 'End of fixture' }, title: 'Fixture' }
@@ -14,7 +14,7 @@ function fixture(count = 220) {
   const context = vm.createContext({ document, location: { href: 'http://fixture/' },
     elementCapabilities: () => ({ hidden: false, disabled: false, fileInput: false, availableActions: ['fill'] }),
     fieldMetadata: () => ({}), MutationObserver: class { observe() {} disconnect() {} } })
-  for (const fn of [documentRoots, elementName, visibleDocumentText, observeDocument, listSelectOptions]) vm.runInContext(`const ${fn.name} = ${fn.toString()}`, context)
+  for (const fn of [documentRoots, elementNameText, elementNameHost, elementName, visibleDocumentText, observeDocument, listSelectOptions]) vm.runInContext(`const ${fn.name} = ${fn.toString()}`, context)
   const run = (name, args = {}) => vm.runInContext(`${name}(${JSON.stringify(args)})`, context)
   return { run, context, elements }
 }
@@ -87,4 +87,46 @@ test('large option values respect the response budget and over-limit values cann
   const unsupported = f.run('listSelectOptions', { ref: 'e1', revision: 0, query: 'Unsupported large' }).options[0]
   assert.equal(unsupported.valueComplete, false); assert.equal(unsupported.selectable, false)
   assert.ok(!Object.hasOwn(unsupported, 'value'))
+})
+
+function shadowNameFixture({ assigned = [], fallback = [], hostAttributes = {}, buttonAttributes = {}, labelled = {}, multiple = false } = {}) {
+  const f = fixture(0), document = f.context.document
+  const text = value => ({ nodeType: 3, textContent: value })
+  const node = (tagName, attributes = {}, childNodes = []) => ({ nodeType: 1, tagName, childNodes, isConnected: false,
+    innerText: '', labels: [], getAttribute: key => attributes[key] ?? null, getRootNode: () => document, querySelectorAll: () => [] })
+  document.getElementById = id => labelled[id] ? node('SPAN', {}, labelled[id].map(text)) : null
+  const slot = node('SLOT', {}, fallback.map(text))
+  slot.assignedNodes = () => assigned.map(value => typeof value === 'string' ? text(value) : value)
+  const host = node('W-BUTTON', hostAttributes)
+  const button = node('BUTTON', buttonAttributes, [slot])
+  button.type = 'button'; button.querySelectorAll = selector => selector === 'slot' ? [slot] : []
+  const shadow = { host, querySelectorAll: () => multiple ? [button, node('BUTTON')] : [button] }
+  button.getRootNode = () => shadow
+  f.context.namedElement = button
+  return { name: () => vm.runInContext('elementName(namedElement)', f.context), node, button, slot }
+}
+
+test('shadow button names include assigned default-slot text and slot fallback text', () => {
+  assert.equal(shadowNameFixture({ assigned: ['Jatka'] }).name(), 'Jatka')
+  assert.equal(shadowNameFixture({ fallback: ['Continue'] }).name(), 'Continue')
+})
+
+test('explicit control naming takes precedence over composed slot text', () => {
+  assert.equal(shadowNameFixture({ assigned: ['Jatka'], buttonAttributes: { 'aria-label': 'Continue' } }).name(), 'Continue')
+})
+
+test('a sole internal control can use its host label but a multi-control component cannot', () => {
+  const options = { hostAttributes: { 'aria-labelledby': 'remember' }, labelled: { remember: ['Muista kirjautumiseni'] } }
+  assert.equal(shadowNameFixture(options).name(), 'Muista kirjautumiseni')
+  assert.equal(shadowNameFixture({ ...options, multiple: true }).name(), '')
+})
+
+test('composed names omit private field contents and aria-hidden assigned text', () => {
+  const f = shadowNameFixture()
+  const password = f.node('INPUT'); password.type = 'password'; password.value = 'SecretSlotCanary123'
+  const textarea = f.node('TEXTAREA', {}, [{ nodeType: 3, textContent: 'SecretSlotCanary123' }])
+  const hidden = f.node('SPAN', { 'aria-hidden': 'true' }, [{ nodeType: 3, textContent: 'HiddenCanary' }])
+  f.slot.assignedNodes = () => [{ nodeType: 3, textContent: 'Continue' }, password, textarea, hidden]
+  assert.equal(f.name(), 'Continue')
+  assert.ok(!f.name().includes('Canary'))
 })

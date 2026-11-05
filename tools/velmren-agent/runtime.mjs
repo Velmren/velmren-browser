@@ -14,10 +14,12 @@ import { annotateOperationError, sanitizeDiagnostic } from './operation-error.mj
 import { PrivateInputs } from './private-input.mjs'
 import { CaptchaService } from './capsolver-service.mjs'
 import { installCaptchaSession } from './captcha-page.mjs'
+import { TaskDiagnostics } from './task-diagnostics.mjs'
 import { startCaptchaJob, findCaptchaJob, captchaJobView } from './captcha-runtime.mjs'
 import { beginSensitive, endSensitive, validateSensitiveEnd, clearSensitiveObservations, rememberSensitiveDocument, sensitiveStatus } from './sensitive-state.mjs'
 
 const terminal = new Set(['completed', 'cancelled'])
+const leaseGraceMs = 60000
 const fail = (message, code = 'INVALID_STATE') => { throw new BrokerError(message, code) }
 const autoAttach = { autoAttach: true, waitForDebuggerOnStart: true, flatten: true, filter: [{ type: 'browser', exclude: true }, { type: 'tab', exclude: true }, {}] }
 const taskAutoAttach = { ...autoAttach, filter: [{ type: 'shared_worker', exclude: true }, { type: 'service_worker', exclude: true }, ...autoAttach.filter] }
@@ -77,7 +79,8 @@ class Slots {
 }
 
 export class AgentBroker {
-  constructor(browser, stateDir, policy = {}, { trace, manualSession, browserFactory, captchaService } = {}) {
+  constructor(browser, stateDir, policy = {}, { trace, manualSession, browserFactory, captchaService, recoveryStore } = {}) {
+    this.recoveryStore = recoveryStore
     this.privateInputs = new PrivateInputs()
     this.captcha = captchaService ?? new CaptchaService(stateDir)
     Object.assign(this, { browser, stateDir, tasks: new Map(), contexts: new Map(), sessions: new Map(), targets: new Map(), clients: new Map(), stopping: false })
@@ -126,7 +129,7 @@ export class AgentBroker {
     this.closedListener = () => {
       if (!current() || this.profileLogin.phase !== 'automated') return
       for (const task of this.tasks.values()) if (!terminal.has(task.state)) { task.state = 'cancelled'; task.reason = 'Browser stopped' }
-      if (!this.stopping) setTimeout(() => { if (current() && this.profileLogin.phase === 'automated') this.onShutdown?.() }, 20).unref()
+      if (!this.stopping) setTimeout(() => { if (current() && this.profileLogin.phase === 'automated') this.onShutdown?.('browser_closed') }, 20).unref()
     }
     browser.on('protocol', this.listener)
     browser.on('closed', this.closedListener)
@@ -259,13 +262,15 @@ export class AgentBroker {
   pageRecords(task) { return [...this.pages(task).values()].map(page => sanitizePublicResult({ pageId: page.pageId, openerId: page.openerId ?? null, url: page.url ?? task.url, title: page.title ?? '', attached: !page.detached, ...(page.dialog ? { dialog: page.dialog } : {}) }, { sensitive: task.sensitiveHistory })) }
   record(task) {
     const { taskId, label, owner, state, reason, url, createdAt, downloads, blockedOrigins, selectedPageId } = task
-    return sanitizePublicResult({ taskId, label, owner, state, reason, url, createdAt, downloads, blockedOrigins, captchaStats: this.captcha.statistics(taskId), profileMode: this.profileMode, sharedProfile: this.sharedProfile, pages: this.pageRecords(task), selectedPageId: selectedPageId ?? task.selectedPageId, privacy: sensitiveStatus(task, task.page), ...(task.targetPolicy ? { targetPolicy: task.targetPolicy } : {}), ...(task.handoff ? { handoff: { id: task.handoff.id, pageId: task.handoff.pageId, shown: task.handoff.shown } } : {}), ...(task.cleanupError ? { cleanupPending: true, cleanupError: task.cleanupError } : {}) }, { sensitive: task.sensitiveHistory })
+    return sanitizePublicResult({ taskId, label, owner, state, reason, url, createdAt, downloads, blockedOrigins, captchaStats: this.captcha.statistics(taskId), profileMode: this.profileMode, sharedProfile: this.sharedProfile, pages: this.pageRecords(task), selectedPageId: selectedPageId ?? task.selectedPageId, privacy: sensitiveStatus(task, task.page), ...(task.targetPolicy ? { targetPolicy: task.targetPolicy } : {}), ...(task.handoff ? { handoff: { id: task.handoff.id, pageId: task.handoff.pageId, shown: task.handoff.shown, visibility: task.handoff.visibility } } : {}), ...(task.cleanupError ? { cleanupPending: true, cleanupError: task.cleanupError } : {}) }, { sensitive: task.sensitiveHistory })
   }
   task(id, owner) {
     const task = this.tasks.get(id)
+    if (!task && this.recoveryTask(id, owner)) fail('This task lost its browser page after restart. Review its recovery status; no browser action was replayed.', 'RECOVERY_NEEDED')
     if (!task || (owner !== 'admin' && task.owner !== owner)) fail('Task not found', 'NOT_FOUND')
     return task
   }
+  recoveryTask(id, owner) { return this.recoveryStore?.tasks(owner).find(task => task.taskId === id) }
   page(task, id = task.selectedPageId) {
     const pages = this.pages(task)
     const page = pages.get(id ?? task.selectedPageId)
@@ -288,6 +293,13 @@ export class AgentBroker {
     return result
   }
   checkActive(task) { this.assertAutomated(); if (task.state !== 'agent-active') fail(`Task is ${task.state}; agent actions are paused`) }
+  async syncTaskFocus(task) {
+    // Attachments still paused for policy bootstrap will apply the current task
+    // state in init(), after their renderer is allowed to accept commands.
+    const results = await Promise.allSettled([...this.pages(task).values()].filter(page => page.focusReady).map(page => page.syncFocusEmulation()))
+    const failure = results.find(result => result.status === 'rejected')
+    if (failure) throw failure.reason
+  }
   async init() {
     // Broken optional service storage must not prevent ordinary browser work.
     await this.captcha.ready.catch(() => {})
@@ -311,18 +323,24 @@ export class AgentBroker {
     }, 1000)
     this.lifecycleTimer.unref()
   }
-  async releaseClient(owner, now = Date.now()) {
+  async releaseClient(owner, now = Date.now(), { expired = false } = {}) {
     const client = this.clients.get(owner)
     if (!client || client.released) return { released: true }
-    client.released = true; client.expiresAt = now + 30000
+    client.released = true; client.releaseReason = expired ? 'expired' : 'explicit'; client.expiresAt = now + 30000
+    // Storage failure must not prevent closing this owner's pages.
+    const revoked = !expired && this.recoveryStore ? this.recoveryStore.revoke(owner).then(() => null, error => error) : Promise.resolve(null)
     const pending = []
     for (const task of this.tasks.values()) if (task.owner === owner && !terminal.has(task.state)) {
       task.controlGeneration = (task.controlGeneration ?? 0) + 1
       task.state = 'cancelled'; task.reason = 'Client disconnected or its lease expired'
       pending.push(this.serialize(task, () => this.end(task, 'cancelled')))
     }
-    await Promise.all(pending)
+    const cleanup = await Promise.allSettled(pending)
+    const revocationError = await revoked
     this.checkIdle(now)
+    if (revocationError) throw revocationError
+    const failed = cleanup.find(result => result.status === 'rejected')
+    if (failed) throw failed.reason
     return { released: true }
   }
   checkIdle(now = Date.now()) {
@@ -336,14 +354,14 @@ export class AgentBroker {
       this.idleSince = null; this.retirementRequested = true
       const retained = [...this.tasks.values()].filter(task => task.contextId).map(task => task.taskId)
       if (retained.length) this.event('retained-context-cleanup', { taskIds: retained, reason: 'Cleanup retries exhausted; closing the idle owned browser' })
-      this.onShutdown?.()
+      this.onShutdown?.('idle_retirement')
     }
   }
   async expireClients(now = Date.now()) {
     const releases = []
     for (const [owner, client] of this.clients) {
       if (client.released && client.expiresAt <= now) this.clients.delete(owner)
-      else if (client.leaseMs && !client.released && client.expiresAt <= now) releases.push(this.releaseClient(owner, now))
+      else if (client.leaseMs && !client.released && client.expiresAt + (client.recoverable ? leaseGraceMs : 0) <= now) releases.push(this.releaseClient(owner, now, { expired: true }))
     }
     for (const result of await Promise.allSettled(releases)) if (result.status === 'rejected') this.event('client-cleanup-error', { message: result.reason.message })
     await this.retryCleanup(now)
@@ -368,7 +386,16 @@ export class AgentBroker {
     const common = `connect-src ${connect}; object-src 'none'; frame-src ${sources}; form-action ${sources}`
     return this.webCompatibility ? `${common}; worker-src ${sources} blob:` : `${common}; worker-src 'none'; sandbox allow-scripts allow-same-origin allow-forms allow-downloads`
   }
-  async configureSession(sessionId, entry) {
+  async configureSession(sessionId, entry, current) {
+    const browser = this.browser
+    const send = (method, params) => {
+      if (current && !current()) throw new Error('Worker policy lifetime changed')
+      return browser.send(method, params, sessionId)
+    }
+    if (entry?.profileOwned && entry.type === 'service_worker') {
+      entry.policyPhase = 'worker-lifecycle'
+      await send('Inspector.enable', {})
+    }
     if (entry?.type === 'worker') {
       // DedicatedWorkerDevToolsAgentHost has no Fetch handler. Its main script
       // and subresources use the ancestor frame's intercepted loader factory.
@@ -376,7 +403,7 @@ export class AgentBroker {
       const owner = this.sessions.get(entry.networkOwnerSessionId)
       if (!owner?.interceptionReady || owner.task !== entry.task || !['page', 'iframe'].includes(owner.type)) throw new Error('Dedicated worker has no verified frame network policy')
       entry.policyPhase = 'descendant-attachment'
-      await this.browser.send('Target.setAutoAttach', this.sharedProfile ? taskAutoAttach : autoAttach, sessionId)
+      await send('Target.setAutoAttach', this.sharedProfile ? taskAutoAttach : autoAttach)
       return
     }
     // NetworkHandler sets bypass synchronously, then falls through to the
@@ -385,23 +412,32 @@ export class AgentBroker {
     // command ordered before Fetch/Target acknowledgements, but await its reply
     // only after the browser-side policy is installed and navigation resumes.
     entry.policyPhase = 'service-worker-bypass'
-    entry.bypassAcknowledgement = this.browser.send('Network.setBypassServiceWorker', { bypass: !this.webCompatibility }, sessionId)
-      .then(() => null, error => { entry.bypassError = error; return error })
+    const bypassAttempt = {}
+    entry.bypassAttempt = bypassAttempt
+    entry.bypassAcknowledgement = send('Network.setBypassServiceWorker', { bypass: !this.webCompatibility })
+      .then(() => null, error => {
+        if (entry.bypassAttempt === bypassAttempt && (!current || current())) entry.bypassError = error
+        return error
+      })
     const patterns = [{ urlPattern: '*', requestStage: 'Request' }, { urlPattern: '*', resourceType: 'Document', requestStage: 'Response' }]
     // Chromium classifies worker main scripts as Other, imports as Script.
     // Their response CSP covers WebSockets, which Fetch cannot intercept.
     if (this.webCompatibility) for (const resourceType of ['Script', 'Other']) patterns.push({ urlPattern: '*', resourceType, requestStage: 'Response' })
     entry.policyPhase = 'request-interception'
-    await this.browser.send('Fetch.enable', { patterns }, sessionId)
+    await send('Fetch.enable', { patterns })
     if (entry) entry.interceptionReady = true
     entry.policyPhase = 'descendant-attachment'
-    await this.browser.send('Target.setAutoAttach', this.sharedProfile ? taskAutoAttach : autoAttach, sessionId)
+    await send('Target.setAutoAttach', this.sharedProfile ? taskAutoAttach : autoAttach)
     // Queue renderer-side chooser policy before resume as well; its reply is
     // suspended during the same noopener navigation as the Network reply.
     if (entry.page || entry.type === 'iframe') {
       entry.policyPhase = 'file-chooser-interception'
-      entry.chooserAcknowledgement = this.browser.send('Page.setInterceptFileChooserDialog', { enabled: (entry.page ?? this.pages(entry.task).get(entry.ownerPageId))?.interceptFileChooser !== false }, sessionId)
+      entry.chooserAcknowledgement = send('Page.setInterceptFileChooserDialog', { enabled: (entry.page ?? this.pages(entry.task).get(entry.ownerPageId))?.interceptFileChooser !== false })
         .then(() => null, error => { entry.chooserError = error; return error })
+      entry.diagnosticsReady = Promise.all([
+        send('Network.enable', { maxPostDataSize: 0 }),
+        send('Log.enable', {}),
+      ]).then(() => null, () => { if (entry.task?.diagnostics) entry.task.diagnostics.incomplete = true })
     }
   }
   async resumeSession(entry) {
@@ -413,6 +449,7 @@ export class AgentBroker {
     const captchaReady = this.captcha.enabled && ['page', 'iframe'].includes(entry.type)
       ? installCaptchaSession(this.browser, entry.sessionId).catch(() => { entry.captchaUnavailable = true }) : null
     await this.browser.send('Runtime.runIfWaitingForDebugger', {}, entry.sessionId)
+    await entry.diagnosticsReady
     await captchaReady
     entry.policyPhase = 'service-worker-acknowledgement'
     const error = await entry.bypassAcknowledgement
@@ -508,6 +545,43 @@ export class AgentBroker {
     })()
     await entry.ready
   }
+  currentProfileServiceWorker(entry) {
+    return !this.stopping && !this.browser.closed && this.profileLogin.phase === 'automated' &&
+      this.sharedProfile && this.webCompatibility && entry?.profileOwned === true && entry.type === 'service_worker' &&
+      this.sessions.get(entry.sessionId) === entry && this.targets.get(entry.targetId) === entry
+  }
+  async restartProfileServiceWorker(entry, epoch) {
+    const browser = this.browser, generation = this.browserGeneration, previous = entry.ready
+    let invalidated = false
+    const current = () => {
+      invalidated ||= this.browser !== browser || this.browserGeneration !== generation ||
+        entry.workerCrashEpoch !== epoch || !this.currentProfileServiceWorker(entry)
+      return !invalidated
+    }
+    const restart = (async () => {
+      await previous
+      if (!current() || !entry.interceptionReady) return false
+      entry.bypassError = null
+      await this.configureSession(entry.sessionId, entry, current)
+      if (!current()) return false
+      if (entry.bypassError) throw entry.bypassError
+      entry.policyPhase = 'worker-restart-resume'
+      await browser.send('Runtime.runIfWaitingForDebugger', {}, entry.sessionId)
+      if (!current()) return false
+      const error = await entry.bypassAcknowledgement
+      if (error) throw error
+      if (!current()) return false
+      entry.policyPhase = 'ready'
+      return true
+    })().catch(async error => {
+      if (!current()) return false
+      await browser.send('Target.closeTarget', { targetId: entry.targetId }).catch(() => {})
+      if (current()) throw error
+      return false
+    })
+    entry.ready = restart
+    return restart
+  }
   async attach(message) {
     const p = message.params, info = p.targetInfo
     const parent = message.sessionId ? this.sessionTask(message.sessionId) : undefined
@@ -572,7 +646,15 @@ export class AgentBroker {
     this.sessions.set(p.sessionId, entry); this.targets.set(info.targetId, entry)
     this.ownedTargets.set(info.targetId, task)
     if (isPage) {
-      entry.page = new AgentPage(this.browser, info.targetId, p.sessionId)
+      entry.page = new AgentPage(this.browser, info.targetId, p.sessionId, {
+        automationActive: () => !this.stopping && this.profileLogin.phase === 'automated' && task.state === 'agent-active' &&
+          this.tasks.get(task.taskId) === task && this.pages(task).get(info.targetId) === entry.page && this.targets.get(info.targetId) === entry
+      })
+      entry.page.onDocumentChanged = () => {
+        // The popup's first committed document is protected even if nobody
+        // observes it before it redirects or its opener closes.
+        if (entry.page.url && entry.page.url !== 'about:blank') rememberSensitiveDocument(task, entry.page)
+      }
       entry.page.frames = new PageFrames(entry.page, () => [...this.sessions.values()].filter(session => session.task === task && (!session.ownerPageId || session.ownerPageId === entry.page.pageId)), id => this.frameOwners.get(id))
       entry.page.interceptFileChooser = priorPage?.interceptFileChooser ?? opener?.page.interceptFileChooser ?? true
       Object.assign(entry.page, { openerId: opener?.page.pageId ?? info.openerId ?? priorPage?.openerId ?? (isPopup ? task.selectedPageId : null), url: info.url ?? priorPage?.url, title: info.title ?? priorPage?.title })
@@ -614,6 +696,20 @@ export class AgentBroker {
   }
   async onProtocol(message) {
     const p = message.params ?? {}
+    const diagnosticEntry = this.sessions.get(message.sessionId)
+    diagnosticEntry?.task?.diagnostics?.event(message, diagnosticEntry)
+    if (message.method === 'Inspector.targetCrashed' && this.currentProfileServiceWorker(diagnosticEntry)) {
+      diagnosticEntry.workerCrashEpoch = (diagnosticEntry.workerCrashEpoch ?? 0) + 1
+      diagnosticEntry.workerCrashed = true
+      return
+    }
+    if (message.method === 'Inspector.targetReloadedAfterCrash' && this.currentProfileServiceWorker(diagnosticEntry)) {
+      // Chromium retains the service-worker host/session across stops, pauses
+      // its next renderer, and emits Inspector reload instead of Target attach.
+      if (!diagnosticEntry.workerCrashed) return
+      diagnosticEntry.workerCrashed = false
+      return this.restartProfileServiceWorker(diagnosticEntry, diagnosticEntry.workerCrashEpoch)
+    }
     if (message.method === 'Target.attachedToTarget') return this.attach(message)
     if (message.method === 'Target.detachedFromTarget') {
       this.detachSession(p.sessionId)
@@ -634,6 +730,7 @@ export class AgentBroker {
       } else {
         const allowed = this.allowed(p.request.url)
         if (!allowed) {
+          task?.diagnostics?.blocked(message, diagnosticEntry)
           let origin; try { origin = new URL(p.request.url).origin } catch { origin = 'invalid' }
           if (task && !task.blockedOrigins.includes(origin)) task.blockedOrigins.push(origin)
         }
@@ -697,10 +794,12 @@ export class AgentBroker {
     if ([...this.tasks.values()].filter(task => !terminal.has(task.state)).length >= this.maxTasks) fail('Task limit reached', 'LIMIT_REACHED')
     let initialized
     const task = { taskId: randomUUID(), label: args.label || 'Browser task', owner, state: 'agent-active', reason: '', url: args.url, createdAt: new Date().toISOString(), downloads: [], blockedOrigins: [], pages: new Map(), pendingRootAttachments: new Map(), queue: new Promise(resolve => { initialized = resolve }) }
+    task.diagnostics = new TaskDiagnostics()
     if (args.sensitive) beginSensitive(task, [])
     this.tasks.set(task.taskId, task)
     if (request) { request.trace.taskId = task.taskId; request.dispatched = true }
     try {
+      await this.recoveryStore?.record(owner, task.taskId)
       if (this.sharedProfile) task.contextId = this.profileContextId
       else {
         const context = await this.browser.send('Target.createBrowserContext', { disposeOnDetach: true })
@@ -786,6 +885,7 @@ export class AgentBroker {
     if (task.ending) return task.ending
     if (!retry) task.cleanupFailures = 0
     const ending = (async () => {
+      const persisted = this.recoveryStore?.record(task.owner, task.taskId, state).then(() => null, error => error)
       const contextId = task.contextId
       const provisionalTargets = new Set([...(task.pendingRootAttachments?.values() ?? [])].map(message => message.params.targetInfo.targetId))
       task.closingPageIds ??= new Set()
@@ -795,6 +895,7 @@ export class AgentBroker {
       for (const { task: owner, item } of this.downloadOwners.values()) if (owner === task && item.state === 'inProgress') {
         await this.browser.send('Browser.cancelDownload', { guid: item.guid, browserContextId: contextId }).catch(() => {})
       }
+      await this.syncTaskFocus(task).catch(() => {})
       for (const page of this.pages(task).values()) page.dispose()
       // Close every WebContents before disposing the shared task context.
       for (const page of [...this.pages(task).values()]) await this.closePage(task, page)
@@ -823,6 +924,8 @@ export class AgentBroker {
       for (const [id, entry] of this.sessions) if (entry.task === task) this.sessions.delete(id)
       for (const [id, entry] of this.targets) if (entry.task === task) this.targets.delete(id)
       this.event('task-ended', { taskId: task.taskId, state })
+      const persistenceError = await persisted
+      if (persistenceError) throw persistenceError
       return this.record(task)
     })()
     task.ending = ending
@@ -855,7 +958,7 @@ export class AgentBroker {
       checkShownPage()
       const page = shownPage ?? this.page(task)
       if (shownPage) this.select(task, shownPage)
-      await page.send('Emulation.setFocusEmulationEnabled', { enabled: false })
+      await this.syncTaskFocus(task)
       if (generation !== task.controlGeneration || terminal.has(task.state)) return this.record(task)
       if (action === 'show') {
         checkShownPage()
@@ -865,6 +968,30 @@ export class AgentBroker {
         await this.browser.send('Target.setTargetVisibility', { targetId: page.targetId, visible: true })
         if (generation !== task.controlGeneration || terminal.has(task.state)) return this.record(task)
         checkShownPage()
+        const visibility = task.handoff?.visibility
+        if (visibility) { visibility.requested = true; visibility.targetVisible = true }
+        // CDP can request activation, but cannot prove what the user sees on
+        // another monitor or virtual desktop. Keep those claims unverified.
+        if (visibility) {
+          try {
+            const { windowId } = await this.browser.send('Browser.getWindowForTarget', { targetId: page.targetId })
+            if (generation !== task.controlGeneration || terminal.has(task.state)) return this.record(task)
+            checkShownPage()
+            if (Number.isInteger(windowId)) {
+              const { bounds } = await this.browser.send('Browser.getWindowBounds', { windowId })
+              if (generation !== task.controlGeneration || terminal.has(task.state)) return this.record(task)
+              checkShownPage()
+              visibility.windowState = ['normal', 'minimized', 'maximized', 'fullscreen'].includes(bounds?.windowState) ? bounds.windowState : 'unknown'
+              if (bounds?.windowState === 'minimized') await this.browser.send('Browser.setWindowBounds', { windowId, bounds: { windowState: 'normal' } })
+            }
+          } catch { visibility.windowState = 'unknown' }
+          checkShownPage()
+          if (generation !== task.controlGeneration || terminal.has(task.state)) return this.record(task)
+          try { await page.send('Page.bringToFront'); visibility.foregroundRequested = true }
+          catch { visibility.foregroundRequested = false }
+          if (generation !== task.controlGeneration || terminal.has(task.state)) return this.record(task)
+          checkShownPage()
+        }
         await this.setPageFileChooserInterception(task, page, false)
         if (generation === task.controlGeneration) { checkShownPage(); this.select(task, page); task.state = 'human' }
       } else if (action === 'resume') {
@@ -873,7 +1000,16 @@ export class AgentBroker {
           await this.browser.send('Target.setTargetVisibility', { targetId: current.targetId, visible: false })
           await current.send('Page.setWebLifecycleState', { state: 'active' }); current.observation = null
         }
-        if (generation === task.controlGeneration) { task.state = 'agent-active'; task.reason = ''; task.handoff = null }
+        if (generation === task.controlGeneration && !terminal.has(task.state)) {
+          task.state = 'agent-active'
+          try { await this.syncTaskFocus(task) }
+          catch (error) {
+            if (generation === task.controlGeneration) task.state = 'paused'
+            await this.syncTaskFocus(task).catch(() => {})
+            throw error
+          }
+          if (generation === task.controlGeneration && task.state === 'agent-active') { task.reason = ''; task.handoff = null }
+        }
       } else { task.state = 'paused'; task.reason = 'Paused by user' }
       this.event('task-control', { taskId: task.taskId, action })
       return this.record(task)
@@ -926,12 +1062,16 @@ export class AgentBroker {
       outcome = 'success'; actionResult = result?.actionResult
       // Credentials and locally staged capabilities never go through an agent
       // tool. Their dedicated handshakes return only their explicit contract.
-      if (method === 'client_register' || method === 'task_private_input') return result
+      if (method === 'client_register' || method === 'client_recover' || method === 'task_private_input') return result
       const task = this.tasks.get(request.trace.taskId)
       const sensitive = task?.sensitive?.active === true
       return sanitizePublicResult(task && result && typeof result === 'object'
         ? { ...result, privacy: sensitiveStatus(task, this.pages(task).get(result.pageId ?? result.observation?.pageId ?? args.pageId ?? task.selectedPageId)) } : result, { sensitive })
     } catch (error) {
+      if (method === 'task_private_input') {
+        annotateOperationError(error, args.action === 'provide' ? 'input' : 'prepare')
+        error.diagnostic = { ...error.diagnostic, stage: ['prepare', 'provide', 'revoke'].includes(args.action) ? `private_${args.action}` : 'private_prepare' }
+      }
       actionResult = sanitizeActionResult(error?.actionResult)
       if (!actionResult && mutations.has(method)) {
         const failedIndex = !request.dispatched && request.validated && method === 'task_act' ? 0 : null
@@ -961,20 +1101,29 @@ export class AgentBroker {
     const caller = this.clients.get(owner)
     if (caller?.released && method !== 'client_release') fail('Client credential was released', 'UNAUTHORIZED')
     if (caller?.leaseMs && !caller.released && caller.expiresAt <= Date.now()) {
-      await this.releaseClient(owner)
-      if (method !== 'client_release') fail('Client lease expired', 'UNAUTHORIZED')
+      const grace = caller.recoverable && caller.expiresAt + leaseGraceMs > Date.now()
+      if (!grace) await this.releaseClient(owner, Date.now(), { expired: true })
+      if (method !== 'client_release' && !(grace && method === 'client_heartbeat')) fail('Client lease expired; reconnect before further operations.', grace ? 'LEASE_EXPIRED' : 'UNAUTHORIZED')
     }
     if (owner === 'admin') {
       if (method === 'captcha_settings') return this.captcha.settings(args)
-      if (method === 'client_register') {
-        if (Object.keys(args).some(key => !['label', 'policyIdentity', 'leaseMs'].includes(key)) || typeof args.label !== 'string' || !args.label.trim() || args.label.length > 200) fail('A client label of 1 to 200 characters is required', 'INVALID_ARGUMENTS')
+      if (method === 'client_register' || method === 'client_recover') {
+        const recovering = method === 'client_recover'
+        if (Object.keys(args).some(key => !['label', 'policyIdentity', 'leaseMs', ...(recovering ? ['clientId', 'recoverySecret'] : [])].includes(key)) || typeof args.label !== 'string' || !args.label.trim() || args.label.length > 200) fail('A client label of 1 to 200 characters is required', 'INVALID_ARGUMENTS')
         if (args.policyIdentity !== undefined && args.policyIdentity !== this.policyIdentity) fail('Broker policy does not match the requested policy', 'POLICY_MISMATCH')
         if (args.leaseMs !== undefined && (args.leaseMs !== 30000 || args.policyIdentity !== this.policyIdentity)) fail('Managed registration requires matching policyIdentity and leaseMs 30000', 'INVALID_ARGUMENTS')
-        const clientId = randomUUID(), token = randomBytes(32).toString('base64url')
-        this.clients.set(clientId, { token, label: args.label, ...(args.leaseMs ? { leaseMs: 30000, expiresAt: Date.now() + 30000 } : {}) })
+        if (recovering && (!args.leaseMs || !this.recoveryStore)) fail('Scoped recovery is unavailable', 'UNAUTHORIZED')
+        if (recovering) await this.recoveryStore.authenticate(args.clientId, args.recoverySecret)
+        const clientId = recovering ? args.clientId : randomUUID(), token = randomBytes(32).toString('base64url')
+        const recoverySecret = !recovering && args.leaseMs && this.recoveryStore ? await this.recoveryStore.register(clientId) : undefined
+        // Preserve object identity for work already dispatched by this owner.
+        const client = this.clients.get(clientId) ?? {}
+        if (recovering && client.released && client.releaseReason !== 'expired') fail('Client credential was explicitly released', 'UNAUTHORIZED')
+        Object.assign(client, { token, label: args.label, released: false, recoverable: !!(recoverySecret || recovering), ...(args.leaseMs ? { leaseMs: 30000, expiresAt: Date.now() + 30000 } : {}) })
+        this.clients.set(clientId, client)
         request.trace.clientId = clientId
         if (args.leaseMs) { this.managedMode = true; this.idleSince = null; this.scheduleLifecycle() }
-        return { clientId, token, ...(args.leaseMs ? { leaseMs: 30000 } : {}) }
+        return { clientId, token, ...(recoverySecret ? { recoverySecret } : {}), ...(recovering ? { recovered: true, domRestored: false } : {}), ...(args.leaseMs ? { leaseMs: 30000 } : {}) }
       }
       if (method === 'broker_status') return { captchaStats: this.captcha.statistics(), agentProtocol: AGENT_PROTOCOL, tasks: [...this.tasks.values()].map(task => this.record(task)), browserVersion: this.browser.version, browserHealthy: this.profileLogin.phase === 'automated' && !this.browser.closed, profileLogin: this.profileLoginView(), policyIdentity: this.policyIdentity, profileMode: this.profileMode, sharedProfile: this.sharedProfile, activeActions: this.slots.active, maxTasks: this.maxTasks, maxActiveActions: this.slots.max, allowedOrigins: this.allowedOrigins ?? [this.allowWeb ? 'http(s)' : 'loopback only'], webCompatibility: this.webCompatibility, webSocketPolicy: this.webSocketPolicy }
       if (method === 'task_control') {
@@ -982,7 +1131,7 @@ export class AgentBroker {
         const task = this.task(args.taskId, owner); request.trace.taskId = task.taskId
         return this.control(task, args.action, request)
       }
-      if (method === 'shutdown') { this.assertAutomated(); setTimeout(() => { if (this.profileLogin.phase === 'automated') this.onShutdown?.() }, 20); return { stopping: true } }
+      if (method === 'shutdown') { this.assertAutomated(); setTimeout(() => { if (this.profileLogin.phase === 'automated') this.onShutdown?.('admin_shutdown') }, 20); return { stopping: true } }
     }
     validateArguments(method, args)
     request.validated = true
@@ -996,7 +1145,12 @@ export class AgentBroker {
       caller.expiresAt = Date.now() + caller.leaseMs
       return { leaseMs: caller.leaseMs }
     }
-    if (method === 'task_list') return { tasks: [...this.tasks.values()].filter(task => owner === 'admin' || task.owner === owner).map(task => this.record(task)) }
+    if (method === 'task_list') return { tasks: [...this.tasks.values()].filter(task => owner === 'admin' || task.owner === owner).map(task => this.record(task)).concat((this.recoveryStore?.tasks(owner) ?? []).filter(task => !this.tasks.has(task.taskId))) }
+    if (method === 'task_diagnostics') {
+      const task = this.task(args.taskId, owner)
+      request.trace.taskId = task.taskId
+      return { taskId: task.taskId, diagnostics: task.diagnostics?.snapshot() ?? { available: false, network: [], errors: {}, dropped: 0 } }
+    }
     this.assertAutomated()
     if (method === 'task_create') return this.slots.run(() => {
       this.assertAutomated()
@@ -1005,6 +1159,11 @@ export class AgentBroker {
       if (caller && (this.clients.get(owner) !== caller || caller.released || (caller.leaseMs && caller.expiresAt <= Date.now()))) fail('Client credential was released or expired', 'UNAUTHORIZED')
       return this.create(owner, args, request)
     }, request)
+    if (method === 'task_captcha' && args.action === 'status' && !this.tasks.has(args.taskId)) {
+      const receipt = await this.captcha.receipt(owner, args.taskId, args.jobId)
+      request.trace.taskId = args.taskId
+      return receipt
+    }
     const task = this.task(args.taskId, owner)
     request.trace.taskId = task.taskId
     if (method === 'task_captcha' && ['status', 'cancel'].includes(args.action)) {
@@ -1106,6 +1265,7 @@ export class AgentBroker {
         }
         if (method === 'task_navigate') {
           if (!this.allowed(args.url)) fail('Origin is not permitted by the local policy', 'ORIGIN_DENIED')
+          rememberSensitiveDocument(task, rootPage)
           request.dispatched = true
           return this.decorate(task, await page.navigate(args.url))
         }

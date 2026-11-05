@@ -1,4 +1,4 @@
-import { elementCapabilities, fieldMetadata, hasTransparentAncestor } from './form-controls.mjs'
+import { composedContains, elementCapabilities, fieldMetadata, hasTransparentAncestor } from './form-controls.mjs'
 
 export function documentRoots() {
   const roots = [document]
@@ -10,19 +10,64 @@ export function documentRoots() {
   return roots
 }
 
+export function elementNameText(element, { includeHidden = false } = {}) {
+  const seen = new Set()
+  const read = node => {
+    if (!node || seen.has(node)) return ''
+    seen.add(node)
+    if (node.nodeType === 3) return node.textContent ?? ''
+    if (['INPUT', 'TEXTAREA', 'SELECT', 'SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE'].includes(node.tagName)) return ''
+    if (node.tagName === 'BR') return ' '
+    if (!includeHidden && node.nodeType === 1) {
+      if (node.hidden || node.getAttribute('aria-hidden') === 'true') return ''
+      if (node.isConnected && typeof getComputedStyle === 'function') {
+        const style = getComputedStyle(node)
+        if (style.display === 'none' || ['hidden', 'collapse'].includes(style.visibility)) return ''
+      }
+    }
+    const assigned = node.tagName === 'SLOT' ? node.assignedNodes?.({ flatten: true }) : null
+    const content = [...(assigned?.length ? assigned : node.childNodes ?? [])].map(read).join('')
+    const block = node.nodeType === 1 && node.isConnected && typeof getComputedStyle === 'function' &&
+      /^(block|flex|grid|table|list-item|flow-root)/.test(getComputedStyle(node).display)
+    return block ? ` ${content} ` : content
+  }
+  return read(element).replace(/\s+/g, ' ').trim()
+}
+
+export function elementNameHost(element) {
+  const root = element.getRootNode?.(), host = root?.host
+  if (!host) return null
+  // A component-wide label cannot identify one action in a multi-control widget.
+  const selector = 'a[href],button,input:not([type="hidden"]),select,textarea,label,summary,[role],[tabindex],[onclick],[contenteditable="true"]'
+  const controls = new Set(), scopes = [root], seen = new Set()
+  for (let index = 0; index < scopes.length; index++) {
+    const scope = scopes[index]
+    if (!scope || seen.has(scope)) continue
+    seen.add(scope)
+    if (scope.matches?.(selector)) controls.add(scope)
+    for (const control of scope.querySelectorAll?.(selector) ?? []) controls.add(control)
+    for (const slot of scope.querySelectorAll?.('slot') ?? []) scopes.push(...(slot.assignedElements?.({ flatten: true }) ?? []))
+    for (const child of scope.querySelectorAll?.('*') ?? []) if (child.shadowRoot) scopes.push(child.shadowRoot)
+    if (scope.shadowRoot) scopes.push(scope.shadowRoot)
+  }
+  return controls.size === 1 && controls.has(element) ? host : null
+}
+
 export function elementName(element, { cardProxy } = {}) {
   const root = element.getRootNode?.() ?? document
-  const labelled = (element.getAttribute('aria-labelledby') ?? '').trim().split(/\s+/).filter(Boolean)
-    .map(id => root.getElementById?.(id)?.textContent ?? document.getElementById?.(id)?.textContent ?? '').join(' ')
-  const labels = [...(element.labels ?? [])].map(label => {
-    const copy = label.cloneNode(true)
-    for (const child of copy.querySelectorAll('input,textarea,select')) child.remove()
-    return copy.textContent
-  }).join(' ')
+  const labelledBy = (node, scope) => (node.getAttribute('aria-labelledby') ?? '').trim().split(/\s+/).filter(Boolean)
+    .map(id => elementNameText(scope.getElementById?.(id) ?? document.getElementById?.(id), { includeHidden: true })).join(' ').trim()
+  const labelled = labelledBy(element, root)
+  const labels = [...(element.labels ?? [])].map(label => elementNameText(label, { includeHidden: true })).join(' ')
+  const slots = [...(element.querySelectorAll?.('slot') ?? [])]
+  const content = slots.length ? elementNameText(element) : element.innerText
+  const host = elementNameHost(element)
+  const hostLabel = host ? labelledBy(host, host.getRootNode?.() ?? document) || host.getAttribute('aria-label') ||
+    [...(host.labels ?? [])].map(label => elementNameText(label, { includeHidden: true })).join(' ') : ''
   const actionValue = element.tagName === 'INPUT' && ['button', 'submit', 'reset'].includes(element.type) ? element.value : ''
   const imageName = element.getAttribute('alt') || [...(element.querySelectorAll?.('img[alt],svg title') ?? [])]
     .filter(node => node.getAttribute('aria-hidden') !== 'true').slice(0, 5).map(node => node.getAttribute('alt') || node.textContent).join(' ')
-  let name = labelled || element.getAttribute('aria-label') || labels || actionValue || element.getAttribute('placeholder') || element.innerText || cardProxy?.innerText || imageName || element.getAttribute('title')
+  let name = labelled || element.getAttribute('aria-label') || labels || actionValue || element.getAttribute('placeholder') || content || cardProxy?.innerText || imageName || element.getAttribute('title') || hostLabel
   if (!name && element.isConnected && typeof getComputedStyle === 'function') {
     name = ['::before', '::after'].map(pseudo => {
       const content = getComputedStyle(element, pseudo).content
@@ -55,11 +100,56 @@ export function visibleDocumentText(roots = documentRoots()) {
 export function observeDocument({ readOnly = false, query = '', offset = 0, limit = 150, textOffset = 0, textLimit = 10000 } = {}) {
   const roots = documentRoots()
   const prior = globalThis.__velmrenAgent
-  if (!readOnly) prior?.observer?.disconnect()
-  const state = { refs: new Map(), revision: 0 }
+  if (!readOnly) { if (prior?.disconnect) prior.disconnect(); else prior?.observer?.disconnect() }
+  const state = { refs: new Map(), related: new Map(), revision: 0, changedRefs: new Set() }
+  const relatedNodes = element => {
+    const root = element.getRootNode?.() ?? document
+    const ids = ['aria-labelledby', 'aria-describedby', 'aria-errormessage', 'aria-controls', 'aria-owns'].flatMap(attribute =>
+      (element.getAttribute(attribute) ?? '').trim().split(/\s+/).filter(Boolean))
+    for (const attribute of ['form', 'list', 'for']) if (element.getAttribute(attribute)) ids.push(element.getAttribute(attribute))
+    // Retain unresolved slots: a newly inserted or reassigned ID can change
+    // the control's meaning without mutating the observed node itself.
+    const host = elementNameHost(element), hostRoot = host?.getRootNode?.() ?? document
+    const hostIds = (host?.getAttribute('aria-labelledby') ?? '').trim().split(/\s+/).filter(Boolean)
+    const slots = [...(element.querySelectorAll?.('slot') ?? [])]
+    return [element, element.control ?? null, ...(element.labels ?? []), ...ids.map(id => root.getElementById?.(id) ?? document.getElementById?.(id) ?? null),
+      host, ...(host?.labels ?? []), ...hostIds.map(id => hostRoot.getElementById?.(id) ?? document.getElementById?.(id) ?? null),
+      ...slots, ...slots.flatMap(slot => [...(slot.assignedNodes?.({ flatten: true }) ?? [])])]
+  }
   if (!readOnly) {
-    state.observer = new MutationObserver(() => state.revision++)
-    for (const root of roots) state.observer.observe(root, { subtree: true, childList: true, attributes: true, characterData: true })
+    const invalidate = records => {
+      state.revision++
+      for (const [ref, element] of state.refs) {
+        if (state.changedRefs.has(ref)) continue
+        const related = state.related.get(ref)
+        const currentRelated = relatedNodes(element)
+        if (related.length !== currentRelated.length || related.some((node, index) => node !== currentRelated[index])) {
+          state.changedRefs.add(ref)
+          continue
+        }
+        for (const record of records) {
+          // Keep the document revision for strict private-input/upload bindings.
+          // Ordinary actions retain a node only when its own subtree, ancestors
+          // and external labels/help text stayed unchanged.
+          if (!element.isConnected || related.some(node => node && (record.target === node || composedContains(node, record.target) ||
+              record.type === 'attributes' && composedContains(record.target, node) ||
+              record.type === 'childList' && [...record.removedNodes].some(removed => composedContains(removed, node))))) {
+            state.changedRefs.add(ref)
+            break
+          }
+        }
+      }
+    }
+    state.observer = new MutationObserver(invalidate)
+    const slotChanged = event => invalidate([{ type: 'childList', target: event.target, removedNodes: [] }])
+    for (const root of roots) {
+      state.observer.observe(root, { subtree: true, childList: true, attributes: true, characterData: true })
+      root.addEventListener?.('slotchange', slotChanged)
+    }
+    state.disconnect = () => {
+      state.observer.disconnect()
+      for (const root of roots) root.removeEventListener?.('slotchange', slotChanged)
+    }
     globalThis.__velmrenAgent = state
   }
   const needle = query.trim().toLowerCase()
@@ -80,10 +170,14 @@ export function observeDocument({ readOnly = false, query = '', offset = 0, limi
     if (!explicit) {
       if (['HTML', 'BODY', 'SCRIPT', 'STYLE', 'TEMPLATE'].includes(element.tagName)) continue
       const style = styleOf(element), parent = element.assignedSlot || element.parentElement || root.host
+      const menu = parent?.closest?.('[role="menu"],[role="tooltip"]')
+      const menuEntry = menu && (parent === menu || parent.matches?.('ul,ol'))
       // A cursor is inherited. Expose its owning surface, not every text/icon
-      // descendant, and leave containers of distinct native controls alone.
-      if (style.cursor !== 'pointer' || style.pointerEvents === 'none' || parent && styleOf(parent).cursor === 'pointer' || hasTransparentAncestor(element)) continue
-      if (parent?.closest?.(interactive)) continue
+      // descendant. Menu/tooltip rows are separate surfaces even when the
+      // popup supplies the cursor or its own noninteractive focus sentinel.
+      if (style.cursor !== 'pointer' || style.pointerEvents === 'none' || parent && styleOf(parent).cursor === 'pointer' && !menuEntry || hasTransparentAncestor(element)) continue
+      const owner = parent?.closest?.(interactive)
+      if (owner && !(menuEntry && owner === menu)) continue
       if ([...(element.querySelectorAll?.(interactive) ?? [])].some(child => {
         const box = child.getBoundingClientRect(), childStyle = styleOf(child)
         return box.width && box.height && childStyle.display !== 'none' && !['hidden', 'collapse'].includes(childStyle.visibility)
@@ -99,6 +193,7 @@ export function observeDocument({ readOnly = false, query = '', offset = 0, limi
     if (matchIndex < offset || elements.length >= limit) continue
     const ref = `e${elements.length + 1}`
     state.refs.set(ref, element)
+    state.related.set(ref, relatedNodes(element))
     const value = element.type === 'password' ? '[redacted]' : fileInput ? '' : String(element.value ?? '')
     const truncation = { name: name.length > limits.name, value: value.length > limits.value }
     counts.truncatedNames += Number(truncation.name); counts.truncatedValues += Number(truncation.value)
@@ -137,6 +232,17 @@ export function observeDocument({ readOnly = false, query = '', offset = 0, limi
     pagination: { offset, limit, total: counts.matchedElements, nextOffset, query },
     textPagination: { offset: textOffset, limit: textLimit, total: text.length, nextOffset: nextTextOffset },
     coverage: { scope: 'frame', childFrames: 'separate_frame_observations', shadowRoots: 'open', closedShadowRoots: 'excluded', hiddenElements: 'excluded_except_file_inputs_and_associated_checkables', customControls: 'explicit_semantics_or_pointer_surfaces', elements: query ? 'query_matches' : 'eligible_elements', completeness: 'eligible_elements_and_visible_text' } }
+}
+
+export function validateObservedRefs({ revision, refs }) {
+  const state = globalThis.__velmrenAgent
+  if (!state) throw new Error('Stale observation; observe again')
+  if (state.revision === revision) return
+  if (!refs.length || !state.changedRefs) throw new Error('Page changed since observation; observe again')
+  for (const ref of refs) {
+    const element = state.refs.get(ref)
+    if (!element?.isConnected || element.ownerDocument !== document || state.changedRefs.has(ref)) throw new Error('Page changed since observation; observe again')
+  }
 }
 
 export function listSelectOptions({ ref, revision, query = '', offset = 0, limit = 50 }) {

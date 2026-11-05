@@ -71,6 +71,100 @@ test('browser autoattach pauses targets before any page executes', async () => {
   assert.equal(task.selectedPageId, 'popup')
 })
 
+test('owned active roots render before navigation; pause and human handoff release every page without affecting peers', async () => {
+  const f = fixture({ webCompatibility: true }), task = f.addTask('one'), peer = f.addTask('two')
+  await f.attach(task, 'main'); await f.attach(task, 'popup', 'main'); await f.attach(peer, 'peer')
+  const focused = id => f.calls.filter(call => call.sessionId === `session-${id}` && call.method === 'Emulation.setFocusEmulationEnabled').at(-1)?.params.enabled
+  await f.broker.rpc('one', 'task_navigate', { taskId: 'one', pageId: 'main', url: 'http://localhost/next' })
+  const main = f.calls.filter(call => call.sessionId === 'session-main')
+  assert.ok(main.findIndex(call => call.method === 'Emulation.setFocusEmulationEnabled' && call.params.enabled) < main.findIndex(call => call.method === 'Page.navigate'))
+  assert.deepEqual(['main', 'popup', 'peer'].map(focused), [true, true, true])
+  await f.broker.control(task, 'pause')
+  assert.deepEqual(['main', 'popup', 'peer'].map(focused), [false, false, true])
+  await f.attach(task, 'paused-popup', 'main')
+  assert.equal(focused('paused-popup'), false)
+  await f.broker.control(task, 'resume')
+  assert.deepEqual(['main', 'popup', 'paused-popup', 'peer'].map(focused), [true, true, true, true])
+  const handoff = await f.broker.rpc('one', 'task_request_human', { taskId: 'one', pageId: 'main', reason: 'Synthetic manual step' })
+  assert.equal(handoff.state, 'needs-human')
+  assert.deepEqual(['main', 'popup', 'paused-popup', 'peer'].map(focused), [false, false, false, true])
+  await f.broker.control(task, 'show')
+  assert.equal(task.state, 'human')
+  await f.attach(task, 'human-popup', 'main')
+  assert.equal(focused('human-popup'), false)
+  await f.broker.rpc('one', 'task_resume', { taskId: 'one', handoffId: handoff.handoff.id, userConfirmed: true })
+  assert.deepEqual(['main', 'popup', 'paused-popup', 'human-popup', 'peer'].map(focused), [true, true, true, true, true])
+  await f.broker.end(task, 'completed')
+  assert.deepEqual(['main', 'popup', 'paused-popup', 'human-popup', 'peer'].map(focused), [false, false, false, false, true])
+  await f.broker.close()
+})
+
+test('pause does not wait on focus commands for a popup whose renderer bootstrap is still suspended', async () => {
+  const f = fixture({ webCompatibility: true }), task = f.addTask('one'), gate = deferred(), started = deferred()
+  await f.attach(task, 'main')
+  const send = f.browser.send
+  f.browser.send = async (method, params, sessionId) => {
+    if (method === 'Runtime.enable' && sessionId === 'session-popup') { started.resolve(); await gate.promise }
+    return send(method, params, sessionId)
+  }
+  const attaching = f.attach(task, 'popup', 'main')
+  await started.promise
+  await f.broker.control(task, 'pause')
+  assert.equal(task.state, 'paused')
+  assert.ok(!f.calls.some(call => call.sessionId === 'session-popup' && call.method === 'Emulation.setFocusEmulationEnabled'))
+  gate.resolve(); await attaching
+  assert.deepEqual(f.calls.filter(call => call.sessionId === 'session-popup' && call.method === 'Emulation.setFocusEmulationEnabled').map(call => call.params.enabled), [false])
+  await f.broker.close()
+})
+
+test('a new human request wins an in-flight resume focus acknowledgement', async () => {
+  const f = fixture({ webCompatibility: true }), task = f.addTask('one'), gate = deferred(), started = deferred()
+  await f.attach(task, 'main'); await f.broker.control(task, 'pause')
+  const send = f.browser.send
+  f.browser.send = async (method, params, sessionId) => {
+    const result = await send(method, params, sessionId)
+    if (method === 'Emulation.setFocusEmulationEnabled' && params.enabled && sessionId === 'session-main') { started.resolve(); await gate.promise }
+    return result
+  }
+  const resuming = f.broker.control(task, 'resume')
+  await started.promise
+  const human = f.broker.rpc('one', 'task_request_human', { taskId: 'one', reason: 'New synthetic handoff' })
+  gate.resolve(); await resuming
+  const result = await human
+  assert.equal(result.state, 'needs-human'); assert.equal(task.handoff.id, result.handoff.id)
+  assert.equal(f.calls.filter(call => call.sessionId === 'session-main' && call.method === 'Emulation.setFocusEmulationEnabled').at(-1).params.enabled, false)
+  await f.broker.close()
+})
+
+test('failed rendering restoration leaves resume paused and releases already restored sibling pages', async () => {
+  const f = fixture({ webCompatibility: true }), task = f.addTask('one')
+  await f.attach(task, 'main'); await f.attach(task, 'popup', 'main'); await f.broker.control(task, 'pause')
+  const send = f.browser.send
+  f.browser.send = async (method, params, sessionId) => {
+    if (method === 'Emulation.setFocusEmulationEnabled' && params.enabled && sessionId === 'session-popup') throw Object.assign(new Error('Synthetic native failure'), { code: 'CDP_PROTOCOL_ERROR' })
+    return send(method, params, sessionId)
+  }
+  await assert.rejects(f.broker.control(task, 'resume'), { code: 'CDP_PROTOCOL_ERROR' })
+  assert.equal(task.state, 'paused')
+  for (const id of ['main', 'popup']) assert.equal(f.calls.filter(call => call.sessionId === `session-${id}` && call.method === 'Emulation.setFocusEmulationEnabled').at(-1).params.enabled, false)
+  await f.broker.close()
+})
+
+test('one failed focus release does not leave the other task pages rendering during pause', async () => {
+  const f = fixture({ webCompatibility: true }), task = f.addTask('one')
+  await f.attach(task, 'main'); await f.attach(task, 'popup', 'main')
+  const send = f.browser.send
+  f.browser.send = async (method, params, sessionId) => {
+    if (method === 'Emulation.setFocusEmulationEnabled' && !params.enabled && sessionId === 'session-main') throw Object.assign(new Error('Synthetic native failure'), { code: 'CDP_PROTOCOL_ERROR' })
+    return send(method, params, sessionId)
+  }
+  await assert.rejects(f.broker.control(task, 'pause'), { code: 'CDP_PROTOCOL_ERROR' })
+  assert.equal(task.state, 'paused')
+  assert.equal(f.calls.filter(call => call.sessionId === 'session-popup' && call.method === 'Emulation.setFocusEmulationEnabled').at(-1).params.enabled, false)
+  f.browser.send = send
+  await f.broker.close()
+})
+
 test('navigation-suspended bypass reply does not deadlock browser-side policy bootstrap', async () => {
   const f = fixture({ webCompatibility: true }), task = f.addTask('one'), gate = deferred()
   await f.attach(task, 'main')

@@ -4,12 +4,14 @@ import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import { BrowserPipe } from '../cdp.mjs'
-import { AgentPage } from '../page.mjs'
-import { PageFrames } from '../frames.mjs'
-import { CaptchaPage, installCaptchaSession } from '../captcha-page.mjs'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
-const [executable, outputArgument] = process.argv.slice(2)
+const [executable, outputArgument, agentArgument] = process.argv.slice(2)
+const directory = agentArgument?.replace(/^--agent-directory=/, '') ?? fileURLToPath(new URL('../', import.meta.url))
+const { BrowserPipe } = await import(pathToFileURL(path.join(directory, 'cdp.mjs')))
+const { AgentPage } = await import(pathToFileURL(path.join(directory, 'page.mjs')))
+const { PageFrames } = await import(pathToFileURL(path.join(directory, 'frames.mjs')))
+const { CaptchaPage, installCaptchaSession } = await import(pathToFileURL(path.join(directory, 'captcha-page.mjs')))
 if (!executable || !outputArgument) throw new Error('Usage: node test/captcha-page-integration.mjs BROWSER_EXE NEW_OUTPUT_DIR')
 const output = path.resolve(outputArgument)
 await mkdir(path.dirname(output), { recursive: true }); await mkdir(output)
@@ -19,7 +21,7 @@ const server = createServer((request, response) => {
   response.setHeader('Content-Type', 'text/html; charset=utf-8')
   // Provider-shaped iframe URLs below are DOM evidence only: CSP blocks all
   // external navigation, and no external scripts are loaded by this fixture.
-  response.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'unsafe-inline'; frame-src 'self' http://127.0.0.2:*; connect-src 'none'")
+  response.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline'; frame-src 'self' http://127.0.0.2:*; connect-src 'none'")
   const basic = name => `<form id="form-${name}"><div id="${name}" class="g-recaptcha" data-sitekey="synthetic-${name}" data-callback="callbacks.${name}"><textarea name="g-recaptcha-response"></textarea></div></form>`
   const fixture = `<!doctype html><meta charset="utf-8"><title>Synthetic CAPTCHA fixture</title>
     <input id="ordinary" value="ordinary value">
@@ -29,10 +31,15 @@ const server = createServer((request, response) => {
     <form><div id="turnstile"></div></form>
     <form id="iframe-form"><iframe id="anchor" src="https://www.recaptcha.net/recaptcha/api2/anchor?k=synthetic-anchor&amp;sa=signup&amp;s=synthetic-s&amp;size=normal"></iframe><textarea name="g-recaptcha-response"></textarea></form>
     <div class="g-recaptcha" data-sitekey="synthetic-invisible" data-size="invisible"></div>
+    <form><div id="invisible-callback" class="g-recaptcha" data-sitekey="synthetic-invisible-callback" data-size="invisible" data-callback="callbacks.invisible"></div></form>
+    <form><div id="invisible-enterprise"></div></form>
+    <form><div id="turnstile-callbackonly"></div></form>
+    <form><div id="hcompat" class="g-recaptcha" data-sitekey="synthetic-hcompat"></div></form>
     <div class="h-captcha" data-sitekey="synthetic-hcaptcha"></div>
     <div id="shadow"></div>
     <script>
       globalThis.calls = []; globalThis.callbacks = {};
+      callbacks.invisible = token => calls.push({name:'invisible-callback',token});
       for (const name of ['dom','second','throwing']) callbacks[name] = token => { calls.push({name, token}); if(name==='throwing') throw new Error('synthetic callback failure'); };
       function provider(kind) {
         const widgets = new Map();
@@ -54,16 +61,48 @@ const server = createServer((request, response) => {
         };
       }
       globalThis.grecaptcha = provider('grecaptcha'); grecaptcha.enterprise = provider('enterprise');
-      globalThis.turnstile = provider('turnstile');
+    </script><script src="/turnstile-api.js"></script><script>
+      globalThis.hcaptcha = provider('hcaptcha');
+      hcaptcha.render('hcompat',{sitekey:'synthetic-hcompat'});
       globalThis.explicitCallback = token => calls.push({name:'explicit',token});
       globalThis.renderResult = grecaptcha.render('explicit',{sitekey:'synthetic-explicit',callback:explicitCallback},'third-arg');
       grecaptcha.enterprise.render('enterprise',{sitekey:'synthetic-enterprise',s:'enterprise-s',action:'login',callback:token=>calls.push({name:'enterprise',token})});
       turnstile.render('#turnstile',{sitekey:'synthetic-turnstile',action:'signup',cData:'synthetic_data','response-field-name':'custom-response',callback:token=>calls.push({name:'turnstile',token})});
+      grecaptcha.enterprise.render('invisible-enterprise',{sitekey:'synthetic-invisible-enterprise',size:'invisible',callback:token=>calls.push({name:'invisible-enterprise',token})});
+      turnstile.render('#turnstile-callbackonly',{sitekey:'synthetic-turnstile-callbackonly','response-field':false,callback:token=>calls.push({name:'turnstile-callbackonly',token})});
       const shadow = document.getElementById('shadow').attachShadow({mode:'open'});
       shadow.innerHTML='<form><div class="cf-turnstile" data-sitekey="synthetic-shadow"><input type="hidden" name="cf-turnstile-response"></div></form>';
     </script>`
-  if (request.url.startsWith('/child-explicit')) response.end(`<!doctype html><form><div id="child"></div></form><script>
-    globalThis.turnstile = { render(node, options) { node.innerHTML='<input type="hidden" name="cf-turnstile-response">'; return 'child-widget'; } };
+  if (request.url.startsWith('/turnstile-api.js')) {
+    response.setHeader('Content-Type', 'text/javascript')
+    response.end(`globalThis.turnstile = provider('turnstile');`)
+  } else if (request.url.startsWith('/child-api.js')) {
+    response.setHeader('Content-Type', 'text/javascript')
+    response.end(`if (!('turnstile' in globalThis)) globalThis.turnstile = { render(node, options) { node.innerHTML='<input type="hidden" name="cf-turnstile-response">'; return 'child-widget'; } };`)
+  } else if (request.url.startsWith('/bootstrap-api.js')) {
+    response.setHeader('Content-Type', 'text/javascript')
+    response.end(`
+      globalThis.bootstrapPresence = { own: Object.hasOwn(globalThis,'turnstile'), present: 'turnstile' in globalThis, type: typeof globalThis.turnstile };
+      if (!('turnstile' in globalThis)) globalThis.turnstile = {
+        render(node, options, third) {
+          if (node === 'throws') throw new TypeError('bootstrap render failure');
+          globalThis.renderSemantics = { receiver: this === turnstile, third };
+          if (options['response-field'] !== false) node.innerHTML='<input name="cf-turnstile-response">';
+          return node.id;
+        }, reset(id) { return 'reset:' + id }, remove(id) { return 'remove:' + id }
+      };
+      if (location.search.includes('early')) {
+        const node = document.getElementById('early');
+        turnstile.render(node,{sitekey:'synthetic-early','response-field':false,callback:()=>{globalThis.earlyCalled=true}});
+      }
+    `)
+  } else if (request.url.startsWith('/bootstrap')) response.end(`<!doctype html><form id="host"><div id="early" class="cf-turnstile" data-sitekey="synthetic-early" data-response-field="false" hidden></div></form>
+    <script>globalThis.tokens=[]; globalThis.makeDetached = (id, api=turnstile) => {
+      const node=document.createElement('div'); node.id=id; node.className='cf-turnstile'; node.dataset.sitekey='synthetic-'+id;
+      api.render(node,{sitekey:'synthetic-'+id,'response-field':false,callback:token=>tokens.push({id,token})},'third-argument'); return node;
+    };</script>
+    <script src="/bootstrap-api.js${request.url.includes('early') ? '?early' : ''}" onload="globalThis.onLoadNode=makeDetached('onload'); document.getElementById('host').append(onLoadNode)"></script>`)
+  else if (request.url.startsWith('/child-explicit')) response.end(`<!doctype html><form><div id="child"></div></form><script src="/child-api.js"></script><script>
     turnstile.render(document.getElementById('child'),{sitekey:'synthetic-cross-child',callback:token=>{globalThis.receivedToken=token}});
   </script>`)
   else if (request.url.startsWith('/cross-frames')) response.end(`<!doctype html><iframe name="cross-child" src="http://127.0.0.2:${server.address().port}/child-explicit"></iframe>`)
@@ -92,18 +131,22 @@ try {
   assert.equal(await evaluate('Object.getOwnPropertyDescriptor(globalThis,"grecaptcha")'), undefined)
   check('Disabled feature installs no provider global hooks')
   await page.captcha.install(); await page.captcha.install(); await installCaptchaSession(browser, sessionId)
+  assert.deepEqual(await evaluate(`({own:Object.hasOwn(globalThis,'turnstile'),present:'turnstile' in globalThis,type:typeof turnstile,descriptor:Object.getOwnPropertyDescriptor(globalThis,'turnstile')})`), {own:false,present:false,type:'undefined'})
+  await page.captcha.inspect()
+  assert.equal(await evaluate(`Object.hasOwn(globalThis,'turnstile') || 'turnstile' in globalThis`),false)
+  check('Enabled preload and repeated inspection preserve absence of the Turnstile global')
   let generation = 0
   const load = () => page.navigate(`${origin}/fixture?generation=${++generation}&private=synthetic-secret#sensitive-fragment`)
   await load()
   let descriptions = await page.captcha.inspect()
-  assert.equal(descriptions.length, 10)
-  assert.equal(descriptions.filter(item => item.supported).length, 8)
+  assert.equal(descriptions.length, 14)
+  assert.equal(descriptions.filter(item => item.supported).length, 11)
   assert.ok(descriptions.some(item => item.reason === 'hcaptcha' && !item.supported))
-  assert.ok(descriptions.some(item => item.reason === 'invisible-widget' && !item.supported))
+  assert.ok(descriptions.some(item => item.reason === 'response-target-unavailable' && !item.supported))
   assert.doesNotMatch(JSON.stringify(descriptions), /synthetic-|sitekey|private|token|websiteURL/)
   assert.ok(descriptions.every(item => /^[0-9a-f-]{36}$/.test(item.challengeId)))
   assert.deepEqual(await page.captcha.inspect(), descriptions)
-  check('Stable public challenge IDs classify supported, invisible and hCaptcha without token or site data')
+  check('Stable public challenge IDs classify supported, missing targets and hCaptcha without token or site data')
   const preparedByKey = async () => {
     const result = new Map()
     for (const item of await page.captcha.inspect()) if (item.supported) {
@@ -118,6 +161,14 @@ try {
   assert.deepEqual(anchor.task, { type: 'ReCaptchaV2TaskProxyLess', websiteURL: origin+'/', websiteKey:'synthetic-anchor', isInvisible:false, pageAction:'signup', recaptchaDataSValue:'synthetic-s', apiDomain:'www.recaptcha.net' })
   assert.deepEqual(prepared.get('synthetic-enterprise').task.enterprisePayload, { s: 'enterprise-s' })
   assert.deepEqual(prepared.get('synthetic-turnstile').task.metadata, { action:'signup', cdata:'synthetic_data' })
+  for (const key of ['synthetic-invisible-callback', 'synthetic-invisible-enterprise']) {
+    assert.equal(prepared.get(key).task.isInvisible, true)
+    assert.deepEqual(await page.captcha.apply(prepared.get(key).binding, 'MOCK_' + key), { applied: true, callbackInvoked: true })
+  }
+  assert.deepEqual(await page.captcha.apply(prepared.get('synthetic-turnstile-callbackonly').binding, 'MOCK_CALLBACK_ONLY'), { applied: true, callbackInvoked: true })
+  assert.equal(await evaluate('document.querySelectorAll("#turnstile-callbackonly input").length'), 0)
+  assert.equal(descriptions.filter(item => item.reason === 'hcaptcha').length, 2)
+  check('Invisible v2 and Enterprise use their original callbacks; callback-only Turnstile works; hCaptcha compatibility render never selects reCAPTCHA')
   for (const [key, callbackInvoked] of [['synthetic-dom',true],['synthetic-explicit',true],['synthetic-enterprise',true],['synthetic-turnstile',true],['synthetic-anchor',false],['synthetic-shadow',false]]) {
     const { binding } = await page.captcha.prepare(prepared.get(key).binding.challengeId)
     const receipt = await page.captcha.apply(binding, 'MOCK_TOKEN_'+key, ()=>true)
@@ -134,7 +185,7 @@ try {
   assert.equal(await evaluate('try { grecaptcha.render("throws",{}) } catch(error) { error instanceof TypeError && error.message === "original render failure" }'), true)
   descriptions = await page.captcha.inspect()
   assert.doesNotMatch(JSON.stringify(descriptions), /MOCK_TOKEN/)
-  assert.equal(descriptions.filter(item=>item.alreadySolved).length, 6)
+  assert.equal(descriptions.filter(item=>item.alreadySolved).length, 9)
   check('DOM, explicit, enterprise, Turnstile, provider iframe and shadow widgets receive only their own token; API semantics preserved')
   const throwing = await page.captcha.prepare(prepared.get('synthetic-throwing').binding.challengeId)
   assert.deepEqual(await page.captcha.apply(throwing.binding, 'MOCK_THROW'), { applied:true, callbackInvoked:true, deliveryUncertain:true })
@@ -225,6 +276,88 @@ try {
   await assert.rejects(page.captcha.prepare(thirdGeneration.binding.challengeId),{code:'CAPTCHA_ALREADY_SOLVED'})
   assert.equal((await page.captcha.inspect()).find(item=>item.challengeId===thirdGeneration.binding.challengeId).alreadySolved,true)
   check('Successful reset and re-render create new challenge IDs and one-use generations; ordinary inspection remains stable')
+
+  await page.navigate(origin+'/bootstrap')
+  assert.deepEqual(await evaluate('bootstrapPresence'),{own:false,present:false,type:'undefined'})
+  assert.deepEqual(await evaluate(`(()=>{const d=Object.getOwnPropertyDescriptor(globalThis,'turnstile');return {data:d.value===turnstile,writable:d.writable,enumerable:d.enumerable,configurable:d.configurable}})()`),{data:true,writable:true,enumerable:true,configurable:true})
+  prepared = await preparedByKey()
+  const onload = prepared.get('synthetic-onload')
+  assert.ok(onload)
+  assert.deepEqual(await page.captcha.apply(onload.binding,'MOCK_ONLOAD'),{applied:true,callbackInvoked:true})
+  assert.deepEqual(await evaluate('renderSemantics'),{receiver:true,third:'third-argument'})
+  assert.equal(await evaluate(`try { turnstile.render('throws',{}) } catch(error) { error instanceof TypeError && error.message==='bootstrap render failure' }`),true)
+  check('Presence-guarded Turnstile initialization succeeds; script-load capture precedes the site onload callback and preserves API semantics')
+
+  await evaluate(`globalThis.detached=makeDetached('detached')`)
+  prepared = await preparedByKey()
+  assert.equal(prepared.has('synthetic-detached'),false)
+  await assert.rejects(page.captcha.prepare('unoffered-detached'),{code:'CAPTCHA_STALE'})
+  await evaluate(`document.getElementById('host').append(detached)`)
+  prepared = await preparedByKey()
+  const detached = prepared.get('synthetic-detached')
+  assert.ok(detached)
+  const detachedDescription = (await page.captcha.inspect()).find(item=>item.challengeId===detached.binding.challengeId)
+  assert.equal(detachedDescription.captchaBinding.renderCaptured,true)
+  assert.equal(detachedDescription.captchaBinding.callbackCaptured,true)
+  assert.equal(await evaluate(`document.getElementById('detached')===detached`),true)
+  assert.deepEqual(await page.captcha.apply(detached.binding,'MOCK_DETACHED'),{applied:true,callbackInvoked:true})
+  await assert.rejects(page.captcha.apply(detached.binding,'MOCK_REPLAY'),{code:'CAPTCHA_STALE'})
+  assert.equal(await evaluate(`tokens.filter(item=>item.id==='detached').length`),1)
+  await evaluate(`globalThis.grecaptcha={render(node){return node.id}}; globalThis.recaptchaDetached=makeDetached('recaptcha-detached',grecaptcha)`)
+  assert.equal((await preparedByKey()).has('synthetic-recaptcha-detached'),false)
+  await evaluate(`document.getElementById('host').append(recaptchaDetached)`)
+  const recaptchaDetached = (await preparedByKey()).get('synthetic-recaptcha-detached')
+  assert.equal(recaptchaDetached.task.type,'ReCaptchaV2TaskProxyLess')
+  assert.deepEqual(await page.captcha.apply(recaptchaDetached.binding,'MOCK_RECAPTCHA_DETACHED'),{applied:true,callbackInvoked:true})
+  assert.doesNotMatch(JSON.stringify(await page.captcha.inspect()), /synthetic-|MOCK_|sitekey|websiteURL/)
+  check('Same-document render-before-append preserves the exact callback and node; pending candidates are not offered and delivery stays one-use/private')
+
+  for (const method of ['reset','remove']) {
+    await evaluate(`globalThis.pending=makeDetached('pending-${method}'); globalThis.pendingResult=turnstile.${method}(pending.id); document.getElementById('host').append(pending)`)
+    assert.equal(await evaluate('pendingResult'),`${method}:pending-${method}`)
+    assert.equal((await preparedByKey()).has(`synthetic-pending-${method}`),false)
+  }
+  await evaluate(`globalThis.foreign=document.implementation.createHTMLDocument('foreign'); globalThis.adopted=makeDetached('adopted'); foreign.adoptNode(adopted); foreign.body.append(adopted)`)
+  assert.equal((await preparedByKey()).has('synthetic-adopted'),false)
+  await evaluate(`document.getElementById('host').append(document.adoptNode(adopted))`)
+  assert.equal((await preparedByKey()).has('synthetic-adopted'),false)
+  await evaluate(`globalThis.foreignRendered=foreign.createElement('div'); foreignRendered.id='foreign-rendered'; foreignRendered.className='cf-turnstile'; foreignRendered.dataset.sitekey='synthetic-foreign-rendered'; turnstile.render(foreignRendered,{sitekey:'synthetic-foreign-rendered',callback:()=>tokens.push({id:'foreign-rendered'})}); document.getElementById('host').append(document.adoptNode(foreignRendered))`)
+  assert.equal((await preparedByKey()).has('synthetic-foreign-rendered'),false)
+  await evaluate(`{ globalThis.bounced=makeDetached('bounced'); const host=document.getElementById('host'); host.append(bounced); bounced.remove(); host.append(bounced) }`)
+  assert.equal((await preparedByKey()).has('synthetic-bounced'),false)
+  await evaluate(`globalThis.bound=makeDetached('bound'); document.getElementById('host').append(bound)`)
+  const bound = (await preparedByKey()).get('synthetic-bound')
+  await evaluate(`{ const host=document.getElementById('host'); bound.remove(); host.append(bound) }`)
+  await assert.rejects(page.captcha.apply(bound.binding,'MOCK_BOUNCED'),{code:'CAPTCHA_STALE'})
+  assert.equal((await preparedByKey()).has('synthetic-bound'),false)
+  assert.equal(await evaluate(`tokens.some(item=>['pending-reset','pending-remove','adopted','foreign-rendered','bounced','bound'].includes(item.id))`),false)
+  check('Pending reset/remove, foreign ownership and adoption, pre-inspection detach/reinsert, and bound detach/reinsert cannot deliver or revive captured callbacks')
+
+  await evaluate(`globalThis.capacity=Array.from({length:65},(_,index)=>makeDetached('capacity-'+index)); document.getElementById('host').append(capacity[0],capacity[64])`)
+  prepared = await preparedByKey()
+  assert.equal(prepared.has('synthetic-capacity-0'),false)
+  assert.equal(prepared.has('synthetic-capacity-64'),true)
+  await evaluate(`globalThis.expiring=makeDetached('expiring')`)
+  const virtualTimeExpired = new Promise(resolve => {
+    const listener = message => {
+      if (message.method !== 'Emulation.virtualTimeBudgetExpired' || message.sessionId !== sessionId) return
+      browser.off('protocol',listener); resolve()
+    }
+    browser.on('protocol',listener)
+  })
+  await page.send('Emulation.setVirtualTimePolicy',{policy:'advance',budget:31000})
+  await virtualTimeExpired
+  await page.send('Emulation.setVirtualTimePolicy',{policy:'advance'})
+  await evaluate(`document.getElementById('host').append(expiring)`)
+  assert.equal((await preparedByKey()).has('synthetic-expiring'),false)
+  check('Detached capture capacity evicts old callbacks and timer expiry prevents late attachment from reviving metadata')
+
+  await page.navigate(origin+'/bootstrap?early')
+  descriptions = await page.captcha.inspect()
+  assert.ok(descriptions.some(item=>!item.supported && item.reason==='response-target-unavailable' && !item.captchaBinding.renderCaptured))
+  assert.equal((await preparedByKey()).has('synthetic-early'),false)
+  assert.equal(await evaluate('globalThis.earlyCalled===true'),false)
+  check('Callback-only rendering inside initial provider evaluation remains unsupported when its callback was not captured')
 
   await page.navigate(origin+'/frames')
   page.frames ||= new PageFrames(page,()=>[],()=>null)

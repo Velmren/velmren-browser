@@ -11,6 +11,8 @@ import { CLIENTS } from './client.mjs'
 import { sanitizePublicError } from './privacy.mjs'
 import { bindProfilePolicy } from './profile-state.mjs'
 import { effectivePolicyIdentity } from './policy-identity.mjs'
+import { ClientRecoveryStore } from './client-recovery.mjs'
+import { lifecycle } from './lifecycle.mjs'
 import { ManualProfileError, ManualProfileSession, assertNoManualProfileSession, readManualProfileReceipt } from './manual-profile.mjs'
 
 const token = () => randomBytes(32).toString('base64url')
@@ -44,6 +46,8 @@ export async function startBroker({executable,stateDir,policy={},port=0,browserA
   await lock.writeFile(String(process.pid))
   let browser,broker,server,descriptor,descriptorTemp,descriptorPublished=false,profileLoginRecovered=false,startupPending=true
   try {
+    const recoveryStore=new ClientRecoveryStore(stateDir,effectivePolicyIdentity(policy))
+    await recoveryStore.ready
     const recoveryReceipt=profileLoginRecovery===undefined?null:await validateProfileLoginRecovery({executable,stateDir,policy},profileLoginRecovery)
     if(!recoveryReceipt)await assertNoManualProfileSession(stateDir)
     await bindProfilePolicy(stateDir,policy)
@@ -52,6 +56,7 @@ export async function startBroker({executable,stateDir,policy={},port=0,browserA
     const launch=async()=>{
       if(startupPending)signal?.throwIfAborted()
       browser=await browserFactory({...browserOptions,args:[...browserOptions.args]})
+      browser.once('closed',details=>lifecycle(stateDir,'browser-exit',{phase:'browser',...details}))
       if(startupPending)signal?.throwIfAborted()
       return browser
     }
@@ -63,12 +68,12 @@ export async function startBroker({executable,stateDir,policy={},port=0,browserA
       }
       // Restore the gate without opening a browser or sending any CDP commands.
       browser=Object.assign(new EventEmitter(),{closed:true,close:async()=>{}})
-      broker=new AgentBroker(browser,stateDir,policy,{manualSession,browserFactory:launch,captchaService})
+      broker=new AgentBroker(browser,stateDir,policy,{manualSession,browserFactory:launch,captchaService,recoveryStore})
       broker.profileLogin={phase:'manual',loginId:recoveryReceipt.id,owner:recoveryReceipt.owner}
       signal?.throwIfAborted()
     }else{
       browser=await launch()
-      broker=new AgentBroker(browser,stateDir,policy,{manualSession,browserFactory:launch,captchaService})
+      broker=new AgentBroker(browser,stateDir,policy,{manualSession,browserFactory:launch,captchaService,recoveryStore})
       await broker.init()
     }
     descriptor={endpoint:'',pid:process.pid,adminToken:token(),clients:Object.fromEntries(CLIENTS.map(client=>[client,{token:token()}]))}
@@ -116,20 +121,23 @@ export async function startBroker({executable,stateDir,policy={},port=0,browserA
       profileLoginRecovered=true
     }
     let closed=false
-    const close=async()=>{
+    const close=async(reason='explicit_close')=>{
       if(closed)return
       broker.assertAutomated()
       closed=true
+      lifecycle(stateDir,'broker-close',{phase:'shutdown',reason})
       server.close();server.closeIdleConnections()
       await broker.close();server.closeAllConnections()
       await unlink(path.join(stateDir,'connection.json')).catch(()=>{})
       await lock.close();await unlink(path.join(stateDir,'broker.lock')).catch(()=>{})
     }
-    broker.onShutdown=()=>close().catch(error=>broker.event('shutdown-deferred',{code:error.code??'BROKER_ERROR'}))
+    broker.onShutdown=reason=>close(reason).catch(error=>broker.event('shutdown-deferred',{code:error.code??'BROKER_ERROR'}))
     if(browser.closed) { await close(); throw new Error('Browser exited during broker startup') }
     startupPending=false
+    lifecycle(stateDir,'broker-ready',{phase:'ready'})
     return {broker,descriptor,server,close,...(profileLoginRecovered?{profileLoginRecovered:true}:{})}
   }catch(error){
+    lifecycle(stateDir,'broker-start-failed',{phase:'startup',code:error.code??'BROKER_ERROR'})
     try{await browser?.close()}
     finally{
       server?.close();server?.closeAllConnections()

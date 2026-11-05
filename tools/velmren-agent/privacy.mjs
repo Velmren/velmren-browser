@@ -1,5 +1,6 @@
 import { sanitizeActionResult, sanitizeWaitResult } from './action-result.mjs'
 import { sanitizeDiagnostic, sanitizeErrorContext } from './operation-error.mjs'
+import { sanitizeTaskDiagnostics } from './task-diagnostics.mjs'
 import { inflateSync } from 'node:zlib'
 
 const invalidUrl = '[invalid URL]'
@@ -8,10 +9,13 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const identifier = value => typeof value === 'string' && (uuid.test(value) || /^[0-9a-f]{32}$/i.test(value))
 const ref = value => typeof value === 'string' && /^e[1-9][0-9]{0,8}$/.test(value)
 const urlKey = key => /(?:url|uri|href|src|origin)$/i.test(key)
-const privateKeys = new Set(['secret', 'secretRef', 'password', 'token', 'adminToken', 'apiKey', 'clientKey', 'encryptedKey', 'authorization', 'cookie', '__proto__', 'constructor', 'prototype'])
+const privateKeys = new Set(['secret', 'secretRef', 'recoverySecret', 'password', 'token', 'adminToken', 'apiKey', 'clientKey', 'encryptedKey', 'authorization', 'cookie', '__proto__', 'constructor', 'prototype'])
 const entities = { amp: '&', colon: ':', sol: '/', bsol: '\\', percnt: '%', quest: '?', num: '#', commat: '@', period: '.', equals: '=', tab: '\t', newline: '\n' }
 const urlStart = /(?:https?:|wss?:|ftp:|file:|blob:|data:|javascript:|about:|mailto:|tel:|sms:|urn:|[a-z][a-z0-9+.-]*:[/\\])|(?<![:/\\])[/\\]{2}/i
 const knownUrlStart = /https?:|wss?:|ftp:|file:|blob:|data:|javascript:|about:|mailto:|tel:|sms:|urn:/i
+// A path, query or fragment distinguishes a schemeless URL from a name, email
+// or version. Match the whole host so a suffix of an email cannot look like one.
+const bareUrlStart = /(?<![\p{L}\p{N}@.+-])(?:(?:[\p{L}\p{N}](?:[\p{L}\p{N}-]{0,61}[\p{L}\p{N}])?\.)+(?:[\p{L}]{2,63}|xn--[a-z0-9-]{2,59})\.?|(?:[0-9]{1,3}\.){3}[0-9]{1,3}|\[[0-9a-f:.]+\]|localhost)(?::[0-9]{1,5})?(?=[/\\?#])/iu
 
 // Decode URL spelling, not arbitrary page content. A token is replaced only
 // when its decoded spelling contains a URL; its entire tail is then private.
@@ -22,9 +26,9 @@ function decodeUrlSpelling(value) {
         if (slash) return slash
         if (named) return entities[named.toLowerCase()] ?? match
         const point = percent ? parseInt(percent, 16) : numeric ? (numeric[0].toLowerCase() === 'x' ? parseInt(numeric.slice(1), 16) : Number(numeric)) : parseInt(braced ?? unicode ?? hex, 16)
-        // Keep UTF-8 URL bytes intact for URL's host/IDNA parser.
+        // Decode ASCII syntax first; complete UTF-8 runs are decoded below.
         return point <= 0x10ffff && (!percent || point < 128) ? String.fromCodePoint(point) : match
-      })
+      }).replace(/(?:%[89a-f][0-9a-f])+/gi, bytes => { try { return decodeURIComponent(bytes) } catch { return bytes } })
     if (next === value) return value
     value = next
   }
@@ -38,7 +42,7 @@ export function safePublicUrl(raw) {
   if (decoded === undefined) return privateUrl
   if (decoded === 'about:blank' || decoded === 'about:srcdoc') return decoded
   try {
-    const parsed = new URL(decoded)
+    const parsed = new URL(/^[/\\]{2}/.test(decoded) ? `https:${decoded}` : bareUrlStart.exec(decoded)?.index === 0 ? `https://${decoded}` : decoded)
     return ['http:', 'https:'].includes(parsed.protocol) ? parsed.origin : privateUrl
   } catch { return invalidUrl }
 }
@@ -46,7 +50,8 @@ export function safePublicUrl(raw) {
 const publicText = value => value.replace(/\S+/g, token => {
   const decoded = decodeUrlSpelling(token)
   if (decoded === undefined) return privateUrl
-  const match = urlStart.exec(decoded)
+  const explicit = urlStart.exec(decoded), bare = bareUrlStart.exec(decoded)
+  const match = explicit && (!bare || explicit.index <= bare.index) ? explicit : bare
   if (!match) return token
   const start = match.index + (knownUrlStart.exec(match[0])?.index ?? 0)
   return decoded.slice(0, start) + safePublicUrl(decoded.slice(start))
@@ -178,6 +183,9 @@ const errorMessages = Object.freeze({
   CLI_ERROR: 'Browser command failed.',
   INVALID_ARGUMENTS: 'Invalid browser operation arguments.',
   INVALID_STATE: 'Task state changed; inspect the task before continuing.',
+  RECOVERY_NEEDED: 'Browser recovery is required; inspect the task before continuing.',
+  LEASE_EXPIRED: 'The client lease expired; reconnect before continuing.',
+  LEASE_RECOVERY_NEEDED: 'The client lease changed; inspect recovery state before continuing.',
   NOT_FOUND: 'Task, page, frame, or session was not found.',
   UNAUTHORIZED: 'This client is not authorized for the operation.',
   ORIGIN_DENIED: 'Origin is not permitted by the local policy.',
@@ -263,13 +271,23 @@ const choices = {
   owner: ['admin', 'codex', 'claude', 'scripts']
 }
 for (const key of ['jobId', 'challengeId']) ids.add(key)
-for (const key of ['captchaStats', 'challenges', 'receipt']) containers.add(key)
+for (const key of ['captchaStats', 'challenges', 'receipt', 'captchaBinding']) containers.add(key)
+for (const key of ['renderCaptured', 'namedCallbackSpecified', 'namedCallbackResolved', 'callbackCaptured', 'explicitRenderScript', 'responseFieldEnabled']) booleans.add(key)
+numbers.add('responseFieldCount')
 for (const key of ['supported', 'alreadySolved', 'applied', 'callbackInvoked', 'deliveryUncertain', 'persisted']) booleans.add(key)
+booleans.add('domRestored')
+for (const key of ['recovered', 'replayAllowed']) booleans.add(key)
+containers.add('visibility')
+for (const key of ['requested', 'targetVisible', 'nativeWindowVerified', 'foregroundVerified', 'foregroundRequested']) booleans.add(key)
 for (const key of ['solutionsDelivered', 'failed', 'cancelled', 'uncertain']) numbers.add(key)
 choices.status.push('pending', 'delivered', 'failed', 'cancelled', 'uncertain')
+choices.state.push('recovery-needed')
+choices.outcomeEvidence = ['pending', 'direct', 'interrupted']
+choices.windowState = ['normal', 'minimized', 'maximized', 'fullscreen', 'unknown']
 choices.provider = ['capsolver', 'recaptcha-v2', 'recaptcha-v2-enterprise', 'turnstile', 'unsupported']
 choices.code = Object.keys(errorMessages)
 choices.reason.push('hcaptcha', 'cloudflare-interstitial', 'unknown-provider', 'ambiguous-widget', 'conflicting-sitekey', 'conflicting-provider', 'missing-sitekey', 'invisible-widget', 'callback-unavailable', 'unsupported-metadata', 'ambiguous-response-field', 'response-target-unavailable', 'widget-removed', 'already-solved')
+choices.reason.push('broker_restart')
 const enums = new Map(Object.entries(choices).map(([key, values]) => [key, new Set(values)]))
 const actions = new Set(['click', 'fill', 'select', 'press', 'setChecked', 'uploadFiles'])
 
@@ -279,6 +297,7 @@ export function sanitizePublicResult(value, { sensitive = false } = {}) {
   const project = (input, key = '', depth = 0, parent = '') => {
     if (depth > 32 || privateKeys.has(key)) return undefined
     if (key === 'diagnostic') return sanitizeDiagnostic(input)
+    if (key === 'diagnostics') return sanitizeTaskDiagnostics(input)
     if (key === 'actionResult') return sanitizeActionResult(input)
     if (key === 'waitResult') {
       const clean = sanitizeWaitResult(input)

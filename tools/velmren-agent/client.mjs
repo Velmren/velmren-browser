@@ -4,12 +4,12 @@ import { sanitizeActionResult, sanitizeWaitResult, unknownActionResult } from '.
 import { sanitizeErrorContext } from './operation-error.mjs'
 
 export const CLIENTS = ['codex', 'claude', 'scripts']
-export const AGENT_PROTOCOL = 3
+export const AGENT_PROTOCOL = 4
 export const METHODS = [
   'task_create', 'task_list', 'task_observe', 'task_act', 'task_navigate',
   'task_wait', 'task_screenshot', 'task_request_human', 'task_resume', 'task_finish', 'task_cancel', 'task_upload_files',
   'task_list_pages', 'task_list_frames', 'task_list_options', 'task_select_page', 'task_close_page', 'task_handle_dialog', 'client_release', 'client_heartbeat',
-  'profile_login_start', 'profile_login_status', 'profile_login_finish', 'task_sensitive', 'task_private_input', 'agent_protocol', 'task_captcha'
+  'profile_login_start', 'profile_login_status', 'profile_login_finish', 'task_sensitive', 'task_private_input', 'agent_protocol', 'task_captcha', 'task_diagnostics'
 ]
 
 export class BrokerError extends Error {
@@ -85,6 +85,7 @@ export function validateArguments(method, args) {
   const keys = {
     task_create: ['url', 'label', 'sensitive'], task_list: [], task_observe: ['taskId', 'pageId', 'frameId', 'query', 'offset', 'limit', 'textOffset', 'textLimit'],
     task_captcha: ['taskId', 'pageId', 'frameId', 'action', 'challengeId', 'jobId'],
+    task_diagnostics: ['taskId'],
     task_act: ['taskId', 'pageId', 'frameId', 'observationId', 'actions'], task_navigate: ['taskId', 'pageId', 'url'],
     task_wait: ['taskId', 'pageId', 'frameId', 'text', 'predicate', 'timeoutMs'], task_screenshot: ['taskId', 'pageId'],
     task_request_human: ['taskId', 'pageId', 'reason', 'showWindow'], task_resume: ['taskId', 'handoffId', 'userConfirmed'], task_finish: ['taskId'], task_cancel: ['taskId'],
@@ -247,6 +248,9 @@ export function createClient(connection) {
         signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(45000)]) : AbortSignal.timeout(45000)
       })
     } catch (error) {
+      // Repair only the transport for the next explicit call; never replay this
+      // operation, whose server-side delivery may already have happened.
+      if (typeof connection.reconnect === 'function') void connection.reconnect().catch(() => {})
       throw new BrokerError(
         error.name === 'AbortError' || error.name === 'TimeoutError'
           ? 'Broker request interrupted. Observe the task before retrying an action.'

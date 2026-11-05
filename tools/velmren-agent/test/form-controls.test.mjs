@@ -14,7 +14,7 @@ function fixture(spec = {}) {
     hasAttribute(name) { return Object.hasOwn(this.attributes, name) },
     matches() { return !!this.disabled }, getRootNode() { return document },
     getBoundingClientRect() { return { x: 10, y: 20, width: 30, height: 40 } },
-    scrollIntoView() { events.push('scroll') }, focus() { events.push('focus') }, select() { events.push('select') },
+    scrollIntoView() { events.push('scroll') }, focus() { document.activeElement = this; events.push('focus') }, select() { events.push('select') },
     contains() { return false }, dispatchEvent(event) { events.push(event.type); this.onEvent?.(event) }, ...spec }
   class Input {
     set value(value) { this.assigned = value; this._value = value === '2024-02-30' ? '' : value.replace(/T12:00:00$/, 'T12:00') }
@@ -119,6 +119,7 @@ test('styled select accepts only an exclusive decorative wrapper and rechecks be
 test('keyboard preparation rejects a target that cannot take focus', async () => {
   const f = fixture({ tagName: 'DIV', attributes: { role: 'checkbox', 'aria-checked': 'false' } })
   f.document.activeElement = {}
+  f.element.focus = () => {}
   await assert.rejects(f.call('prepareElement', { ref: 'e1', type: 'press', key: 'Space' }), /keyboard focus/)
   f.element.focus = () => { f.document.activeElement = f.element }
   await f.call('prepareElement', { ref: 'e1', type: 'press', key: 'Space' })

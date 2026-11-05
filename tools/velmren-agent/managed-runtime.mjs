@@ -8,12 +8,14 @@ import { promisify } from 'node:util'
 import { effectivePolicyIdentity } from './policy-identity.mjs'
 import { assertNoManualProfileSession } from './manual-profile.mjs'
 import { AGENT_PROTOCOL } from './client.mjs'
+import { lifecycle } from './lifecycle.mjs'
 
 const execute = promisify(execFile)
 const directory = path.dirname(fileURLToPath(import.meta.url))
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
 const OWNER_FILE = 'managed-owner.json'
 export const MANAGED_LEASE_MS = 30000
+const managedConnections = new WeakMap()
 
 export class ManagedError extends Error {
   constructor(code, message) { super(message); this.code = code; this.name = 'ManagedError' }
@@ -21,7 +23,7 @@ export class ManagedError extends Error {
 
 const fail = (code, message) => { throw new ManagedError(code, message) }
 export const diagnostic = error => error instanceof ManagedError
-  ? `velmren-mcp: ${error.code}: ${error.message}\n`
+  ? `velmren-mcp: ${error.code}: ${error.message}${error.phase === 'heartbeat' && ['LEASE_UNAVAILABLE', 'LEASE_REJECTED'].includes(error.causeCode) ? ` (phase: heartbeat; cause: ${error.causeCode})` : ''}\n`
   : 'velmren-mcp: INITIALIZATION_FAILED: Managed browser initialization failed.\n'
 
 export function parseManagedOptions(argv) {
@@ -184,6 +186,7 @@ async function recoverOwnedState(options, manualReceipt) {
   }
   if (!dead(owner.pid)) fail('BROKER_STILL_RUNNING', 'The recorded broker process is still running but unavailable; it was left running.')
   if ((descriptor && descriptor.pid !== owner.pid) || (lock !== null && (!/^\d+\s*$/.test(lock) || Number(lock) !== owner.pid))) fail('OWNERSHIP_MISMATCH', 'Broker state does not match the recorded managed process; it was preserved.')
+  lifecycle(stateDir, 'previous-process-unavailable', { phase: 'recovery', previousPid: owner.pid, reason: 'exit_cause_unknown' })
   const backup = path.join(stateDir, 'recovery', `${Date.now()}-${randomUUID()}`)
   await mkdir(backup, { recursive: true, mode: 0o700 })
   for (const file of ['connection.json', 'broker.lock', OWNER_FILE]) {
@@ -271,7 +274,7 @@ export async function spawnManagedDaemon(options) {
     child = spawn(options.nodeExecutable, args, { detached: true, windowsHide: true, stdio: ['ignore', 'ignore', log.fd, 'ipc'] })
     outcome.pid = child.pid
     child.on('error', () => { outcome.exited = true; outcome.failed = true; exited(); disconnected() })
-    child.once('exit', code => { outcome.exited = true; outcome.failed = code !== 0; exited(); disconnected() })
+    child.once('exit', (code, signal) => { lifecycle(options.stateDir, 'child-process-exit', { phase: 'daemon', childPid: child.pid, exitCode: code, signal }); outcome.exited = true; outcome.failed = code !== 0; exited(); disconnected() })
     child.once('disconnect', disconnected)
     child.on('message', value => { if (value?.type === 'managed-startup-ready') outcome.ready = true })
     child.unref()
@@ -291,7 +294,7 @@ export async function spawnManagedDaemon(options) {
   return outcome
 }
 
-export async function connectManaged(options, { spawnDaemon = spawnManagedDaemon, signal } = {}) {
+export async function connectManaged(options, { spawnDaemon = spawnManagedDaemon, signal, recovery } = {}) {
   const deadline = Date.now() + options.startupTimeoutMs
   const { identity } = await requestedPolicy(options)
   let descriptor, outcome, connection, release
@@ -324,15 +327,34 @@ export async function connectManaged(options, { spawnDaemon = spawnManagedDaemon
     }
     signal?.throwIfAborted()
     // Registration is performed once. Only this scoped credential reaches MCP tools.
-    const registered = await adminRpc(descriptor, 'client_register', { label: options.label ?? 'Codex', policyIdentity: identity, leaseMs: MANAGED_LEASE_MS }, 5000)
+    const registered = await adminRpc(descriptor, recovery ? 'client_recover' : 'client_register', { label: options.label ?? 'Codex', policyIdentity: identity, leaseMs: MANAGED_LEASE_MS,
+      ...(recovery ? { clientId: recovery.clientId, recoverySecret: recovery.secret } : {}) }, 5000)
     if (typeof registered?.clientId !== 'string' || !registered.clientId || registered.clientId === 'admin' || typeof registered.token !== 'string' || registered.token.length < 16 || /[\r\n]/.test(registered.token) || registered.token === descriptor.adminToken || registered.leaseMs !== MANAGED_LEASE_MS) fail('INVALID_REGISTRATION', 'The broker returned an invalid scoped client credential or lease.')
     connection = { endpoint: descriptor.endpoint, client: registered.clientId, token: registered.token, leaseMs: registered.leaseMs }
+    const secret = recovery?.secret ?? registered.recoverySecret
+    if (recovery && registered.clientId !== recovery.clientId) fail('INVALID_REGISTRATION', 'The broker returned a different client identity during recovery.')
+    if (typeof secret !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(secret)) fail('INVALID_REGISTRATION', 'The broker returned an invalid recovery credential.')
+    if (secret) {
+      const state = { options, secret, spawnDaemon, listeners: new Set(), pending: null, released: false }
+      managedConnections.set(connection, state)
+      Object.defineProperty(connection, 'reconnect', { value: async ({ signal: reconnectSignal } = {}) => {
+        if (state.released) fail('LEASE_REJECTED', 'This managed connection was explicitly released.')
+        return state.pending ??= (async () => {
+          const next = await connectManaged(options, { spawnDaemon, signal: reconnectSignal, recovery: { clientId: connection.client, secret } })
+          if (state.released) { await releaseManagedConnection(next); fail('LEASE_REJECTED', 'This managed connection was explicitly released.') }
+          Object.assign(connection, next)
+          lifecycle(options.stateDir, 'client-reconnected', { phase: 'lease' })
+          for (const listener of state.listeners) listener()
+          return { recovered: true, clientId: connection.client, domRestored: false }
+        })().finally(() => { state.pending = null })
+      } })
+    }
     signal?.throwIfAborted()
     if (outcome?.ready && !outcome.exited) await outcome.accept()
     signal?.throwIfAborted()
     return connection
   } catch (error) {
-    if (connection) await releaseManagedConnection(connection).catch(() => {})
+    if (connection && !recovery) await releaseManagedConnection(connection).catch(() => {})
     await outcome?.cancel()
     throw error
   } finally {
@@ -355,15 +377,39 @@ async function leaseRpc(connection, method) {
   return payload.result
 }
 
-export const releaseManagedConnection = connection => leaseRpc(connection, 'client_release')
+export const releaseManagedConnection = connection => {
+  const state = managedConnections.get(connection)
+  if (state) {
+    if (!state.released) lifecycle(state.options.stateDir, 'client-released', { phase: 'lease', reason: 'explicit_release' })
+    state.released = true
+  }
+  return leaseRpc(connection, 'client_release')
+}
 
-export function maintainManagedLease(connection, onFailure = () => {}, { heartbeatMs = 10000 } = {}) {
-  let closed = false, pending = false, released
+export function maintainManagedLease(connection, onFailure = () => {}, { heartbeatMs = 10000, retryWindowMs = 60000 } = {}) {
+  let closed = false, pending = false, released, failedAt, suspended = false
+  const state = managedConnections.get(connection)
+  const recovered = () => { failedAt = undefined; suspended = false }
+  state?.listeners.add(recovered)
   const timer = setInterval(async () => {
-    if (closed || pending) return
+    if (closed || pending || suspended) return
     pending = true
-    try { await leaseRpc(connection, 'client_heartbeat') }
-    catch (error) { if (!closed) { closed = true; clearInterval(timer); onFailure(error) } }
+    try { await leaseRpc(connection, 'client_heartbeat'); recovered() }
+    catch (error) {
+      if (closed) return
+      failedAt ??= Date.now()
+      const remaining = retryWindowMs - (Date.now() - failedAt)
+      if (state) lifecycle(state.options.stateDir, 'lease-heartbeat-failed', { phase: 'heartbeat', code: error.code })
+      if (remaining > 0 && connection.reconnect) {
+        try { await connection.reconnect({ signal: AbortSignal.timeout(Math.min(10000, remaining)) }); return } catch {}
+      }
+      if (Date.now() - failedAt >= retryWindowMs) {
+        suspended = true
+        const failure = new ManagedError('LEASE_RECOVERY_NEEDED', 'The managed connection needs recovery. No browser operation was replayed; page state may be unavailable.')
+        failure.phase = 'heartbeat'; failure.causeCode = error.code
+        onFailure(failure)
+      }
+    }
     finally { pending = false }
   }, heartbeatMs)
   timer.unref()
@@ -371,6 +417,7 @@ export function maintainManagedLease(connection, onFailure = () => {}, { heartbe
     release() {
       closed = true
       clearInterval(timer)
+      state?.listeners.delete(recovered)
       return released ??= releaseManagedConnection(connection).catch(() => {})
     }
   }

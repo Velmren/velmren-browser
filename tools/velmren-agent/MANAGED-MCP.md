@@ -1,14 +1,15 @@
 # Managed MCP connection
 
-The MCP catalog has 23 tools, including `velmren_sensitive` and `velmren_captcha`. Begin a protected
+The MCP catalog has 24 tools, including `velmren_sensitive` and `velmren_captcha`. Begin a protected
 phase before credential or activation work; use a locally staged `secretRef`
 for secret input. All response paths use the same output projection, including
 errors and task/page lists. URLs disclose only origins, and protected phases
 block screenshots and free page content. See the [input and phase contract](README.md#sensitive-inputs-and-outputs).
 The private staging callback is intentionally absent from the tool catalog and
 CLI; it does not require writing credentials to a file.
-Managed startup requires broker `agentProtocol: 3` before registration. A newer
-adapter cannot reuse an older broker without the protected-output contract.
+Managed startup requires broker `agentProtocol: 4` before registration. A newer
+adapter cannot reuse an older broker without the protected-output and scoped
+recovery contracts.
 `BROKER_INCOMPATIBLE` preserves existing clients and tasks; reconnect after those
 clients finish and the old broker exits normally.
 Direct MCP, CLI and `createClient` connections also perform an authenticated
@@ -60,15 +61,21 @@ is rejected. The default `"isolated"` mode creates disposable task contexts.
 
 Each MCP startup registers `{label, policyIdentity, leaseMs: 30000}` with
 authenticated admin RPC `client_register`, expecting `{clientId, token,
-leaseMs: 30000}`. Only that scoped token is passed
+recoverySecret, leaseMs: 30000}`. Only that scoped token is passed
 to `createClient` and MCP tools. There is no tool exposing the admin token,
 connection descriptor, process launch, or broker shutdown. The connection sends
 scoped `client_heartbeat` every ten seconds. EOF or server close sends scoped
-`client_release` with a bounded two-second deadline. Release or lease expiry
-cancels only that client's unfinished tasks and revokes its credential; other
+`client_release` with a bounded two-second deadline. Explicit release
+cancels only that client's unfinished tasks and revokes its credentials; other
 connections and their tasks remain active. Cancellation does not undo actions
-already performed. Heartbeat failure closes that MCP connection without
-reconnecting or replaying work. The broker retires after thirty seconds with no
+already performed. After the normal thirty-second lease expires, mutations are
+blocked while heartbeat recovery has an additional sixty-second grace period.
+A transient heartbeat failure retries the same scoped identity for up to sixty
+seconds. It does not cancel a handoff or replay a browser operation. Exhaustion
+reports `LEASE_RECOVERY_NEEDED` with a safe phase and cause; the MCP transport
+stays available. `connection.reconnect()` can explicitly repair it later. At
+the end of the server grace period, unfinished tasks are cancelled.
+The broker retires after thirty seconds with no
 managed leases or unfinished tasks, allowing installed updates to activate after
 the personal browser is also closed.
 
@@ -77,8 +84,10 @@ expects `{descriptor, close}`. The broker must atomically publish
 `connection.json` containing `{endpoint, pid, adminToken}` and maintain a numeric
 PID in `broker.lock`. RPC uses `{method,args}` and `{ok:true,result}`. The
 bootstrap requires `broker_status` to return its `policyIdentity` and
-`browserHealthy: true`, then registers once; it never replays task
-actions or silently reconnects a task client after a broker restart.
+`browserHealthy: true`, then registers once. Recovery uses `client_recover`
+with the original UUID and opaque secret; it never registers a replacement
+owner or replays task actions. Reauthentication rotates the bearer credential
+and retains the owner's in-flight work when the original broker is still alive.
 An exited browser closes its broker; a still-live unhealthy broker is rejected
 without terminating another process.
 
@@ -102,6 +111,23 @@ process no longer exists. Those files are moved into a unique `recovery/` backup
 before starting a replacement. Invalid, unowned, mismatched, or live state is
 preserved and startup fails. A reused PID is treated as live. Browser profiles
 and existing user processes are never deleted or killed.
+
+The recovery secret remains in the local connection closure and never enters
+tool output or logs. `client-recovery.json` stores only its hash, policy binding,
+revocation flag, and owned task IDs/states. A fresh client cannot recover a peer
+by label or task ID. After broker death, recovered tasks have
+`state: "recovery-needed"` and `domRestored: false`: DOM, popups, private-input
+capabilities, and manual forms are not restored. Read the durable CAPTCHA job
+status before deciding further work. Recovery never dispatches another solve,
+private input, or submit request.
+
+`lifecycle.jsonl` records safe startup/shutdown phases, observed browser/daemon
+exit codes or signals, and heartbeat causes without arguments, URLs, or secrets.
+A surviving launcher observes forced daemon termination. If no observer survives,
+the next startup records the previous process as unavailable with unknown cause;
+it does not invent an exit code. Manual handoff `shown` acknowledges target
+visibility only; `visibility` separately reports activation requests and keeps
+native-window/foreground verification false until independently established.
 
 An intentional `profileLogin` phase keeps the controller available while its
 automated browser is stopped. New clients reuse that controller; they never start

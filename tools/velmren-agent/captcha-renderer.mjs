@@ -2,13 +2,24 @@
 export function installCaptchaBridge(key) {
   if (Object.hasOwn(globalThis, key)) return globalThis[key]
   const records = new Map(), byNode = new WeakMap(), bindings = new Map(), hooked = new WeakMap()
+  const pendingRenders = new Map(), refusedRenders = new WeakSet()
+  const pendingLimit = 64, pendingLifetime = 30000
   const documentRef = document
-  let sequence = 0, disposed = false
+  let sequence = 0, renderSequence = 0, disposed = false, pendingTimer
   const nativeApply = Reflect.apply, nativeDefine = Object.defineProperty
+  const now = performance.now.bind(performance), later = setTimeout.bind(globalThis), cancelLater = clearTimeout.bind(globalThis)
   const inputSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set
   const textareaSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set
   const observers = new Map(), restorers = []
   const changed = mutations => {
+    for (const mutation of mutations) if (mutation.type === 'childList') {
+      for (const entry of pendingRenders.values()) if ([...mutation.removedNodes].some(node => node === entry.node || node.contains(entry.node))) refusePending(entry)
+      for (const record of records.values()) if (record.render && [...mutation.removedNodes].some(node => record.ancestors?.has(node))) {
+        record.render = undefined; record.ancestors = undefined; record.generation++
+        refusedRenders.add(record.node)
+        if (!connected(record.node)) records.delete(record.id)
+      }
+    }
     for (const binding of bindings.values()) {
       if (binding.invalid) continue
       for (const mutation of mutations) {
@@ -26,6 +37,8 @@ export function installCaptchaBridge(key) {
         }
       }
     }
+    settlePending()
+    arm()
   }
   const watch = root => {
     if (observers.has(root)) return
@@ -70,16 +83,40 @@ export function installCaptchaBridge(key) {
     let record = byNode.get(node)
     if (!record) {
       record = { id: String(++sequence), node, generation: 0, consumed: false }
-      records.set(record.id, record); byNode.set(node, record)
+      byNode.set(node, record)
     }
+    records.set(record.id, record)
     return record
+  }
+  const commitRender = (node, render) => {
+    const record = getRecord(node)
+    record.render = render; record.ancestors = new Set()
+    for (let current = node; current; current = parent(current)) record.ancestors.add(current)
+    record.removed = false; record.consumed = false; record.generation++
+    refusedRenders.delete(node)
+  }
+  const refusePending = entry => {
+    pendingRenders.delete(entry.node)
+    refusedRenders.add(entry.node)
+  }
+  const settlePending = () => {
+    cancelLater(pendingTimer); pendingTimer = undefined
+    const time = now()
+    for (const entry of pendingRenders.values()) {
+      if (entry.node.ownerDocument !== documentRef || time >= entry.expires) refusePending(entry)
+      else if (connected(entry.node)) { pendingRenders.delete(entry.node); commitRender(entry.node, entry.render) }
+    }
+    if (pendingRenders.size) pendingTimer = later(settlePending, Math.max(1, Math.min(...[...pendingRenders.values()].map(entry => entry.expires)) - time))
   }
   const capture = (provider, api, args, widgetId) => {
     const node = resolveContainer(args[0]), options = args[1] || {}
-    if (!connected(node)) return
-    const record = getRecord(node)
+    if (!(node instanceof Element) || node.ownerDocument !== documentRef) {
+      if (node?.nodeType === 1) refusedRenders.add(node)
+      return
+    }
+    flush()
     // Do not retain arbitrary caller objects or secrets from render options.
-    record.render = { provider, api, widgetId, sitekey: bounded(options.sitekey), size: bounded(options.size, 32),
+    const render = { provider, api, widgetId, order: ++renderSequence, sitekey: bounded(options.sitekey), size: bounded(options.size, 32),
       callback: typeof options.callback === 'function' ? options.callback : null,
       callbackName: typeof options.callback === 'string' ? bounded(options.callback, 256) : '',
       callbackSpecified: options.callback != null,
@@ -87,7 +124,15 @@ export function installCaptchaBridge(key) {
       pagedata: !!options.chlPageData, s: bounded(options.s),
       responseField: options['response-field'] !== false,
       responseName: bounded(options['response-field-name'], 256) }
-    record.removed = false; record.consumed = false; record.generation++
+    pendingRenders.delete(node)
+    if (connected(node)) commitRender(node, render)
+    else {
+      // Providers may render before insertion. Retain only a bounded, short-lived
+      // candidate; it cannot be inspected or prepared while disconnected.
+      while (pendingRenders.size >= pendingLimit) refusePending(pendingRenders.values().next().value)
+      pendingRenders.set(node, { node, render, expires: now() + pendingLifetime })
+      settlePending()
+    }
   }
   // Preserve receiver, arguments, exceptions and return values of provider APIs.
   const hookProperty = (owner, property, transform) => {
@@ -112,36 +157,53 @@ export function installCaptchaBridge(key) {
   }
   const hookAPI = (api, provider) => {
     if (!api || !['object', 'function'].includes(typeof api)) return api
-    for (const method of ['render', 'reset', 'remove']) hookProperty(api, method, original => {
-      if (typeof original !== 'function') return original
-      return function(...args) {
-        const result = nativeApply(original, this, args)
-        try {
-          if (!disposed && method === 'render') capture(provider, api, args, result)
-          else if (!disposed) {
-            let candidates = [...records.values()].filter(record => record.render?.api === api)
-            if (args[0] === undefined) candidates = candidates.slice(0, 1)
-            else candidates = candidates.filter(record => record.render.widgetId === args[0] || resolveContainer(args[0]) === record.node)
-            for (const record of candidates) {
-              record.generation++
-              if (method === 'remove') record.removed = true
-              else record.consumed = false
+    for (const method of ['render', 'reset', 'remove']) {
+      if (provider === 'turnstile' && !Object.hasOwn(api, method)) continue
+      hookProperty(api, method, original => {
+        if (typeof original !== 'function') return original
+        return function(...args) {
+          const result = nativeApply(original, this, args)
+          try {
+            if (!disposed && method === 'render') capture(provider, api, args, result)
+            else if (!disposed) {
+              flush()
+              let candidates = [...records.values(), ...pendingRenders.values()]
+                .filter(record => record.render?.api === api).sort((a, b) => a.render.order - b.render.order)
+              if (args[0] === undefined) candidates = candidates.slice(0, 1)
+              else candidates = candidates.filter(record => record.render.widgetId === args[0] || resolveContainer(args[0]) === record.node)
+              for (const record of candidates) {
+                if (pendingRenders.has(record.node)) { refusePending(record); continue }
+                record.generation++
+                if (method === 'remove') record.removed = true
+                else record.consumed = false
+              }
             }
-          }
-        } catch { /* Instrumentation must not break the provider API. */ }
-        return result
-      }
-    })
+          } catch { /* Instrumentation must not break the provider API. */ }
+          return result
+        }
+      })
+    }
     return api
   }
   const arm = () => {
+    if (disposed) return
     hookProperty(globalThis, 'grecaptcha', value => {
       hookAPI(value, 'recaptcha-v2')
       hookProperty(value, 'enterprise', enterprise => hookAPI(enterprise, 'recaptcha-v2-enterprise'))
       return value
     })
-    hookProperty(globalThis, 'turnstile', value => hookAPI(value, 'turnstile'))
+    // Some provider bootstraps test property presence, even for undefined.
+    // Do not create or replace the global; arm only an existing ordinary API.
+    const turnstile = Object.getOwnPropertyDescriptor(globalThis, 'turnstile')
+    if (turnstile && 'value' in turnstile) hookAPI(turnstile.value, 'turnstile')
+    // hCaptcha can provide a grecaptcha-compatible facade. Recognize it as
+    // unsupported here rather than submitting its key to the reCAPTCHA solver.
+    hookProperty(globalThis, 'hcaptcha', value => hookAPI(value, 'hcaptcha'))
   }
+  const loaded = event => { if (event.target?.tagName === 'SCRIPT' || event.target === documentRef) arm() }
+  documentRef.addEventListener('load', loaded, true)
+  documentRef.addEventListener('DOMContentLoaded', arm)
+  documentRef.addEventListener('readystatechange', arm)
   arm()
   const iframeInfo = node => {
     let url
@@ -159,6 +221,7 @@ export function installCaptchaBridge(key) {
   }
   const scan = () => {
     if (disposed || document !== documentRef) fail('CAPTCHA_STALE')
+    flush(); settlePending()
     arm()
     const nodes = new Set(all('[data-sitekey],.g-recaptcha,.cf-turnstile,.h-captcha'))
     for (const record of records.values()) if (record.render && connected(record.node) && !record.removed) nodes.add(record.node)
@@ -178,30 +241,44 @@ export function installCaptchaBridge(key) {
       let provider = render?.provider || info.provider || (node.classList.contains('g-recaptcha') ? 'recaptcha-v2'
         : node.classList.contains('cf-turnstile') ? 'turnstile' : 'unsupported')
       let reason = provider === 'unsupported' ? info.reason || (node.classList.contains('h-captcha') ? 'hcaptcha' : 'unknown-provider') : null
+      if (refusedRenders.has(node)) reason = 'callback-unavailable'
       const attrKey = bounded(node.getAttribute('data-sitekey')), sitekey = render?.sitekey || attrKey || info.sitekey || ''
       if (providerFrames.length > 1) reason = 'ambiguous-widget'
       if ([render?.sitekey, attrKey, info.sitekey].filter(Boolean).some(value => value !== sitekey)) reason = 'conflicting-sitekey'
       if (render?.provider && info.provider && render.provider !== info.provider) reason = 'conflicting-provider'
+      if (render?.provider === 'hcaptcha' || render?.api && render.api === globalThis.hcaptcha ||
+          info.reason === 'hcaptcha' || node.classList.contains('h-captcha')) { provider = 'unsupported'; reason = 'hcaptcha' }
       if (!sitekey) reason ||= 'missing-sitekey'
       const size = render?.size || node.getAttribute('data-size') || info.size
-      if (size === 'invisible') reason = 'invisible-widget'
+      const invisible = size === 'invisible'
+      // A v3 execute(key) iframe is not a v2 invisible render(widget).
+      if (invisible && !render && all('script[src]').some(script => {
+        try {
+          const url = new URL(script.src)
+          return /^(?:www\.)?(?:google\.com|recaptcha\.net)$/.test(url.hostname) && url.searchParams.get('render') === sitekey
+        } catch { return false }
+      })) reason ||= 'unsupported-metadata'
       if (render?.pagedata || globalThis._cf_chl_opt || node.hasAttribute('data-chl-page-data')) reason = 'cloudflare-interstitial'
       const callbackName = render?.callbackName || bounded(node.getAttribute('data-callback'), 256)
-      const callback = render?.callback || namedCallback(callbackName)
+      const resolvedCallback = namedCallback(callbackName)
+      const callback = render?.callback || resolvedCallback
       if (callbackName && !callback) reason ||= 'callback-unavailable'
-      if (!render && !callbackName && all('script[src]').some(script => {
+      const explicitRenderScript = all('script[src]').some(script => {
         try {
           const url = new URL(script.src)
           return url.searchParams.get('render') === 'explicit' && (provider === 'turnstile'
             ? url.hostname === 'challenges.cloudflare.com' : /^(?:www\.)?(?:google\.com|recaptcha\.net)$/.test(url.hostname))
         } catch { return false }
-      })) reason ||= 'callback-unavailable'
+      })
+      if (!render && !callbackName && explicitRenderScript) reason ||= 'callback-unavailable'
       const responseName = render?.responseName || bounded(node.getAttribute('data-response-field-name'), 256) || (provider === 'turnstile' ? 'cf-turnstile-response' : 'g-recaptcha-response')
       const responseField = render?.responseField !== false && node.getAttribute('data-response-field') !== 'false'
       const action = render?.action || bounded(node.getAttribute('data-action'), 256) || info.action || ''
       const cdata = render?.cdata || bounded(node.getAttribute('data-cdata'), 1024) || ''
       if (provider === 'turnstile' && ((action && !/^[\w-]{1,32}$/.test(action)) || (cdata && !/^[\w-]{1,255}$/.test(cdata)))) reason ||= 'unsupported-metadata'
-      const description = { record, node, provider, reason, sitekey, callback, callbackName, responseName, responseField, action, cdata,
+      const description = { record, node, provider, reason, sitekey, callback, callbackName, responseName, responseField, action, cdata, invisible,
+        captchaBinding: { renderCaptured: !!render, namedCallbackSpecified: !!callbackName, namedCallbackResolved: !!resolvedCallback,
+          callbackCaptured: !!render?.callback, explicitRenderScript, responseFieldEnabled: responseField },
         s: render?.s || bounded(node.getAttribute('data-s')) || info.s || '', apiDomain: info.apiDomain || '', providerFrames }
       return description
     })
@@ -224,6 +301,7 @@ export function installCaptchaBridge(key) {
     const items = scan()
     for (const item of items) {
       item.fields = fieldsFor(item, items)
+      item.captchaBinding.responseFieldCount = item.fields.length
       if (item.fields.length > 1) item.reason ||= 'ambiguous-response-field'
       if (!item.callback && item.fields.length !== 1) item.reason ||= 'response-target-unavailable'
       if (item.record.removed) item.reason = 'widget-removed'
@@ -234,9 +312,9 @@ export function installCaptchaBridge(key) {
     return items
   }
   const inspect = () => complete().map(item => ({ id: item.record.id, generation: item.record.generation, provider: item.provider,
-    supported: !item.reason, reason: item.reason, alreadySolved: item.alreadySolved }))
+    supported: !item.reason, reason: item.reason, alreadySolved: item.alreadySolved, captchaBinding: item.captchaBinding }))
   const signature = item => JSON.stringify([item.provider, item.sitekey, item.callbackName, item.responseName, item.responseField,
-    item.action, item.cdata, item.s, item.apiDomain, item.record.generation, item.providerFrames.map(value => value.iframe.getAttribute('src'))])
+    item.action, item.cdata, item.s, item.apiDomain, item.invisible, item.record.generation, item.providerFrames.map(value => value.iframe.getAttribute('src'))])
   const owningForm = node => {
     for (let current = node; current; current = parent(current)) if (current.tagName === 'FORM') return current
     return null
@@ -268,7 +346,7 @@ export function installCaptchaBridge(key) {
     if (item.provider === 'turnstile') {
       if (item.action || item.cdata) task.metadata = { ...(item.action ? { action: item.action } : {}), ...(item.cdata ? { cdata: item.cdata } : {}) }
     } else {
-      task.isInvisible = false
+      task.isInvisible = item.invisible
       if (item.action) task.pageAction = item.action
       if (item.s) {
         if (item.provider === 'recaptcha-v2-enterprise') task.enterprisePayload = { s: item.s }
@@ -305,6 +383,10 @@ export function installCaptchaBridge(key) {
   }
   const dispose = () => {
     disposed = true; bindings.clear()
+    cancelLater(pendingTimer); pendingRenders.clear()
+    documentRef.removeEventListener('load', loaded, true)
+    documentRef.removeEventListener('DOMContentLoaded', arm)
+    documentRef.removeEventListener('readystatechange', arm)
     for (const observer of observers.values()) observer.disconnect()
     for (const restore of restorers.reverse()) { try { restore() } catch {} }
     records.clear()

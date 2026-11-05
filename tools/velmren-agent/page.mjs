@@ -8,11 +8,16 @@ import { CaptchaPage } from './captcha-page.mjs'
 import { annotateOperationError } from './operation-error.mjs'
 
 const { prepareElement, applyFormValue, verifyElementValue } = formControls
-const { observeDocument, listSelectOptions } = documentObservation
+const { observeDocument, listSelectOptions, validateObservedRefs } = documentObservation
 const formPrelude = Object.values(formControls).map(fn => fn.toString()).join('\n')
 const rendererPrelude = formPrelude + '\n' + Object.values(documentObservation).map(fn => fn.toString()).join('\n') + '\n' + Object.values(sensitiveRenderer).map(fn => fn.toString()).join('\n')
 
 class DialogOpened extends Error {}
+
+function validatePreparedAction(action) {
+  validatePreparedElement(action)
+  return action.type === 'fill' && isSensitiveTarget({ ref: action.ref })
+}
 
 function waitForCondition({ text, predicate, timeoutMs }) {
   const state = globalThis.__velmrenAgent
@@ -50,12 +55,16 @@ function waitForCondition({ text, predicate, timeoutMs }) {
 }
 
 export class AgentPage {
-  constructor(browser, targetId, sessionId, { frameId = null, rootPage = null, parentFrameId = null } = {}) {
+  constructor(browser, targetId, sessionId, { frameId = null, rootPage = null, parentFrameId = null, automationActive = null } = {}) {
     this.documentId = randomUUID()
     Object.assign(this, { browser, targetId, pageId: targetId, sessionId, epoch: 0, frameId, rootPage, parentFrameId, world: null, observation: null, dialog: null, chooser: null, interceptFileChooser: true, url: 'about:blank', title: '' })
     this.captcha = new CaptchaPage(this)
     this.dialogWaiters = new Set()
     this.pendingCommands = new Set()
+    this.automationActive = automationActive
+    this.focusReady = false
+    this.focusQueue = Promise.resolve()
+    this.focusEmulation = undefined
     if (rootPage) {
       Object.defineProperty(this, 'dialog', { get: () => rootPage.dialog, set: value => { rootPage.dialog = value } })
       this.dialogWaiters = rootPage.dialogWaiters
@@ -68,6 +77,7 @@ export class AgentPage {
         this.loaderId = message.params.frame.loaderId
         this.url = message.params.frame.url
         this.epoch++; this.world = null; this.observation = null; this.chooser = null
+        this.onDocumentChanged?.()
       }
       if (message.method === 'Page.navigatedWithinDocument' && message.params.frameId === this.frameId) { this.observation = null; this.chooser = null }
       if (message.method === 'Runtime.executionContextsCleared') { this.world = null; this.observation = null; this.chooser = null }
@@ -92,10 +102,31 @@ export class AgentPage {
     try { return await this.browser.send(method, params, sessionId, timeout) }
     catch (error) { error.deliveryUncertain = true; throw error }
   }
+  async syncFocusEmulation(transient = false) {
+    if (this.rootPage) return this.rootPage.syncFocusEmulation(transient)
+    const desired = () => !this.disposed && !this.detached && (this.automationActive ? this.automationActive() : transient)
+    const apply = async () => {
+      if (this.disposed || this.detached) return
+      // Hidden native targets still need frames. Recheck ownership after every
+      // acknowledgement so pause, handoff or replacement wins an in-flight enable.
+      do {
+        const enabled = desired()
+        if (this.focusEmulation !== enabled) {
+          try { await this.send('Emulation.setFocusEmulationEnabled', { enabled }); this.focusEmulation = enabled }
+          catch (error) { this.focusEmulation = undefined; throw error }
+        }
+      } while (this.focusEmulation !== desired())
+    }
+    const pending = this.focusQueue.then(apply, apply)
+    this.focusQueue = pending.catch(() => {})
+    return pending
+  }
   async init() {
     await this.send('Page.enable')
     await this.setFileChooserInterception(this.interceptFileChooser)
     await this.send('Runtime.enable')
+    this.focusReady = true
+    if (this.automationActive) await this.syncFocusEmulation()
     await this.send('Emulation.setDeviceMetricsOverride', { width:1280,height:800,deviceScaleFactor:1,mobile:false })
     const tree = await this.send('Page.getFrameTree')
     this.frameId = tree.frameTree.frame.id
@@ -240,9 +271,11 @@ export class AgentPage {
       if (!this.interceptFileChooser) throw new Error('Page is in manual file picker mode; resume agent control first')
       if (!this.observation || observationId !== this.observation.id || this.observation.epoch !== this.epoch) throw new Error('Stale observation; observe the page again')
       const revision = await this.evaluate(()=>globalThis.__velmrenAgent?.revision)
-      if (revision !== this.observation?.revision) throw new Error('Page changed since observation; observe again')
+      if (revision !== this.observation?.revision) await this.evaluate(validateObservedRefs, {
+        revision: this.observation?.revision, refs: actions.every(action => action.ref) ? actions.map(action => action.ref) : [],
+      })
       phase = 'prepare'
-      try { await this.send('Emulation.setFocusEmulationEnabled', { enabled: true }); focusEnabled = true }
+      try { await this.syncFocusEmulation(true); focusEnabled = true }
       catch (error) { error.deliveryUncertain = true; throw error }
       for (current = 0; current < actions.length; current++) {
         const action = actions[current]
@@ -260,7 +293,11 @@ export class AgentPage {
           if (action.type === 'press') {
             const keys = { Enter:13, Tab:9, Escape:27, ArrowDown:40, ArrowUp:38, ArrowLeft:37, ArrowRight:39, Backspace:8, Delete:46, Home:36, End:35, PageUp:33, PageDown:34, Space:32, Spacebar:32 }
             if (!Object.hasOwn(keys, action.key)) throw new Error('Unsupported key')
-            if (action.ref) { await this.prepareFrame(); await this.evaluate(prepareElement, action) }
+            if (action.ref) {
+              await this.prepareFrame(); await this.evaluate(prepareElement, action)
+              if (!stillActive() || epoch !== this.epoch) throw new Error('Task paused during action preparation')
+              await this.evaluate(validatePreparedAction, action)
+            }
             if (!stillActive() || epoch !== this.epoch) throw new Error('Task paused during action preparation')
             dispatched = true
             phase = 'input'
@@ -272,12 +309,17 @@ export class AgentPage {
             if (!['click', 'fill', 'select', 'setChecked'].includes(action.type)) throw new Error('Unsupported action')
             await this.prepareFrame()
             let point = await this.evaluate(prepareElement, action)
+            const preparedPoint = point
             const clicking = ['click', 'setChecked'].includes(action.type) && !point.noOp
             if (clicking) point = await this.toRootPoint(point)
             if (!stillActive() || epoch !== this.epoch) throw new Error('Task paused during action preparation')
+            const sensitiveAfterPreparation = await this.evaluate(validatePreparedAction, {
+              ...action, ...(clicking ? { point: { x: preparedPoint.x, y: preparedPoint.y } } : {}), ...(preparedPoint.noOp ? { noOp: true } : {}),
+            })
+            if (!stillActive() || epoch !== this.epoch) throw new Error('Task paused during action preparation')
             // Scroll/focus handlers can turn an ordinary text field into a
             // password or OTP. Reclassify the prepared node before delivery.
-            if (action.type === 'fill' && privateInput && await this.evaluate(sensitiveRenderer.isSensitiveTarget, { ref: action.ref })) {
+            if (action.type === 'fill' && privateInput && sensitiveAfterPreparation) {
               await fillSensitive(action)
               continue
             }
@@ -349,7 +391,7 @@ export class AgentPage {
       if (delivery === 'delivery_uncertain') error.message = 'Action delivery or outcome is uncertain; observe before continuing'
       error.message = `${error.message} (completed ${completed}/${actions.length}; do not blindly replay)`
       throw error
-    } finally { if (focusEnabled && !this.dialog) await this.send('Emulation.setFocusEmulationEnabled', { enabled:false }).catch(()=>{}) }
+    } finally { if (focusEnabled && !this.dialog) await this.syncFocusEmulation().catch(()=>{}) }
   }
   async preparePrivateInput(observationId, ref, origin, focusAlreadyEnabled = false) {
     if (!this.observation || this.observation.id !== observationId || this.observation.epoch !== this.epoch) throw new Error('Private input observation changed')
@@ -357,12 +399,12 @@ export class AgentPage {
     const observation = this.observation, epoch = this.epoch
     let focusEnabled = false
     try {
-      if (!focusAlreadyEnabled) { await this.send('Emulation.setFocusEmulationEnabled', { enabled: true }); focusEnabled = true }
+      if (!focusAlreadyEnabled) { await this.syncFocusEmulation(true); focusEnabled = true }
       await this.prepareFrame()
       const target = await this.evaluate(sensitiveRenderer.preparePrivateTarget, { ref, revision: observation.revision, origin })
       if (this.observation !== observation || this.epoch !== epoch) throw new Error('Private input document changed')
       return target
-    } finally { if (focusEnabled && !this.dialog) await this.send('Emulation.setFocusEmulationEnabled', { enabled: false }).catch(() => {}) }
+    } finally { if (focusEnabled && !this.dialog) await this.syncFocusEmulation().catch(() => {}) }
   }
   async uploadFiles({ observationId, ref, chooserId }, files, stillActive) {
     const observation = this.observation, epoch = this.epoch
@@ -444,7 +486,7 @@ export class AgentPage {
       await this.send('Page.handleJavaScriptDialog', { accept, ...(promptText === undefined ? {} : { promptText }) })
       completed = 1
       if (this.dialog === handled) this.dialog = null
-      if (!this.dialog) await this.send('Emulation.setFocusEmulationEnabled', { enabled: false })
+      if (!this.dialog) await this.syncFocusEmulation()
       this.observation = null
       return { ...await this.observe(), actionResult: actionResult(1, null, [{ index: 0, type: 'handleDialog', delivery: 'delivered_unverified' }], 'delivered_unverified', 'verify_outcome') }
     } catch (error) {

@@ -112,7 +112,7 @@ export class CaptchaPage {
       present.add(challengeId)
       this.challenges.set(challengeId, { context, documentId, widgetId: description.id, generation: description.generation })
       return { challengeId, provider: description.provider, supported: description.supported,
-        reason: description.reason, alreadySolved: description.alreadySolved }
+        reason: description.reason, alreadySolved: description.alreadySolved, captchaBinding: description.captchaBinding }
     })
     for (const id of this.challenges.keys()) if (!present.has(id)) this.challenges.delete(id)
     return result

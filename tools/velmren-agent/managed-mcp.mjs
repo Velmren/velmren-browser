@@ -39,7 +39,6 @@ export async function startManagedMcp(options) {
   let closing
   const lease = maintainManagedLease(connection, error => {
     process.stderr.write(diagnostic(error))
-    void close()
   })
   const close = () => closing ??= (async () => {
     process.stdin.off('end', close)

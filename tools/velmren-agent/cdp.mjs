@@ -4,6 +4,31 @@ import { mkdir } from 'node:fs/promises'
 import { persistentBrowserArgs } from './profile-state.mjs'
 import { annotateOperationError } from './operation-error.mjs'
 
+const startupFeature = 'ImprovedStartupBestEffortDelay'
+const startupFeatureParameters = `${startupFeature}:StartupDelayVisibleTabTimeout/0ms/StartupDelayFailsafeTimeout/1000ms`
+
+export function agentBrowserArgs(args) {
+  const rest = [], enabled = new Map(), disabled = new Map()
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index], match = /^(--enable-features|--disable-features)(?:=(.*))?$/.exec(arg)
+    if (!match) { rest.push(arg); continue }
+    const value = match[2] ?? (args[index + 1] && !args[index + 1].startsWith('--') ? args[++index] : '')
+    const features = match[1] === '--enable-features' ? enabled : disabled
+    for (const token of value.split(',')) {
+      const feature = token.trim(), name = feature.split(/[<:.]/, 1)[0].replace(/^\*/, '')
+      if (name) features.set(name, feature)
+    }
+  }
+  disabled.delete(startupFeature)
+  // Preserve Chromium's disable precedence for unrelated feature conflicts.
+  for (const name of disabled.keys()) enabled.delete(name)
+  // Hidden agent windows cannot satisfy Chromium's visible-startup gate.
+  // BEST_EFFORT service-worker updates otherwise wait for its three-minute failsafe.
+  enabled.set(startupFeature, startupFeatureParameters)
+  return [...rest, `--enable-features=${[...enabled.values()].join(',')}`,
+    ...(disabled.size ? [`--disable-features=${[...disabled.values()].join(',')}`] : [])]
+}
+
 // The browser endpoint stays on inherited pipes; no browser-wide TCP port.
 export class BrowserPipe extends EventEmitter {
   pending = new Map()
@@ -18,7 +43,7 @@ export class BrowserPipe extends EventEmitter {
     transport.process = spawn(executable, [
       `--user-data-dir=${profile}`, '--remote-debugging-pipe',
       '--no-startup-window', '--no-first-run', '--no-default-browser-check',
-      '--velmren-agent-mode', ...(profileMode === 'persistent' ? persistentBrowserArgs(args) : args),
+      '--velmren-agent-mode', ...agentBrowserArgs(profileMode === 'persistent' ? persistentBrowserArgs(args) : args),
     ], { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'] })
     transport.process.stderr.on('data', chunk => {
       transport.stderr = (transport.stderr + chunk.toString()).slice(-8000)
@@ -27,11 +52,11 @@ export class BrowserPipe extends EventEmitter {
     transport.process.stdio[3].on('error', error => transport.fail(error))
     transport.process.stdio[4].on('error', error => transport.fail(error))
     transport.process.on('error', error => transport.fail(error))
-    transport.process.on('exit', code => {
+    transport.process.on('exit', (code, signal) => {
       transport.processExited = true
       transport.closed = true
       transport.fail(Object.assign(new Error('Browser exited'), { code: 'BROWSER_CLOSED' }))
-      transport.emit('closed')
+      transport.emit('closed', { childPid: transport.process.pid, exitCode: code, signal })
     })
     try { transport.version = await transport.send('Browser.getVersion') }
     catch (error) { await transport.close(); throw error }

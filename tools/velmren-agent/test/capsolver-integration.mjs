@@ -197,7 +197,7 @@ try {
 
   await scenario('tool_23_schema_and_no_settings_or_key_tool', async () => {
     const catalog = await a.client.listTools(); clean(catalog)
-    ensure(catalog.tools.length === 23, 'WRONG_TOOL_COUNT')
+    ensure(catalog.tools.length === 24, 'WRONG_TOOL_COUNT')
     const tool = catalog.tools.find(item => item.name === 'velmren_captcha')
     ensure(tool && tool.inputSchema.additionalProperties === false && tool.inputSchema.oneOf.length === 3, 'CAPTCHA_SCHEMA_MISSING')
     ensure(JSON.stringify(tool.inputSchema.properties.action.enum) === JSON.stringify(['inspect', 'solve', 'status', 'cancel']), 'CAPTCHA_ACTION_SCHEMA')
@@ -278,7 +278,7 @@ try {
     const observation = await call(a, 'observe', { taskId: item.task.taskId })
     const target = observation.elements.find(element => element.tag === 'input' && element.type === 'text')
     ensure(target, 'ORDINARY_INPUT_MISSING')
-    const page = local(item.task), send = page.send, entered = deferred(), released = deferred(), attempted = deferred(), events = []
+    const page = local(item.task), send = page.send, act = page.act, entered = deferred(), released = deferred(), attempted = deferred(), events = []
     const value = 'ordinary queued value'
     let intercepted = false, actCompleted = false
     page.send = function(method, params, ...rest) {
@@ -289,10 +289,9 @@ try {
       if (method === 'Runtime.callFunctionOn' && params?.arguments?.[0]?.value === 'apply') {
         events.push('captcha-apply'); attempted.resolve()
       }
-      const result = send.call(this, method, params, ...rest)
-      if (method === 'Emulation.setFocusEmulationEnabled' && params?.enabled === false) return result.then(receipt => { events.push('action-finished'); return receipt })
-      return result
+      return send.call(this, method, params, ...rest)
     }
+    page.act = async function(...args) { const result = await act.apply(this, args); events.push('action-finished'); return result }
     const action = call(a, 'act', { taskId: item.task.taskId, observationId: observation.observationId,
       actions: [{ type: 'fill', ref: target.ref, value }] }).finally(() => { actCompleted = true })
     action.catch(() => {})
@@ -325,7 +324,7 @@ try {
       report.nativeActionOrdering ??= []; report.nativeActionOrdering.push({ cancelled: cancel, events })
     } finally {
       released.resolve(); item.gate.released.resolve()
-      await action.catch(() => {}); page.send = send
+      await action.catch(() => {}); page.send = send; page.act = act
       await call(a, 'captcha', { taskId: item.task.taskId, action: 'cancel', jobId: item.job.jobId }).catch(() => {})
       await end(item.task)
     }

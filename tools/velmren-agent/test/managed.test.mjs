@@ -5,7 +5,7 @@ import { mkdir, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
-import { createClient } from '../client.mjs'
+import { AGENT_PROTOCOL, createClient } from '../client.mjs'
 import { acquireStartupGate, adminRpc, connectManaged, diagnostic, maintainManagedLease, parseManagedOptions, readManagedDescriptor, releaseManagedConnection, resolveManagedOptions, runManagedBroker, spawnManagedDaemon } from '../managed-runtime.mjs'
 import { effectivePolicyIdentity } from '../policy-identity.mjs'
 
@@ -302,7 +302,7 @@ test('an older or unknown broker protocol cannot be reused or replace existing c
   const existing = createClient(first)
   await existing.call('task_list')
   const descriptor = await readManagedDescriptor(config.stateDir)
-  for (const version of [undefined, 1, 2, 4, '3']) {
+  for (const version of [undefined, 1, 2, 3, AGENT_PROTOCOL + 1, String(AGENT_PROTOCOL)]) {
     await adminRpc(descriptor, 'set_agent_protocol', { version })
     let spawned = false
     await assert.rejects(connectManaged(config, { spawnDaemon: () => { spawned = true } }), { code: 'BROKER_INCOMPATIBLE' })

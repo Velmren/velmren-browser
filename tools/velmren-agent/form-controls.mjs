@@ -84,11 +84,88 @@ export function decorativeControlHit(surface, hit, control) {
   return true
 }
 
+export function controlClientRects(el) {
+  const rects = [...(el.getClientRects?.() ?? [el.getBoundingClientRect()])]
+  if (rects.some(rect => rect.width && rect.height) || getComputedStyle(el).display !== 'contents') return rects
+  // display:contents retains the control and its event path, but gives its box
+  // to descendants. Do not confuse that with a hidden, zero-sized control.
+  return [...(el.querySelectorAll?.('*') ?? [])].slice(0, 128).flatMap(child => {
+    const style = getComputedStyle(child)
+    return style.display === 'none' || ['hidden', 'collapse'].includes(style.visibility) || hasTransparentAncestor(child)
+      ? [] : [...child.getClientRects()]
+  })
+}
+
+export function controlBlockedByModal(el) {
+  const roots = [document]
+  for (let index = 0; index < roots.length; index++) {
+    for (const node of roots[index].querySelectorAll?.('*') ?? []) {
+      if (node.shadowRoot) roots.push(node.shadowRoot)
+      const modal = node.matches?.('dialog:modal,[role="dialog"][aria-modal="true"],[role="alertdialog"][aria-modal="true"]')
+      if (!modal || composedContains(node, el)) continue
+      const style = getComputedStyle(node)
+      if (style.display === 'none' || ['hidden', 'collapse'].includes(style.visibility) || hasTransparentAncestor(node)) continue
+      // Portalled lists remain in the modal's interaction scope only through an
+      // explicit ownership link or an expanded control inside that modal.
+      const owned = [node, ...(node.querySelectorAll?.('[aria-owns],[aria-controls][aria-expanded="true"]') ?? [])].some(controller => {
+        const ids = `${controller.getAttribute('aria-owns') ?? ''} ${controller.getAttribute('aria-expanded') === 'true' ? controller.getAttribute('aria-controls') ?? '' : ''}`.trim().split(/\s+/).filter(Boolean)
+        return ids.some(id => {
+          const target = controller.getRootNode?.().getElementById?.(id)
+          return target?.isConnected && target.ownerDocument === el.ownerDocument && composedContains(target, el)
+        })
+      })
+      if (owned) continue
+      if (controlClientRects(node).some(rect => rect.width && rect.height)) return true
+    }
+  }
+  return false
+}
+
+export function focusedAutocompleteDecorationPoint(el, type, hit, point) {
+  // Autosized autocomplete inputs can keep keyboard focus under their own
+  // placeholder. Filling that existing focus needs no pointer activation.
+  if (type !== 'fill' || el.tagName !== 'INPUT' || !['text', 'search'].includes(el.type) ||
+      !['list', 'both'].includes(el.getAttribute('aria-autocomplete')) || !hit) return null
+  let active = document.activeElement
+  while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement
+  if (active !== el) return null
+  const box = el.getBoundingClientRect(), cover = hit.getBoundingClientRect()
+  if (box.width > 8 || !box.width || !box.height || cover.height > box.height + 16 || getComputedStyle(hit).position === 'fixed') return null
+  const interactive = 'a[href],button,input,select,textarea,[role],[tabindex],[onclick],[contenteditable="true"]'
+  for (let surface = composedParent(el), depth = 0; surface && depth < 6; surface = composedParent(surface), depth++) {
+    if (surface.matches?.(`body,html,form,fieldset,${interactive}`)) return null
+    if (!composedContains(surface, hit)) continue
+    const area = surface.getBoundingClientRect()
+    if (area.height > box.height + 24 || area.width > innerWidth || !area.width || !area.height) return null
+    if (cover.width > area.width + 16 || cover.x < area.x - 16 || cover.x + cover.width > area.x + area.width + 16 ||
+        cover.y < area.y - 8 || cover.y + cover.height > area.y + area.height + 8) return null
+    const controls = surface.querySelectorAll(interactive)
+    if (controls.length !== 1 || controls[0] !== el || !decorativeControlHit(surface, hit, el) || hit.querySelector?.(interactive)) return null
+    if (hasTransparentAncestor(surface) || getComputedStyle(surface).pointerEvents === 'none') return null
+    return point
+  }
+  return null
+}
+
 export function controlActionPoint(el, type) {
   const point = box => ({ x: Math.max(0, Math.min(innerWidth - 1, box.x + box.width / 2)), y: Math.max(0, Math.min(innerHeight - 1, box.y + box.height / 2)) })
   const box = el.getBoundingClientRect(), center = point(box)
   const hit = controlHit(center.x, center.y)
-  if (box.width && box.height && (composedContains(el, hit) || el.contains?.(hit))) return center
+  const rects = controlClientRects(el).slice(0, 128)
+  // Test painted fragments, not the union box: an inline link can wrap around
+  // whitespace, and a field's center can be covered while its edge is exposed.
+  for (const rect of rects) {
+    const left = Math.max(0, rect.x), top = Math.max(0, rect.y)
+    const right = Math.min(innerWidth, rect.x + rect.width), bottom = Math.min(innerHeight, rect.y + rect.height)
+    if (right <= left || bottom <= top) continue
+    for (const [horizontal, vertical] of [[.5, .5], [.15, .5], [.85, .5], [.5, .2], [.5, .8]]) {
+      const x = left + (right - left) * horizontal, y = top + (bottom - top) * vertical
+      const candidate = controlHit(x, y)
+      if (composedContains(el, candidate) || el.contains?.(candidate)) return { x, y }
+    }
+  }
+  const keyboardPoint = focusedAutocompleteDecorationPoint(el, type, hit, center)
+  if (keyboardPoint) return keyboardPoint
   if (el.tagName === 'SELECT' && type === 'select' && box.width && box.height) {
     const wrapper = el.parentElement
     // Accept an associated label or explicit decoration confined to the select.
@@ -138,7 +215,8 @@ export function controlState(el) {
 
 export function elementCapabilities(el, measure = true) {
   const box = measure ? el.getBoundingClientRect() : null, style = measure ? getComputedStyle(el) : null
-  const hidden = !!(measure && (!box.width || !box.height || ['hidden', 'collapse'].includes(style.visibility) || style.display === 'none' || hasTransparentAncestor(composedParent(el))))
+  const hasBox = measure && (box.width && box.height || style.display === 'contents' && controlClientRects(el).some(rect => rect.width && rect.height))
+  const hidden = !!(measure && (!hasBox || ['hidden', 'collapse'].includes(style.visibility) || style.display === 'none' || hasTransparentAncestor(composedParent(el))))
   let inert = false, ariaDisabled = false
   const ancestors = new Set()
   for (let parent = el; parent && !ancestors.has(parent); parent = composedParent(parent)) {
@@ -270,12 +348,13 @@ export async function prepareElement({ ref, type, value, checked }) {
   await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
   if (!el.isConnected || el.ownerDocument && el.ownerDocument !== document) throw new Error('Element reference is stale; observe again')
   capabilities = validate()
+  if (controlBlockedByModal(el)) throw new Error('Element is obscured')
   preparedValue = type === 'select' || type === 'fill' && capabilities.nativeValueInput ? probeFormValue(el, type, value) : undefined
   const box = el.getBoundingClientRect()
   const x = Math.max(0, Math.min(innerWidth - 1, box.x + box.width / 2))
   const y = Math.max(0, Math.min(innerHeight - 1, box.y + box.height / 2))
   if (type === 'setChecked' && controlState(el).checked === checked) return { x, y, noOp: true }
-  const actionPoint = controlActionPoint(el, type)
+  controlActionPoint(el, type)
   if (type === 'fill') {
     el.focus({ preventScroll: true })
     if (!capabilities.nativeValueInput) {
@@ -286,12 +365,27 @@ export async function prepareElement({ ref, type, value, checked }) {
     }
   }
   if (type === 'press') el.focus({ preventScroll: true })
-  if (type === 'press' || type === 'fill' && labelledCombobox(el)) {
+  const actionPoint = validatePreparedElement({ ref, type })
+  return { ...actionPoint, ...(preparedValue || {}), ...(type === 'fill' && capabilities.nativeValueInput ? { inputMode: 'native' } : {}) }
+}
+
+export function validatePreparedElement({ ref, type, point, noOp, checked }) {
+  const el = globalThis.__velmrenAgent?.refs.get(ref)
+  if (!el?.isConnected || el.ownerDocument && el.ownerDocument !== document) throw new Error('Element reference is stale; observe again')
+  const capabilities = elementCapabilities(el)
+  if (capabilities.disabled) throw new Error('Element is disabled')
+  if (capabilities.hidden && !capabilities.labelProxy && !capabilities.cardProxy) throw new Error('Element is not visible')
+  if (!capabilities.availableActions.includes(type)) throw new Error('Element does not support this action')
+  if (controlBlockedByModal(el)) throw new Error('Element is obscured')
+  if (noOp && type === 'setChecked' && controlState(el).checked === checked) return
+  const currentPoint = controlActionPoint(el, type)
+  if (point && (point.x !== currentPoint.x || point.y !== currentPoint.y)) throw new Error('Element is obscured')
+  if (type === 'press' || type === 'fill') {
     let active = document.activeElement
     while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement
     if (active !== el) throw new Error('Element could not receive keyboard focus')
   }
-  return { ...actionPoint, ...(preparedValue || {}), ...(type === 'fill' && capabilities.nativeValueInput ? { inputMode: 'native' } : {}) }
+  return currentPoint
 }
 
 export function applyFormValue({ ref, type, value }) {
@@ -300,6 +394,7 @@ export function applyFormValue({ ref, type, value }) {
   const capabilities = elementCapabilities(el)
   if (!capabilities.availableActions.includes(type)) throw new Error('Element does not support this action')
   const { expectedValue } = probeFormValue(el, type, value)
+  if (controlBlockedByModal(el)) throw new Error('Element is obscured')
   controlActionPoint(el, type)
   const prototype = type === 'select' ? HTMLSelectElement.prototype : HTMLInputElement.prototype
   const setter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set

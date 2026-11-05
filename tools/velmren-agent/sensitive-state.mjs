@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import { BrokerError } from './client.mjs'
 
-const fail = code => { throw new BrokerError('Sensitive output remains protected', code) }
+const fail = (code, reason) => { throw new BrokerError('Sensitive output remains protected', code, undefined, undefined,
+  { diagnostic: { phase: 'validation', stage: 'sensitive_end', reason } }) }
 export function beginSensitive(task, pages, { input = false } = {}) {
   if (!task.sensitive?.active) task.sensitive = { active: true, phaseId: randomUUID(), documents: new Map() }
   task.sensitiveHistory = true
@@ -25,13 +26,16 @@ export function rememberSensitiveDocument(task, page) {
 
 export function validateSensitiveEnd(task, pages, page, args) {
   const phase = task.sensitive
-  if (!phase?.active || args.phaseId !== phase.phaseId) fail('SENSITIVE_PHASE_STALE')
-  if (args.documentId !== page.documentId || !page.documentId) fail('SENSITIVE_DOCUMENT_CHANGED')
-  if (pages.length !== 1 || pages[0] !== page || page.dialog) fail('SENSITIVE_DOCUMENTS_REMAIN')
-  if (!phase.documents.has(page.pageId) || phase.documents.get(page.pageId) === page.documentId) fail('SENSITIVE_TRANSITION_REQUIRED')
+  if (!phase?.active || args.phaseId !== phase.phaseId) fail('SENSITIVE_PHASE_STALE', 'phase-stale')
+  if (args.documentId !== page.documentId || !page.documentId) fail('SENSITIVE_DOCUMENT_CHANGED', 'document-changed')
+  if (pages.length !== 1 || pages[0] !== page) fail('SENSITIVE_DOCUMENTS_REMAIN', 'protected-documents-remain')
+  if (page.dialog) fail('SENSITIVE_DOCUMENTS_REMAIN', 'dialog')
+  if (!phase.documents.has(page.pageId)) fail('SENSITIVE_TRANSITION_REQUIRED', 'baseline-unavailable')
+  if (phase.documents.get(page.pageId) === page.documentId) fail('SENSITIVE_TRANSITION_REQUIRED', 'new-document-required')
   let origin
-  try { origin = new URL(page.url).origin } catch { fail('SENSITIVE_ORIGIN_MISMATCH') }
-  if (args.safeToReveal !== true || args.expectedOrigin !== origin) fail('SENSITIVE_ORIGIN_MISMATCH')
+  try { origin = new URL(page.url).origin } catch { fail('SENSITIVE_ORIGIN_MISMATCH', 'origin-mismatch') }
+  if (args.safeToReveal !== true) fail('SENSITIVE_ORIGIN_MISMATCH', 'safe-reveal-required')
+  if (args.expectedOrigin !== origin) fail('SENSITIVE_ORIGIN_MISMATCH', 'origin-mismatch')
   return phase
 }
 

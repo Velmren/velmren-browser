@@ -23,7 +23,7 @@ test('normal PNG bytes survive every projection while protected images remain su
   assert.deepEqual(sanitizePublicResult(once), screenshot)
   assert.deepEqual(sanitizePublicResult(screenshot, { sensitive: true }), {})
   absent(sanitizePublicResult({ mimeType: 'image/png', data: `https://example.test/${marker}` }))
-  assert.equal(sanitizePublicResult({ data: '//example.test/private' }).data, '[invalid URL]')
+  assert.equal(sanitizePublicResult({ data: '//example.test/private' }).data, 'https://example.test')
 })
 
 test('URL metadata exposes origins without unknown token paths, credentials, query or fragments', () => {

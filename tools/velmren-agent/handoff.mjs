@@ -7,7 +7,9 @@ const fail = message => { throw new BrokerError(message, 'INVALID_STATE') }
 export async function requestHuman(broker, task, args, request) {
   if (terminal(task)) fail('Task already ended')
   const page = broker.page(task, args.pageId)
-  const handoff = { id: randomUUID(), pageId: page.pageId, shown: false }
+  const handoff = { id: randomUUID(), pageId: page.pageId, shown: false, visibility: {
+    requested: args.showWindow === true, targetVisible: false, nativeWindowVerified: false, foregroundVerified: false
+  } }
   task.handoff = handoff
   task.reason = args.reason
   broker.select(task, page)
@@ -21,7 +23,7 @@ export async function requestHuman(broker, task, args, request) {
     task.state = 'needs-human'
     await broker.serialize(task, async () => {
       if (generation !== task.controlGeneration || terminal(task)) return
-      await page.send('Emulation.setFocusEmulationEnabled', { enabled: false })
+      await broker.syncTaskFocus(task)
     }, request)
   }
   return broker.record(task)

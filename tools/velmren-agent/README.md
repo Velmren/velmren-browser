@@ -51,14 +51,22 @@ Each attempt is reserved durably before sending it and counts toward the rolling
 24-hour and per-task limits, even if the outcome becomes uncertain. The service
 also limits simultaneous provider requests.
 
-Supported variants are visible reCAPTCHA v2, visible reCAPTCHA v2 Enterprise,
+Supported variants are visible or invisible reCAPTCHA v2 and v2 Enterprise,
 and standalone Turnstile widgets with an unambiguous response field or captured
 completion callback. Open shadow roots and ordinary frames are supported.
-Invisible widgets, hCaptcha, Cloudflare interstitials, and closed-shadow-only
-widgets are rejected. Session, cookie-import and identity-changing modes are
+hCaptcha, reCAPTCHA v3, Cloudflare interstitials, and closed-shadow-only
+widgets are rejected. An hCaptcha compatibility facade is never sent as a
+reCAPTCHA request. Missing callbacks or response fields remain explicit
+unsupported reasons when no unambiguous delivery target is available.
+Session, cookie-import and identity-changing modes are
 outside this token-delivery contract and cannot be requested. Enabling
-before navigation captures explicit anonymous render callbacks; callbacks
-already registered before enabling may be unavailable. Provider requests carry
+before navigation allows capture of explicit render callbacks. A same-document
+element rendered before insertion is retained for at most 30 seconds, with a
+64-element limit, and is usable only after attachment. Reset, removal, observed
+document changes and expiry invalidate this pending capture. Turnstile's absent
+global is left untouched during provider startup; existing API methods are armed
+at script load, readiness and DOM changes. Callbacks registered before those
+methods are armed may remain unavailable and are never guessed. Provider requests carry
 only the site origin, site key, and supported widget metadata, never cookies or
 page content. Origin-only requests may be insufficient on some sites.
 
@@ -83,8 +91,37 @@ The panel keeps separate totals for **delivered**, **failed**, **cancelled**, an
 or stale delivery. Cancelled attempts may still incur provider charges.
 Interrupted dispatched jobs become uncertain after restart. A lost result or
 callback exception is not counted as success. Paid-attempt usage remains
-separate from these outcome counts. Global totals persist locally; per-task
-totals belong to that broker session. Actual provider billing is authoritative.
+separate from these outcome counts. Global totals and owner-bound, token-free
+job receipts persist locally. Older terminal receipts move to a local archive;
+status lookup still returns their exact outcome. Recovered receipts omit task
+totals because archived history may make a retained aggregate incomplete.
+Actual provider billing is authoritative.
+
+Managed connections recover their owner through a private recovery credential
+and rotate their bearer token. A restart cannot restore browser documents:
+old tasks report `recovery-needed`, and no click, submit, or paid solve is
+replayed. A dispatched job interrupted before its terminal receipt is saved
+reports `uncertain`. Lifecycle records preserve process exit and safe reason
+codes for future diagnosis; they cannot establish the cause of a historical
+exit that predates those records.
+
+`velmren_diagnostics` returns bounded, task-owned network and console categories
+for popup, CORS, FedCM, upload, and widget diagnosis. It records origins, HTTP
+status, resource types, and fixed error categories only. Request paths,
+headers, bodies, console text, exception strings, and stacks are discarded.
+The diagnostic view remains available during protected input and after task
+cancellation. A successful upload event does not prove site-side import.
+
+Agent-active pages retain logical focus and visibility so background animation
+frames and application initialization can finish. Native windows remain hidden.
+Pause, human handoff, and task completion release this rendering state for every
+owned page; resume restores it. Active pages may consequently use more CPU and
+network than pages that previously stalled while hidden.
+
+Control names include rendered slot content and unambiguous component labels.
+An already focused, autosized autocomplete can receive keyboard input beneath
+its own noninteractive placeholder; external overlays and modal blockers still
+prevent delivery.
 
 ### Sensitive inputs and outputs
 
@@ -538,6 +575,16 @@ agent state directory for a different policy. Persisted workers can start before
 JavaScript interception is attached, so this is not a promise that every startup
 request passes through the broker. The retained site CSP and immutable profile
 policy also apply; a machine-wide network firewall requires a different layer.
+
+In web compatibility mode, an attached profile-owned service worker can retain
+its DevTools session after stopping. The broker observes its crash/reload
+lifecycle, reapplies the network policy, and resumes that exact worker once.
+Detached, replaced, superseded, or manual-profile sessions are not resumed.
+This does not replay a task action or a paid request.
+The hidden agent launch also releases Chromium's startup delay without waiting
+for a visible tab. Otherwise a best-effort worker update can hold the registration
+queue until the three-minute startup failsafe, preventing a site's next page from
+finishing initialization. Ordinary and manual-profile launch settings are unchanged.
 
 Strict mode blocks workers, popups, plug-ins and off-policy connections through
 request interception and an additional response CSP. Web compatibility mode

@@ -8,20 +8,24 @@ export function isSensitiveTarget({ ref }) {
 
 export function inspectPrivateTarget({ ref, revision, origin }) {
   const state = globalThis.__velmrenAgent
-  if (state?.revision !== revision) throw new Error('Private input observation changed')
+  validateObservedRefs({ revision, refs: [ref] })
   const el = state.refs.get(ref)
   if (!el?.isConnected || el.ownerDocument !== document) throw new Error('Private input target changed')
   if (origin !== undefined && location.origin !== origin) throw new Error('Private input origin changed')
   if (!(el.tagName === 'TEXTAREA' || el.tagName === 'INPUT' && ['text', 'search', 'email', 'url', 'tel', 'password', 'number'].includes(el.type))) throw new Error('Private input needs a native text control')
   const capabilities = elementCapabilities(el)
-  if (capabilities.disabled || capabilities.hidden || !capabilities.availableActions.includes('fill')) throw new Error('Private input target is unavailable')
+  if (capabilities.disabled) throw new Error('Element is disabled')
+  if (capabilities.hidden) throw new Error('Element is not visible')
+  if (!capabilities.availableActions.includes('fill')) throw new Error('Private input target is unavailable')
+  if (controlBlockedByModal(el)) throw new Error('Element is obscured')
   controlActionPoint(el, 'fill')
   return { origin: location.origin }
 }
 
 export async function preparePrivateTarget(args) {
   const state = globalThis.__velmrenAgent, el = state?.refs.get(args.ref)
-  if (state?.revision !== args.revision || !el?.isConnected || el.ownerDocument !== document) throw new Error('Private input target changed')
+  validateObservedRefs({ revision: args.revision, refs: [args.ref] })
+  if (!el?.isConnected || el.ownerDocument !== document) throw new Error('Private input target changed')
   el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' })
   await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
   if (globalThis.__velmrenAgent !== state || state.refs.get(args.ref) !== el) throw new Error('Private input target changed')

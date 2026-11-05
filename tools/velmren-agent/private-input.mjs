@@ -1,7 +1,10 @@
 import { randomBytes } from 'node:crypto'
 import { BrokerError, connectClient } from './client.mjs'
+import { annotateOperationError } from './operation-error.mjs'
+import { sanitizePublicError } from './privacy.mjs'
 
-const fail = code => { throw new BrokerError('Private input is unavailable for this destination', code) }
+const fail = (code, stage, reason) => { throw new BrokerError('Private input is unavailable for this destination', code, undefined, undefined,
+  { diagnostic: { phase: stage === 'private_consume' ? 'input' : 'prepare', stage, reason } }) }
 const equalBinding = (left, right) => ['owner', 'taskId', 'pageId', 'frameId', 'observationId', 'ref', 'origin', 'topOrigin', 'documentId', 'topDocumentId']
   .every(key => left[key] === right[key])
 
@@ -21,7 +24,7 @@ export class PrivateInputs {
   prune() { for (const [ref, entry] of this.entries) if (entry.expiresAt <= this.now()) this.drop(ref) }
   prepare(binding) {
     this.prune()
-    if (this.entries.size >= this.limit) fail('PRIVATE_INPUT_LIMIT')
+    if (this.entries.size >= this.limit) fail('PRIVATE_INPUT_LIMIT', 'private_prepare', 'state')
     const secretRef = `vsi_${randomBytes(32).toString('base64url')}`
     const expiresAt = this.now() + this.ttlMs
     const timer = setTimeout(() => this.drop(secretRef), this.ttlMs)
@@ -29,27 +32,27 @@ export class PrivateInputs {
     this.entries.set(secretRef, { binding: { ...binding }, expiresAt, timer })
     return { secretRef, expiresInMs: this.ttlMs }
   }
-  entry(secretRef, owner, taskId) {
+  entry(secretRef, owner, taskId, stage) {
     this.prune()
     const entry = this.entries.get(secretRef)
     // A foreign owner's failed request must not consume the intended value.
-    if (!entry || entry.binding.owner !== owner || entry.binding.taskId !== taskId) fail('PRIVATE_INPUT_UNAVAILABLE')
+    if (!entry || entry.binding.owner !== owner || entry.binding.taskId !== taskId) fail('PRIVATE_INPUT_UNAVAILABLE', stage, 'capability-unavailable')
     return entry
   }
   provide(secretRef, owner, taskId, value) {
-    const entry = this.entry(secretRef, owner, taskId)
-    if (entry.bytes || typeof value !== 'string' || value.length > 65536) fail('PRIVATE_INPUT_UNAVAILABLE')
+    const entry = this.entry(secretRef, owner, taskId, 'private_provide')
+    if (entry.bytes || typeof value !== 'string' || value.length > 65536) fail('PRIVATE_INPUT_UNAVAILABLE', 'private_provide', 'value-unavailable')
     entry.bytes = Buffer.from(value, 'utf8')
     return { secretRef, ready: true, expiresInMs: Math.max(0, entry.expiresAt - this.now()) }
   }
   revoke(secretRef, owner, taskId) {
-    this.entry(secretRef, owner, taskId)
+    this.entry(secretRef, owner, taskId, 'private_revoke')
     this.drop(secretRef)
     return { revoked: true }
   }
   async consume(secretRef, binding, deliver) {
-    const entry = this.entry(secretRef, binding.owner, binding.taskId)
-    if (!equalBinding(entry.binding, binding) || !entry.bytes) fail('PRIVATE_INPUT_BINDING_CHANGED')
+    const entry = this.entry(secretRef, binding.owner, binding.taskId, 'private_consume')
+    if (!equalBinding(entry.binding, binding) || !entry.bytes) fail('PRIVATE_INPUT_BINDING_CHANGED', 'private_consume', 'binding-changed')
     // Consume before any asynchronous delivery: concurrent or failed attempts
     // can never replay a value whose delivery may have reached the website.
     this.entries.delete(secretRef)
@@ -66,14 +69,23 @@ export class PrivateInputs {
 // opaque one-use reference is returned to the agent; no new secret file exists.
 export async function stagePrivateInput({ stateDir, taskId, pageId, frameId, observationId, ref, origin, topOrigin, readSecret, client }) {
   if (typeof readSecret !== 'function') throw new BrokerError('A local secret reader is required', 'INVALID_ARGUMENTS')
-  const connection = client ?? await connectClient(stateDir, 'admin')
-  let prepared
+  let prepared, connection, stage = 'private_connect'
   try {
+    connection = client ?? await connectClient(stateDir, 'admin')
+    stage = 'private_prepare'
     prepared = await connection.call('task_private_input', { taskId, pageId, frameId, observationId, ref, origin, topOrigin, action: 'prepare' })
+    stage = 'private_read'
     const value = await readSecret()
+    stage = 'private_provide'
     return await connection.call('task_private_input', { taskId, action: 'provide', secretRef: prepared.secretRef, value })
-  } catch {
+  } catch (error) {
     if (prepared?.secretRef) await connection.call('task_private_input', { taskId, action: 'revoke', secretRef: prepared.secretRef }).catch(() => {})
-    throw new BrokerError('Private input preparation failed', 'PRIVATE_INPUT_UNAVAILABLE')
+    // Callback exceptions are untrusted and may contain a secret. Only broker
+    // failures retain their allowlisted code and bounded destination diagnostic.
+    const safe = stage === 'private_read' ? {} : sanitizePublicError(error)
+    const clean = stage === 'private_read' ? {} : sanitizePublicError(annotateOperationError(new BrokerError(safe.error, safe.code, undefined, undefined, safe), 'prepare'))
+    const code = clean.code && clean.code !== 'BROKER_ERROR' ? clean.code : 'PRIVATE_INPUT_UNAVAILABLE'
+    throw new BrokerError('Private input preparation failed', code, undefined, undefined,
+      { ...clean, diagnostic: { reason: stage === 'private_read' ? 'reader-failed' : clean.diagnostic?.reason ?? 'unknown', phase: 'prepare', stage } })
   }
 }

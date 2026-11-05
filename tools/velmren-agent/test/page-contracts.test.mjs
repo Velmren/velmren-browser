@@ -16,7 +16,7 @@ function fixture(specs = [{}], text = '') {
       matches(selector) { return selector.split(',').some(part => part === ':disabled' ? this.disabled : part.toUpperCase() === this.tagName) }, closest() { return null },
       getBoundingClientRect() { return { x: 0, y: 0, width: this.hidden ? 0 : 20, height: 20 } },
       scrollIntoView() { document.point = this }, contains() { return false },
-      focus() { document.focused = this }, select() {}, dispatchEvent() { this.onChange?.() }, ...spec }
+      focus() { document.focused = this; document.activeElement = this }, select() {}, dispatchEvent() { this.onChange?.() }, ...spec }
     return el
   })
   document.querySelectorAll = () => elements

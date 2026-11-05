@@ -98,8 +98,20 @@ async function startFixture() {
       response.end(JSON.stringify(Object.fromEntries(Object.entries(request.headers).filter(([key]) => key === 'user-agent' || key === 'cookie' || key.startsWith('sec-ch-ua')))))
       return
     }
+    if (url.pathname.startsWith('/provider/')) {
+      const item = fixtures.get(url.pathname.slice('/provider/'.length))
+      response.writeHead(item ? 200 : 404, { 'content-type': 'text/javascript; charset=utf-8' })
+      response.end(item ? `
+        function provider(){return {
+          render(node,options){node.innerHTML='<input type="hidden" name="${item.kind === 'turnstile' ? 'cf-turnstile-response' : 'g-recaptcha-response'}">';return 'fixture-widget'},
+          reset(){document.querySelector('#widget input').value='';return 'reset-receipt'}
+        }};
+        globalThis.grecaptcha=provider();grecaptcha.enterprise=provider();globalThis.turnstile=provider();
+      ` : '')
+      return
+    }
     response.writeHead(200, { 'content-type': 'text/html; charset=utf-8',
-      'content-security-policy': "default-src 'self'; script-src 'unsafe-inline'; connect-src 'self'; frame-src 'none'; form-action 'none'" })
+      'content-security-policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; connect-src 'self'; frame-src 'none'; form-action 'none'" })
     const name = url.pathname.slice(1), item = fixtures.get(name)
     if (!item) { response.end('<!doctype html><title>Safe local destination</title>Safe local destination'); return }
     response.end(`<!doctype html><meta charset="utf-8"><title>Synthetic metadata fixture</title>
@@ -108,11 +120,8 @@ async function startFixture() {
       document.cookie='fixture_session=original_local_cookie; Path=/; SameSite=Strict';
       globalThis.fixtureCalls=[];
       globalThis.fixtureCallback=token=>{fixtureCalls.push(token);document.title=token;document.querySelector('#echo').textContent=token};
-      function provider(){return {
-        render(node,options){node.innerHTML='<input type="hidden" name="${item.kind === 'turnstile' ? 'cf-turnstile-response' : 'g-recaptcha-response'}">';return 'fixture-widget'},
-        reset(){document.querySelector('#widget input').value='';return 'reset-receipt'}
-      }};
-      globalThis.grecaptcha=provider();grecaptcha.enterprise=provider();globalThis.turnstile=provider();
+      </script><script src="/provider/${name}"></script><script>
+      // App rendering follows provider script loading, as on supported sites.
       globalThis.fixtureProvider=${item.kind === 'enterprise' ? 'grecaptcha.enterprise' : item.kind === 'turnstile' ? 'turnstile' : 'grecaptcha'};
       globalThis.fixtureWidget=fixtureProvider.render(document.querySelector('#widget'),{sitekey:'synthetic-${name}',callback:fixtureCallback${item.kind === 'enterprise' ? ",s:'synthetic-enterprise-s',action:'login'" : item.kind === 'turnstile' ? ",action:'signup',cData:'synthetic_data'" : ''}});
       </script>`)

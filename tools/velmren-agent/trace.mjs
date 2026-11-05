@@ -3,7 +3,7 @@ import path from 'node:path'
 import { METHODS } from './client.mjs'
 import { sanitizeActionResult } from './action-result.mjs'
 
-const methods = new Set([...METHODS, 'client_register', 'broker_status', 'task_control', 'shutdown', 'captcha_settings'])
+const methods = new Set([...METHODS, 'client_register', 'client_recover', 'broker_status', 'task_control', 'shutdown', 'captcha_settings'])
 const identifier = value => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(value) ? value : undefined
 const duration = value => Number.isFinite(value) && value >= 0 ? Math.round(value * 1000) / 1000 : 0
 

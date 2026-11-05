@@ -122,7 +122,7 @@ try {
   const a = await connect('Sensitive acceptance A'), b = await connect('Sensitive acceptance B')
 
   await scenario('mcp_catalog_has_explicit_phase_and_no_private_input_tool', async () => {
-    const catalog = await a.client.listTools(); ensure(catalog.tools.length === 23, 'WRONG_TOOL_COUNT')
+    const catalog = await a.client.listTools(); ensure(catalog.tools.length === 24, 'WRONG_TOOL_COUNT')
     ensure(catalog.tools.some(tool => tool.name === 'velmren_sensitive'), 'PHASE_TOOL_MISSING')
     ensure(!catalog.tools.some(tool => /private_input/.test(tool.name)), 'PRIVATE_INPUT_EXPOSED')
   })

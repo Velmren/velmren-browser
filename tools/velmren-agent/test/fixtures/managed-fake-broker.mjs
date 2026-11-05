@@ -1,6 +1,6 @@
 import http from 'node:http'
 import path from 'node:path'
-import { randomUUID } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import { readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import { diagnostic, parseManagedOptions, resolveManagedOptions, runManagedBroker } from '../../managed-runtime.mjs'
 import { effectivePolicyIdentity } from '../../policy-identity.mjs'
@@ -34,7 +34,7 @@ async function startBroker({ stateDir, policy }) {
       if (request.args.policyIdentity !== policyIdentity || request.args.leaseMs !== 30000) { res.writeHead(400); res.end(JSON.stringify({ ok: false })); return }
       const clientId = randomUUID(), credential = randomUUID()
       clients.set(credential, clientId)
-      result = { clientId, token: credential, leaseMs: 30000 }
+      result = { clientId, token: credential, leaseMs: 30000, recoverySecret: randomBytes(32).toString('base64url') }
     } else if (admin && request.method === 'set_agent_protocol') {
       agentProtocol = request.args.version
       result = { agentProtocol }
