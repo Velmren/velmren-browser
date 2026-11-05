@@ -53,7 +53,7 @@ try {
   await scenario('overlay_is_preserved_with_specific_obscured_reason', async () => {
     const o = await observe(), e = element(o, 'Obscured button')
     const error = await capture(() => call('velmren_act', { taskId: task.taskId, observationId: o.observationId, actions: [{ type: 'click', ref: e.ref }] }))
-    assert.equal(error.code, 'ELEMENT_OBSCURED'); assert.deepEqual(error.diagnostic, { reason: 'obscured', phase: 'prepare' })
+    assert.equal(error.code, 'ELEMENT_OBSCURED'); assert.deepEqual(error.diagnostic, { reason: 'obscured', phase: 'prepare', obstruction: 'hit-test' })
     assert.equal(error.actionResult.completed, 0)
   })
   await scenario('stale_observation_is_identified_before_input', async () => {

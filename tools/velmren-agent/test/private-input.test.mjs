@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { PrivateInputs, stagePrivateInput } from '../private-input.mjs'
+import { BrokerError } from '../client.mjs'
 import { beginSensitive, endSensitive, rememberSensitiveDocument } from '../sensitive-state.mjs'
 import { isSensitiveTarget } from '../sensitive-renderer.mjs'
 
@@ -94,4 +95,16 @@ test('pages created after the phase begins require an observed baseline and a ne
   page.documentId = 'second-document'; page.url = 'https://fixture.test/safe'
   rememberSensitiveDocument(task, page)
   assert.equal(endSensitive(task, [page], page, { ...args, documentId: page.documentId }).active, false)
+})
+test('private preparation retains sanitized modal obstruction without reading a secret', async () => {
+  let reads = 0
+  const client = { call: async () => { throw new BrokerError('safe failure', 'ELEMENT_OBSCURED', undefined, undefined,
+    { diagnostic: { reason: 'obscured', phase: 'prepare', obstruction: 'modal-scope', selector: 'PRIVATE_MARKER' } }) } }
+  await assert.rejects(stagePrivateInput({ client, ...binding(), readSecret: async () => { reads++; return 'PRIVATE_MARKER' } }), error => {
+    assert.equal(error.code, 'ELEMENT_OBSCURED')
+    assert.deepEqual(error.diagnostic, { reason: 'obscured', phase: 'prepare', obstruction: 'modal-scope', stage: 'private_prepare' })
+    assert.equal(JSON.stringify(error).includes('PRIVATE_MARKER'), false)
+    return true
+  })
+  assert.equal(reads, 0)
 })

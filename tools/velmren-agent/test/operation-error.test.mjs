@@ -69,3 +69,28 @@ test('native protocol detachment is categorized before an outer operation assign
   annotateOperationError(error, 'prepare')
   assert.deepEqual(sanitizePublicError(error).diagnostic, { reason: 'detached', phase: 'prepare' })
 })
+
+test('obstruction categories distinguish modal scope from geometry through protected error copies', () => {
+  for (const [message, obstruction] of [
+    ['Element is outside active modal', 'modal-scope'],
+    ['Modal interaction scope is ambiguous', 'ambiguous-modal-scope'],
+    ['Element is obscured', 'hit-test'],
+    ['Frame is obscured', 'frame-hit-test']
+  ]) {
+    const source = annotateOperationError(Object.assign(new Error(message), { code: 'ELEMENT_OBSCURED' }), 'prepare')
+    source.message = 'Browser operation failed.'
+    annotateOperationError(source, 'validation')
+    const copy = new BrokerError('safe failure', source.code, undefined, undefined, source)
+    for (const sensitive of [false, true]) {
+      const result = sanitizePublicError(copy, { sensitive })
+      assert.equal(result.code, 'ELEMENT_OBSCURED')
+      assert.deepEqual(result.diagnostic, { reason: 'obscured', phase: 'validation', obstruction })
+    }
+  }
+})
+
+test('obstruction detail permits only the enum on obscured failures', () => {
+  assert.deepEqual(sanitizeDiagnostic({ reason: 'obscured', phase: 'prepare', obstruction: 'secret https://example.test/private' }), { reason: 'obscured', phase: 'prepare' })
+  assert.deepEqual(sanitizeDiagnostic({ reason: 'disabled', phase: 'prepare', obstruction: 'modal-scope' }), { reason: 'disabled', phase: 'prepare' })
+  assert.deepEqual(sanitizeDiagnostic({ reason: 'obscured', phase: 'prepare', get obstruction() { throw Error('getter evaluated') } }), { reason: 'obscured', phase: 'prepare' })
+})

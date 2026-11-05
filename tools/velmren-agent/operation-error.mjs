@@ -2,15 +2,16 @@ const reasons = new Set(['detached', 'stale', 'obscured', 'disabled', 'hidden', 
 for (const reason of ['observation-changed', 'document-changed', 'target-changed', 'origin-mismatch', 'unsupported-control', 'target-unavailable', 'binding-changed', 'capability-unavailable', 'value-unavailable', 'reader-failed', 'phase-stale', 'protected-documents-remain', 'baseline-unavailable', 'new-document-required', 'safe-reveal-required']) reasons.add(reason)
 const phases = new Set(['validation', 'create', 'attach', 'navigate', 'observe', 'prepare', 'input', 'verify', 'cleanup', 'wait', 'protocol'])
 const stages = new Set(['private_connect', 'private_prepare', 'private_read', 'private_provide', 'private_consume', 'private_revoke', 'sensitive_end'])
+const obstructions = new Set(['modal-scope', 'ambiguous-modal-scope', 'hit-test', 'frame-hit-test'])
 const networkErrors = new Set(['ERR_ABORTED', 'ERR_CONNECTION_CLOSED', 'ERR_CONNECTION_RESET', 'ERR_CONNECTION_REFUSED', 'ERR_CONNECTION_TIMED_OUT', 'ERR_TIMED_OUT', 'ERR_NAME_NOT_RESOLVED', 'ERR_INTERNET_DISCONNECTED', 'ERR_NETWORK_CHANGED', 'ERR_ADDRESS_UNREACHABLE', 'ERR_SSL_PROTOCOL_ERROR', 'ERR_CERT_AUTHORITY_INVALID', 'ERR_CERT_DATE_INVALID', 'ERR_CERT_COMMON_NAME_INVALID', 'ERR_BLOCKED_BY_CLIENT', 'ERR_BLOCKED_BY_RESPONSE', 'ERR_TOO_MANY_REDIRECTS', 'ERR_HTTP_RESPONSE_CODE_FAILURE', 'ERR_EMPTY_RESPONSE'])
 const own = (value, key) => value && typeof value === 'object' ? Object.getOwnPropertyDescriptor(value, key)?.value : undefined
 
 // Diagnostics carry only enumerated categories. They never carry a protocol
 // exception, a URL, a field value, or a page-authored error description.
 export function sanitizeDiagnostic(value) {
-  const reason = own(value, 'reason'), phase = own(value, 'phase'), networkError = own(value, 'networkError'), stage = own(value, 'stage')
+  const reason = own(value, 'reason'), phase = own(value, 'phase'), networkError = own(value, 'networkError'), stage = own(value, 'stage'), obstruction = own(value, 'obstruction')
   if (!reasons.has(reason) || !phases.has(phase)) return undefined
-  return { reason, phase, ...(stages.has(stage) ? { stage } : {}), ...(networkErrors.has(networkError) ? { networkError } : {}) }
+  return { reason, phase, ...(stages.has(stage) ? { stage } : {}), ...(networkErrors.has(networkError) ? { networkError } : {}), ...(reason === 'obscured' && obstructions.has(obstruction) ? { obstruction } : {}) }
 }
 
 export function sanitizeErrorContext(value) {
@@ -48,7 +49,7 @@ export function annotateOperationError(error, phase = 'protocol') {
   let reason = previous?.reason ?? privateReasons[message] ?? codeReasons[code]
   if (!reason) {
     if (/^(?:Stale observation|Unknown element reference|Element reference is stale|Page changed since observation)/.test(message)) reason = 'stale'
-    else if (/^(?:Element|Frame) is obscured$/.test(message)) reason = 'obscured'
+    else if (/^(?:(?:Element|Frame) is obscured|Element is outside active modal|Modal interaction scope is ambiguous)$/.test(message)) reason = 'obscured'
     else if (/^Element is disabled$/.test(message)) reason = 'disabled'
     else if (/^Element is not visible$/.test(message)) reason = 'hidden'
     else if (/Cannot find context with specified id|Execution context was destroyed|No frame with given id|No target with given id|Could not find (?:node|object) with given id|Session with given id not found|Not attached to an active page|Frame was detached/.test(message)) reason = 'detached'
@@ -62,7 +63,8 @@ export function annotateOperationError(error, phase = 'protocol') {
   }
   const match = /\bnet::(ERR_[A-Z_]+)\b/.exec(message)
   const networkError = previous?.networkError ?? (networkErrors.has(match?.[1]) ? match[1] : undefined)
-  error.diagnostic = { reason, phase: phases.has(phase) ? phase : previous?.phase ?? 'protocol', ...(previous?.stage ? { stage: previous.stage } : {}), ...(networkError ? { networkError } : {}) }
+  const obstruction = previous?.obstruction ?? ({ 'Element is outside active modal': 'modal-scope', 'Modal interaction scope is ambiguous': 'ambiguous-modal-scope', 'Element is obscured': 'hit-test', 'Frame is obscured': 'frame-hit-test' })[message]
+  error.diagnostic = { reason, phase: phases.has(phase) ? phase : previous?.phase ?? 'protocol', ...(previous?.stage ? { stage: previous.stage } : {}), ...(networkError ? { networkError } : {}), ...(reason === 'obscured' && obstructions.has(obstruction) ? { obstruction } : {}) }
   if ((!code || ['BROKER_ERROR', 'ACTION_FAILED'].includes(code)) && reasonCodes[reason]) error.code = reasonCodes[reason]
   if ((!code || code === 'BROKER_ERROR') && reason === 'timeout') error.code = phase === 'navigate' ? 'NAVIGATION_TIMEOUT' : 'CDP_TIMEOUT'
   return error

@@ -86,6 +86,6 @@ export async function stagePrivateInput({ stateDir, taskId, pageId, frameId, obs
     const clean = stage === 'private_read' ? {} : sanitizePublicError(annotateOperationError(new BrokerError(safe.error, safe.code, undefined, undefined, safe), 'prepare'))
     const code = clean.code && clean.code !== 'BROKER_ERROR' ? clean.code : 'PRIVATE_INPUT_UNAVAILABLE'
     throw new BrokerError('Private input preparation failed', code, undefined, undefined,
-      { ...clean, diagnostic: { reason: stage === 'private_read' ? 'reader-failed' : clean.diagnostic?.reason ?? 'unknown', phase: 'prepare', stage } })
+      { ...clean, diagnostic: { ...clean.diagnostic, reason: stage === 'private_read' ? 'reader-failed' : clean.diagnostic?.reason ?? 'unknown', phase: 'prepare', stage } })
   }
 }

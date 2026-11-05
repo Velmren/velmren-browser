@@ -192,6 +192,48 @@ test('inert ancestry crosses shadow hosts and slots', async () => {
   }
 })
 
+test('native modal escapes inherited inertness but keeps explicit dialog and descendant inertness', () => {
+  const modal = { tagName: 'DIALOG', matches: selector => selector === ':modal', parentElement: { inert: true } }
+  const f = fixture({ parentElement: modal })
+  assert.equal(f.call('elementCapabilities', f.element).disabled, false)
+  modal.inert = true
+  assert.equal(f.call('elementCapabilities', f.element).disabled, true)
+  modal.inert = false
+  f.element.parentElement = { inert: true, parentElement: modal }
+  assert.equal(f.call('elementCapabilities', f.element).disabled, true)
+  f.element.parentElement = modal
+  modal.matches = () => false
+  assert.equal(f.call('elementCapabilities', f.element).disabled, true, 'show() and open alone do not escape inertness')
+})
+
+test('modal paint ordering ignores scope enumeration order and refuses disjoint or conflicting witnesses', () => {
+  const f = fixture(), upper = {}, lower = {}
+  const upperHit = { parentElement: upper }, lowerHit = { parentElement: lower }
+  f.document.elementsFromPoint = () => [upperHit, lowerHit]
+  f.context.scopes = [lower, upper]; f.context.points = [{ x: 10, y: 10 }]
+  assert.equal(vm.runInContext('frontmostModal(scopes, points)', f.context), upper)
+  f.context.scopes.reverse()
+  assert.equal(vm.runInContext('frontmostModal(scopes, points)', f.context), upper)
+  f.context.points.push({ x: 20, y: 10 })
+  f.document.elementsFromPoint = x => x === 10 ? [upperHit] : [lowerHit]
+  assert.equal(vm.runInContext('frontmostModal(scopes, points)', f.context), null)
+  f.document.elementsFromPoint = x => x === 10 ? [upperHit, lowerHit] : [lowerHit, upperHit]
+  assert.equal(vm.runInContext('frontmostModal(scopes, points)', f.context), null)
+})
+
+test('shadow modal paint witnesses preserve external interleaving and repeated hosts', () => {
+  const f = fixture(), host = {}, lower = { parentElement: host }, upper = {}
+  const lowerHit = { parentElement: lower }, upperHit = { parentElement: upper }, overlay = { parentElement: host }
+  const nativeDocumentHits = [host, upperHit, host]
+  f.document.elementsFromPoint = () => nativeDocumentHits
+  host.shadowRoot = { elementsFromPoint: () => [overlay, upperHit, lowerHit] }
+  f.context.scopes = [lower, upper]; f.context.points = [{ x: 10, y: 10 }]
+  assert.equal(vm.runInContext('frontmostModal(scopes, points)', f.context), upper)
+  assert.deepEqual(Array.from(vm.runInContext('modalPaintHits(10, 10)', f.context)), nativeDocumentHits)
+  f.context.scopes = [host, upper]
+  assert.equal(vm.runInContext('frontmostModal(scopes, points)', f.context), null, 'one scope straddling another has no unique foreground')
+})
+
 test('malformed, sanitized-away, and constraint-invalid dates never mutate or focus', async () => {
   for (const [value, probe] of [['02/29/2024'], ['2024-02-30'], ['2024-02-29', { validity: { valid: false } }]]) {
     const f = fixture({ type: 'date', value: '2024-01-01', probe })

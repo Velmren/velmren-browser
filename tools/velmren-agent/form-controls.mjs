@@ -96,29 +96,153 @@ export function controlClientRects(el) {
   })
 }
 
-export function controlBlockedByModal(el) {
-  const roots = [document]
-  for (let index = 0; index < roots.length; index++) {
-    for (const node of roots[index].querySelectorAll?.('*') ?? []) {
-      if (node.shadowRoot) roots.push(node.shadowRoot)
-      const modal = node.matches?.('dialog:modal,[role="dialog"][aria-modal="true"],[role="alertdialog"][aria-modal="true"]')
-      if (!modal || composedContains(node, el)) continue
-      const style = getComputedStyle(node)
-      if (style.display === 'none' || ['hidden', 'collapse'].includes(style.visibility) || hasTransparentAncestor(node)) continue
-      // Portalled lists remain in the modal's interaction scope only through an
-      // explicit ownership link or an expanded control inside that modal.
-      const owned = [node, ...(node.querySelectorAll?.('[aria-owns],[aria-controls][aria-expanded="true"]') ?? [])].some(controller => {
-        const ids = `${controller.getAttribute('aria-owns') ?? ''} ${controller.getAttribute('aria-expanded') === 'true' ? controller.getAttribute('aria-controls') ?? '' : ''}`.trim().split(/\s+/).filter(Boolean)
-        return ids.some(id => {
-          const target = controller.getRootNode?.().getElementById?.(id)
-          return target?.isConnected && target.ownerDocument === el.ownerDocument && composedContains(target, el)
-        })
-      })
-      if (owned) continue
-      if (controlClientRects(node).some(rect => rect.width && rect.height)) return true
-    }
+export function controlIsInert(el) {
+  const seen = new Set()
+  for (let node = el; node && !seen.has(node); node = composedParent(node)) {
+    seen.add(node)
+    if (node.inert || node.hasAttribute?.('inert')) return true
+    // A showModal() dialog escapes inherited inertness, never its own inert.
+    if (node.tagName === 'DIALOG' && node.matches?.(':modal')) return false
   }
   return false
+}
+
+export function modalPaintHits(x, y, root = document) {
+  return [...(root.elementsFromPoint?.(x, y) ?? [root.elementFromPoint?.(x, y)])].filter(Boolean)
+}
+
+export function modalPaintStacks(x, y) {
+  const stacks = [], roots = [document], seen = new Set(roots)
+  for (let index = 0; index < roots.length; index++) {
+    const stack = modalPaintHits(x, y, roots[index])
+    // A shadow subtree can straddle an external surface in paint order. Keep
+    // each native stack, including external anchors and repeated host entries.
+    stacks.push(stack)
+    for (const hit of stack) if (hit.shadowRoot && !seen.has(hit.shadowRoot)) {
+      seen.add(hit.shadowRoot); roots.push(hit.shadowRoot)
+    }
+  }
+  return stacks
+}
+
+export function modalPaintPoints(scopes, nodes, target) {
+  const points = [], seen = new Set()
+  const add = node => {
+    for (const box of controlClientRects(node).slice(0, 16)) {
+      const left = Math.max(0, box.x), top = Math.max(0, box.y)
+      const right = Math.min(innerWidth, box.x + box.width), bottom = Math.min(innerHeight, box.y + box.height)
+      if (right <= left || bottom <= top) continue
+      for (const [horizontal, vertical] of [[.5, .5], [.15, .5], [.85, .5], [.5, .2], [.5, .8]]) {
+        const point = { x: left + (right - left) * horizontal, y: top + (bottom - top) * vertical }
+        const key = `${point.x}:${point.y}`
+        if (!seen.has(key)) { seen.add(key); points.push(point) }
+      }
+    }
+  }
+  add(target)
+  for (const scope of scopes) add(scope)
+  // Pointer-transparent modal roots still own painted interactive descendants.
+  // Bounded witnesses may leave ordering ambiguous, never imply DOM ordering.
+  for (const scope of scopes) {
+    let witnesses = 0
+    for (const node of nodes) {
+      if (node === scope || !composedContains(scope, node)) continue
+      const style = getComputedStyle(node)
+      if (style.pointerEvents === 'none' || style.display === 'none' || ['hidden', 'collapse'].includes(style.visibility)) continue
+      if (!controlClientRects(node).some(box => box.width && box.height)) continue
+      add(node)
+      if (++witnesses === 64) break
+    }
+  }
+  return points
+}
+
+export function frontmostModal(scopes, points) {
+  if (scopes.length === 1) return scopes[0]
+  const above = new Map(scopes.map(scope => [scope, new Set()]))
+  for (const { x, y } of points) {
+    for (const stack of modalPaintStacks(x, y)) {
+      const earlier = new Set()
+      for (const hit of stack) {
+        const owner = scopes.find(scope => composedContains(scope, hit))
+        if (!owner) continue
+        // Interleaved scope surfaces contribute both directions, so conflicting
+        // evidence remains ambiguous instead of selecting the first occurrence.
+        for (const previous of earlier) if (previous !== owner) above.get(previous).add(owner)
+        earlier.add(owner)
+      }
+    }
+  }
+  const reaches = (start, target) => {
+    const pending = [...above.get(start)], seen = new Set()
+    for (let index = 0; index < pending.length; index++) {
+      const node = pending[index]
+      if (node === target) return true
+      if (seen.has(node)) continue
+      seen.add(node); pending.push(...above.get(node))
+    }
+    return false
+  }
+  const winners = scopes.filter(scope => scopes.every(other => other === scope || reaches(scope, other) && !reaches(other, scope)))
+  return winners.length === 1 ? winners[0] : null
+}
+
+export function modalOwnsTarget(modal, el, nodes) {
+  // Ownership belongs to the active scope, not an obscured sibling's control.
+  return [modal, ...nodes.filter(node => composedContains(modal, node))].some(controller => {
+    const ids = `${controller.getAttribute?.('aria-owns') ?? ''} ${controller.getAttribute?.('aria-expanded') === 'true' ? controller.getAttribute?.('aria-controls') ?? '' : ''}`.trim().split(/\s+/).filter(Boolean)
+    return ids.some(id => {
+      const target = controller.getRootNode?.().getElementById?.(id)
+      return target?.isConnected && target.ownerDocument === el.ownerDocument && composedContains(target, el)
+    })
+  })
+}
+
+export function controlBlockedByModal(el) {
+  const roots = [document], nodes = [], native = [], aria = []
+  for (let index = 0; index < roots.length; index++) {
+    for (const node of roots[index].querySelectorAll?.('*') ?? []) {
+      nodes.push(node)
+      if (node.shadowRoot) roots.push(node.shadowRoot)
+      if (node.tagName === 'DIALOG' && node.matches?.(':modal')) { native.push(node); continue }
+      if (!node.matches?.('[role="dialog"][aria-modal="true"],[role="alertdialog"][aria-modal="true"]')) continue
+      const style = getComputedStyle(node)
+      if (style.display === 'none' || ['hidden', 'collapse'].includes(style.visibility) || hasTransparentAncestor(node) || controlIsInert(node)) continue
+      let hidden = false
+      const seen = new Set()
+      for (let parent = node; parent && !seen.has(parent); parent = composedParent(parent)) {
+        seen.add(parent)
+        if (parent.getAttribute?.('aria-hidden') === 'true') { hidden = true; break }
+      }
+      if (!hidden && controlClientRects(node).some(rect => rect.width && rect.height)) aria.push(node)
+    }
+  }
+  if (!native.length && !aria.length) return false
+  let active = null
+  if (native.length === 1) active = native[0]
+  else if (native.length) {
+    const witnessed = new Set()
+    for (const { x, y } of modalPaintPoints(native, nodes, el)) {
+      const hit = controlHit(x, y)
+      // Native modality makes every other dialog inert, including its backdrop.
+      const owners = native.filter(modal => composedContains(modal, hit))
+      const owner = owners.find(modal => !owners.some(other => other !== modal && composedContains(modal, other)))
+      if (owner) witnessed.add(owner)
+    }
+    if (witnessed.size !== 1) throw new Error('Modal interaction scope is ambiguous')
+    active = [...witnessed][0]
+  }
+  if (active && !composedContains(active, el)) return true
+  let pending = aria.filter(modal => !active || composedContains(active, modal))
+  const points = pending.length > 1 ? modalPaintPoints(pending, nodes, el) : []
+  while (pending.length) {
+    const siblings = pending.filter(modal => !pending.some(other => other !== modal && composedContains(other, modal)))
+    const foreground = frontmostModal(siblings, points)
+    if (!foreground) throw new Error('Modal interaction scope is ambiguous')
+    active = foreground
+    pending = pending.filter(modal => modal !== active && composedContains(active, modal))
+  }
+  return !!active && !composedContains(active, el) && !modalOwnsTarget(active, el, nodes)
 }
 
 export function focusedAutocompleteDecorationPoint(el, type, hit, point) {
@@ -217,12 +341,12 @@ export function elementCapabilities(el, measure = true) {
   const box = measure ? el.getBoundingClientRect() : null, style = measure ? getComputedStyle(el) : null
   const hasBox = measure && (box.width && box.height || style.display === 'contents' && controlClientRects(el).some(rect => rect.width && rect.height))
   const hidden = !!(measure && (!hasBox || ['hidden', 'collapse'].includes(style.visibility) || style.display === 'none' || hasTransparentAncestor(composedParent(el))))
-  let inert = false, ariaDisabled = false
+  const inert = controlIsInert(el)
+  let ariaDisabled = false
   const ancestors = new Set()
   for (let parent = el; parent && !ancestors.has(parent); parent = composedParent(parent)) {
     ancestors.add(parent)
     ariaDisabled ||= parent.getAttribute?.('aria-disabled') === 'true'
-    if (parent.inert || parent.hasAttribute?.('inert')) { inert = true; break }
   }
   const disabled = !!el.disabled || !!el.matches?.(':disabled') || ariaDisabled || inert
   const readOnly = !!el.readOnly || el.getAttribute('aria-readonly') === 'true'
@@ -348,7 +472,7 @@ export async function prepareElement({ ref, type, value, checked }) {
   await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
   if (!el.isConnected || el.ownerDocument && el.ownerDocument !== document) throw new Error('Element reference is stale; observe again')
   capabilities = validate()
-  if (controlBlockedByModal(el)) throw new Error('Element is obscured')
+  if (controlBlockedByModal(el)) throw new Error('Element is outside active modal')
   preparedValue = type === 'select' || type === 'fill' && capabilities.nativeValueInput ? probeFormValue(el, type, value) : undefined
   const box = el.getBoundingClientRect()
   const x = Math.max(0, Math.min(innerWidth - 1, box.x + box.width / 2))
@@ -376,7 +500,7 @@ export function validatePreparedElement({ ref, type, point, noOp, checked }) {
   if (capabilities.disabled) throw new Error('Element is disabled')
   if (capabilities.hidden && !capabilities.labelProxy && !capabilities.cardProxy) throw new Error('Element is not visible')
   if (!capabilities.availableActions.includes(type)) throw new Error('Element does not support this action')
-  if (controlBlockedByModal(el)) throw new Error('Element is obscured')
+  if (controlBlockedByModal(el)) throw new Error('Element is outside active modal')
   if (noOp && type === 'setChecked' && controlState(el).checked === checked) return
   const currentPoint = controlActionPoint(el, type)
   if (point && (point.x !== currentPoint.x || point.y !== currentPoint.y)) throw new Error('Element is obscured')
@@ -394,7 +518,7 @@ export function applyFormValue({ ref, type, value }) {
   const capabilities = elementCapabilities(el)
   if (!capabilities.availableActions.includes(type)) throw new Error('Element does not support this action')
   const { expectedValue } = probeFormValue(el, type, value)
-  if (controlBlockedByModal(el)) throw new Error('Element is obscured')
+  if (controlBlockedByModal(el)) throw new Error('Element is outside active modal')
   controlActionPoint(el, type)
   const prototype = type === 'select' ? HTMLSelectElement.prototype : HTMLInputElement.prototype
   const setter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set

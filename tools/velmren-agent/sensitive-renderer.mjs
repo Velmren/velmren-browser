@@ -17,7 +17,7 @@ export function inspectPrivateTarget({ ref, revision, origin }) {
   if (capabilities.disabled) throw new Error('Element is disabled')
   if (capabilities.hidden) throw new Error('Element is not visible')
   if (!capabilities.availableActions.includes('fill')) throw new Error('Private input target is unavailable')
-  if (controlBlockedByModal(el)) throw new Error('Element is obscured')
+  if (controlBlockedByModal(el)) throw new Error('Element is outside active modal')
   controlActionPoint(el, 'fill')
   return { origin: location.origin }
 }

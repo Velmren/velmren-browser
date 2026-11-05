@@ -123,6 +123,17 @@ An already focused, autosized autocomplete can receive keyboard input beneath
 its own noninteractive placeholder; external overlays and modal blockers still
 prevent delivery.
 
+Modal interaction is limited to the active foreground scope. Native top-layer
+dialogs and browser hit/paint order distinguish stacked dialogs, including
+portalled siblings and pointer-transparent containers with interactive children.
+Background dialogs do not block a control in the foreground dialog, but exposed
+background controls remain unavailable. Explicitly owned popup controls retain
+their modal scope. Ambiguous unrelated modal stacks are rejected; focus or a
+large numeric z-index alone does not establish foreground ownership. Scope and
+geometry are checked again after focus/scroll preparation, including private
+input. Native modal dialogs escape inherited inertness, while explicit inertness
+on the modal or a descendant still disables that subtree.
+
 ### Sensitive inputs and outputs
 
 Public responses expose HTTP(S) origins only, including URLs inside text. They
@@ -501,7 +512,10 @@ responses. The CLI emits `{ok:true,result}` on success, or `{ok:false,error,code
 to stderr with a nonzero exit status. It never retries actions automatically.
 Errors also preserve sanitized `actionResult` and `waitResult` when available.
 `diagnostic` adds an enumerated `reason` and `phase`; navigation failures may also
-carry an allowlisted `networkError`. No raw browser/site exception, field value,
+carry an allowlisted `networkError`. Obscured controls retain their existing
+error code and add an `obstruction` enum: `modal-scope`,
+`ambiguous-modal-scope`, `hit-test`, or `frame-hit-test`. No DOM selector, raw
+browser/site exception, field value,
 or URL is included. Validated task/page/frame IDs identify the owned context;
 a failed create can return its already-cancelled task ID for inspection. A failed
 readback or final observation keeps acknowledged delivery and adds its diagnostic.

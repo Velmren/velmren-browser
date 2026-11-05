@@ -173,7 +173,7 @@ export class AgentPage {
     } catch (error) { if (!(error instanceof DialogOpened)) error.deliveryUncertain = true; throw error }
     if (result.exceptionDetails) {
       const firstLine = String(result.exceptionDetails.exception?.description || result.exceptionDetails.text).split('\n')[0].replace(/^Error:\s*/, '').trim()
-      const code = /^(?:Element|Frame) is obscured$/.test(firstLine) ? 'ELEMENT_OBSCURED'
+      const code = /^(?:(?:Element|Frame) is obscured|Element is outside active modal|Modal interaction scope is ambiguous)$/.test(firstLine) ? 'ELEMENT_OBSCURED'
         : firstLine === 'Element is disabled' ? 'ELEMENT_DISABLED'
         : firstLine === 'Element is not visible' ? 'ELEMENT_HIDDEN'
         : firstLine === 'Private input target is unavailable' ? 'ELEMENT_UNAVAILABLE'
