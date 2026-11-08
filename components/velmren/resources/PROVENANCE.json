@@ -1,5 +1,7 @@
 {
   "catalogRevision": "6da9b247c3368baa8b4f24cd02046e18702a6527",
+  "velmrenCatalogVersion": 2,
+  "catalogExtensions": "AdGuard Other Annoyances and uBlock Other Annoyances, introduced in catalog 2",
   "lists": [
     {
       "url": "https://raw.githubusercontent.com/uBlockOrigin/uAssets/master/filters/filters.txt",
@@ -286,6 +288,32 @@
       "file": "lists/25.txt",
       "sha256": "c1a06034820b39de381746d9c4ee8251a29f56dbd9c609d404236f4b93d04e39",
       "bytes": 51376
+    },
+    {
+      "url": "https://filters.adtidy.org/extension/ublock/filters/21.txt",
+      "title": "AdGuard Other Annoyances filter",
+      "group": "Velmren Browser Promotion and Annoyance Filters",
+      "is_default_engine": false,
+      "permission_mask": 1,
+      "format": "Standard",
+      "introduced_version": 2,
+      "source_sha256": "310a4270525412bd910bd70ccd1d0d81d7be18612603a19a322e82c7d43e09d4",
+      "normalization": "CRLF to LF",
+      "file": "lists/26.txt",
+      "sha256": "311022cd1639b3535c0ef185f2a8c02becbf57f5904cb5cb874defc9072387ab",
+      "bytes": 776553
+    },
+    {
+      "url": "https://raw.githubusercontent.com/uBlockOrigin/uAssets/master/filters/annoyances-others.txt",
+      "title": "uBlock filters – Other Annoyances",
+      "group": "Velmren Browser Promotion and Annoyance Filters",
+      "is_default_engine": false,
+      "permission_mask": 1,
+      "format": "Standard",
+      "introduced_version": 2,
+      "file": "lists/27.txt",
+      "sha256": "d6311d15ca4846b9a28762b7b463220545b4dea2586ef5f82c4597b47a224f13",
+      "bytes": 423995
     }
   ]
 }

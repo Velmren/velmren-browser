@@ -276,6 +276,11 @@ AdBlockSubscriptionServiceManager::GetSubscriptions() {
   return infos;
 }
 
+bool AdBlockSubscriptionServiceManager::is_initialized() const {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  return initialized_;
+}
+
 void AdBlockSubscriptionServiceManager::EnableSubscription(const GURL& sub_url,
                                                            bool enabled) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
@@ -350,28 +355,46 @@ void AdBlockSubscriptionServiceManager::OnGetDownloadManager(
   download_manager_->CancelAllPendingDownloads();
   LoadSubscriptionServices();
 
-  if (velmren::kPublicFilterListsEnabled && local_state_ &&
-      !local_state_->GetBoolean(prefs::kAdBlockPublicListsSeeded)) {
-    AdBlockSubscriptionFiltersProvider* default_provider = nullptr;
-    AdBlockSubscriptionFiltersProvider* additional_provider = nullptr;
+  if (velmren::kPublicFilterListsEnabled && local_state_) {
+    int seeded_version =
+        local_state_->GetInteger(prefs::kAdBlockPublicListsSeededVersion);
+    if (seeded_version == 0 &&
+        local_state_->GetBoolean(prefs::kAdBlockPublicListsSeeded)) {
+      seeded_version = 1;
+    }
     for (const auto& list : velmren::GetPublicFilterLists()) {
       // A disabled subscription is an explicit choice, even without a provider.
-      if (!subscriptions_.contains(list.url)) {
+      if (list.introduced_version > seeded_version &&
+          list.introduced_version <= velmren::kPublicFilterCatalogVersion &&
+          !subscriptions_.contains(list.url)) {
+        local_state_->SetBoolean(
+            list.is_default_engine
+                ? prefs::kAdBlockPublicListsDefaultCacheDirty
+                : prefs::kAdBlockPublicListsAdditionalCacheDirty,
+            true);
         const GURL url(list.url);
         CreateSubscription(url);
         auto info = GetInfo(url);
         info->title = std::string(list.title);
         UpdateSubscriptionPrefs(url, *info);
-        (list.is_default_engine ? default_provider : additional_provider) =
-            subscription_filters_providers_.at(url).get();
       }
     }
-    local_state_->SetBoolean(prefs::kAdBlockPublicListsSeeded, true);
-    if (default_provider) {
-      default_provider->OnListAvailable();
+    if (seeded_version < velmren::kPublicFilterCatalogVersion) {
+      local_state_->SetInteger(prefs::kAdBlockPublicListsSeededVersion,
+                               velmren::kPublicFilterCatalogVersion);
+      local_state_->SetBoolean(prefs::kAdBlockPublicListsSeeded, true);
     }
-    if (additional_provider) {
-      additional_provider->OnListAvailable();
+  }
+
+  initialized_ = true;
+  if (velmren::kPublicFilterListsEnabled && local_state_) {
+    // Deferred initialization can leave startup builds with fewer providers.
+    if (local_state_->GetBoolean(prefs::kAdBlockPublicListsDefaultCacheDirty)) {
+      filters_provider_manager_->RequireFilterSetReload(true);
+    }
+    if (local_state_->GetBoolean(
+            prefs::kAdBlockPublicListsAdditionalCacheDirty)) {
+      filters_provider_manager_->RequireFilterSetReload(false);
     }
   }
 

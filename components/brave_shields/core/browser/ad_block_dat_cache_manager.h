@@ -29,7 +29,9 @@ class AdBlockDATCacheManager {
 
   // Writes a serialized DAT buffer to disk atomically.
   // Calls |on_complete| with success/failure.
-  void WriteDATFile(bool is_default_engine, DATFileDataBuffer dat);
+  void WriteDATFile(bool is_default_engine,
+                    DATFileDataBuffer dat,
+                    base::OnceCallback<void(bool)> on_complete = {});
 
   // Deletes cached DAT files from disk.
   void DropDATCache();

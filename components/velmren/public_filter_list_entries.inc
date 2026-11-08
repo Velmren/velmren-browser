@@ -25,4 +25,6 @@ constexpr PublicFilterList kPublicFilterLists[] = {
     {"https://raw.githubusercontent.com/uBlockOrigin/uAssets/master/filters/privacy.txt", "uBlock Origin filters – Privacy", true, 1, IDR_VELMREN_FILTER_LIST_23},
     {"https://raw.githubusercontent.com/brave/adblock-lists/master/brave-lists/brave-firstparty.txt", "Brave First-Party Specific Filters", false, 1, IDR_VELMREN_FILTER_LIST_24},
     {"https://raw.githubusercontent.com/brave/adblock-lists/master/brave-lists/brave-firstparty-regional.txt", "Brave First-Party Regional Filters", false, 1, IDR_VELMREN_FILTER_LIST_25},
+    {"https://filters.adtidy.org/extension/ublock/filters/21.txt", "AdGuard Other Annoyances filter", false, 1, IDR_VELMREN_FILTER_LIST_26, 2},
+    {"https://raw.githubusercontent.com/uBlockOrigin/uAssets/master/filters/annoyances-others.txt", "uBlock filters – Other Annoyances", false, 1, IDR_VELMREN_FILTER_LIST_27, 2},
 };

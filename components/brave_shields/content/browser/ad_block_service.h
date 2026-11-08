@@ -84,8 +84,10 @@ class AdBlockService {
    public:
     // Callback to handle loading resources into the engine.
     // If filter_set is non-null, calls Load; otherwise calls UseResources.
+    // The generation identifies the provider set captured by an async load.
     using OnResourcesLoadedCallback = base::RepeatingCallback<void(
         bool,
+        uint64_t,
         std::optional<DATFileDataBuffer>,
         std::unique_ptr<rust::Box<adblock::FilterSet>>,
         AdblockResourceStorageBox)>;
@@ -109,16 +111,20 @@ class AdBlockService {
 
    private:
     void LoadResources(
+        uint64_t filter_set_generation,
         std::unique_ptr<rust::Box<adblock::FilterSet>> filter_set);
     void OnFilterSetLoaded(
+        uint64_t filter_set_generation,
         base::OnceCallback<void(rust::Box<adblock::FilterSet>*)> cb);
     void OnFilterSetCreated(
+        uint64_t filter_set_generation,
         std::unique_ptr<rust::Box<adblock::FilterSet>> filter_set);
 
     // AdBlockResourceProvider::Observer
     void OnResourcesLoaded(AdblockResourceStorageBox storage) override;
 
-    void OnAllLoaded(std::unique_ptr<rust::Box<adblock::FilterSet>> filter_set,
+    void OnAllLoaded(uint64_t filter_set_generation,
+                     std::unique_ptr<rust::Box<adblock::FilterSet>> filter_set,
                      AdblockResourceStorageBox storage);
 
     OnResourcesLoadedCallback on_resources_loaded_;
@@ -210,6 +216,7 @@ class AdBlockService {
 
   void OnResourcesLoaded(
       bool is_default_engine,
+      uint64_t filter_set_generation,
       std::optional<DATFileDataBuffer> dat,
       std::unique_ptr<rust::Box<adblock::FilterSet>> filter_set,
       AdblockResourceStorageBox storage);
@@ -217,7 +224,11 @@ class AdBlockService {
   void OnDATLoaded(bool is_default_engine, bool success);
   void OnEngineLoaded(
       bool is_default_engine,
+      uint64_t filter_set_generation,
       std::pair<FilterListLoadResult, std::optional<DATFileDataBuffer>> result);
+  void OnDATCacheWritten(bool is_default_engine,
+                         uint64_t filter_set_generation,
+                         bool success);
   void OnReadCachedDATFiles(std::optional<DATFileDataBuffer> default_dat,
                             std::optional<DATFileDataBuffer> additional_dat);
 

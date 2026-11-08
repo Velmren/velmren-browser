@@ -35,6 +35,8 @@
       <include name="IDR_VELMREN_FILTER_LIST_23" file="lists/23.txt" type="BINDATA" />
       <include name="IDR_VELMREN_FILTER_LIST_24" file="lists/24.txt" type="BINDATA" />
       <include name="IDR_VELMREN_FILTER_LIST_25" file="lists/25.txt" type="BINDATA" />
+      <include name="IDR_VELMREN_FILTER_LIST_26" file="lists/26.txt" type="BINDATA" />
+      <include name="IDR_VELMREN_FILTER_LIST_27" file="lists/27.txt" type="BINDATA" />
     </includes>
   </release>
 </grit>

@@ -27,6 +27,12 @@ inline constexpr char kAdBlockListSubscriptions[] =
     "brave.ad_block.list_subscriptions";
 inline constexpr char kAdBlockPublicListsSeeded[] =
     "velmren.ad_block.public_lists_seeded";
+inline constexpr char kAdBlockPublicListsSeededVersion[] =
+    "velmren.ad_block.public_lists_seeded_version";
+inline constexpr char kAdBlockPublicListsDefaultCacheDirty[] =
+    "velmren.ad_block.public_lists_default_cache_dirty";
+inline constexpr char kAdBlockPublicListsAdditionalCacheDirty[] =
+    "velmren.ad_block.public_lists_additional_cache_dirty";
 inline constexpr char kAdBlockDebugMode[] = "brave.ad_block.debug_mode";
 inline constexpr char kAdBlockDeveloperMode[] = "brave.ad_block.developer_mode";
 

@@ -6,6 +6,7 @@
 #ifndef BRAVE_COMPONENTS_BRAVE_SHIELDS_CORE_BROWSER_AD_BLOCK_FILTERS_PROVIDER_MANAGER_H_
 #define BRAVE_COMPONENTS_BRAVE_SHIELDS_CORE_BROWSER_AD_BLOCK_FILTERS_PROVIDER_MANAGER_H_
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -62,6 +63,11 @@ class AdBlockFiltersProviderManager : public AdBlockFiltersProvider,
   void ForceNotifyObserver(AdBlockFiltersProvider::Observer& observer,
                            bool is_default_engine);
 
+  // Rebuilds when providers are ready, including when startup DAT loading has
+  // already started with an older set of filter lists.
+  void RequireFilterSetReload(bool is_default_engine);
+  uint64_t GetFilterSetGeneration(bool is_default_engine) const;
+
   std::string GetNameForDebugging() override;
 
   const base::flat_set<AdBlockFiltersProvider*>& GetProviders(
@@ -70,6 +76,7 @@ class AdBlockFiltersProviderManager : public AdBlockFiltersProvider,
  private:
   bool MaybeConsumeEngineStartupChangeNotification(bool is_for_default_engine);
   bool AreAllProvidersInitialized(bool is_for_default_engine) const;
+  void AdvanceFilterSetGeneration(bool is_for_default_engine);
 
   void FinishCombinating(
       base::OnceCallback<
@@ -83,6 +90,8 @@ class AdBlockFiltersProviderManager : public AdBlockFiltersProvider,
 
   bool suppress_default_engine_startup_change_notification_ = false;
   bool suppress_additional_engine_startup_change_notification_ = false;
+  uint64_t default_engine_filter_set_generation_ = 0;
+  uint64_t additional_engine_filter_set_generation_ = 0;
 
   base::CancelableTaskTracker task_tracker_;
 

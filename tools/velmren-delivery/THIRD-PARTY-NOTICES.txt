@@ -32,3 +32,13 @@ The LZMA SDK source code and SDK binaries, including the embedded 7zr decoder,
 are placed in the public domain. Original SDK sources, license, download URL,
 and exact SHA-256 hashes are retained in tools/velmren-delivery/native.
 The native decoder is used only during compact package extraction.
+
+AdGuard Other Annoyances filter and uBlock Other Annoyances filters
+https://github.com/AdguardTeam/AdguardFilters
+https://github.com/uBlockOrigin/uAssets
+
+These publicly maintained filter lists are distributed under GPL-3.0.
+The installed licenses/Shields directory contains the license texts, and
+licenses/Shields-PROVENANCE.json identifies the bundled sources and hashes.
+The corresponding filter snapshots are included in the published source tree
+under components/velmren/resources/lists/26.txt and 27.txt.

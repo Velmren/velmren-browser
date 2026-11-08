@@ -9,6 +9,24 @@
 
 namespace velmren {
 
+TEST(VelmrenPublicFiltersTest, CatalogVersionsPreserveOriginalLists) {
+  int original_count = 0;
+  int new_count = 0;
+  for (const auto& list : GetPublicFilterLists()) {
+    EXPECT_GE(list.introduced_version, 1);
+    EXPECT_LE(list.introduced_version, kPublicFilterCatalogVersion);
+    if (list.introduced_version == 1) {
+      ++original_count;
+    } else {
+      ++new_count;
+      EXPECT_EQ(list.introduced_version, 2);
+      EXPECT_FALSE(list.is_default_engine);
+    }
+  }
+  EXPECT_EQ(original_count, 26);
+  EXPECT_EQ(new_count, 2);
+}
+
 TEST(VelmrenPublicFiltersTest, TrustedUrlsAreExact) {
   const auto* list =
       FindPublicFilterList("https://easylist.to/easylist/easylist.txt");
@@ -17,8 +35,8 @@ TEST(VelmrenPublicFiltersTest, TrustedUrlsAreExact) {
   EXPECT_EQ(list->permission_mask, 1);
   EXPECT_FALSE(FindPublicFilterList(
       "https://easylist.to.evil.invalid/easylist/easylist.txt"));
-  EXPECT_FALSE(FindPublicFilterList(
-      "http://easylist.to/easylist/easylist.txt"));
+  EXPECT_FALSE(
+      FindPublicFilterList("http://easylist.to/easylist/easylist.txt"));
   const auto* first_party = FindPublicFilterList(
       "https://raw.githubusercontent.com/brave/adblock-lists/master/"
       "brave-lists/brave-firstparty.txt");
@@ -46,8 +64,8 @@ TEST(VelmrenPublicFiltersTest, RejectMalformedConditionals) {
   EXPECT_FALSE(PreprocessPublicFilters("!#else\nrule"));
   EXPECT_FALSE(PreprocessPublicFilters("!#if env_chromium\nrule"));
   EXPECT_FALSE(PreprocessPublicFilters("!#endif"));
-  EXPECT_FALSE(PreprocessPublicFilters(
-      "!#if env_chromium\n!#else\n!#else\n!#endif"));
+  EXPECT_FALSE(
+      PreprocessPublicFilters("!#if env_chromium\n!#else\n!#else\n!#endif"));
 }
 
 }  // namespace velmren

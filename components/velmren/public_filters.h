@@ -14,12 +14,15 @@
 
 namespace velmren {
 
+inline constexpr int kPublicFilterCatalogVersion = 2;
+
 struct PublicFilterList {
   std::string_view url;
   std::string_view title;
   bool is_default_engine;
   uint8_t permission_mask;
   int resource_id;
+  int introduced_version = 1;
 };
 
 std::span<const PublicFilterList> GetPublicFilterLists();

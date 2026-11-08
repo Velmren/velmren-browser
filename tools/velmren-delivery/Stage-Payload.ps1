@@ -106,6 +106,8 @@ $repo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 Copy-TreeSafe (Join-Path $repo 'LICENSE') (Join-Path $licenses 'Brave-MPL-2.0.txt')
 Copy-TreeSafe (Join-Path $repo '../LICENSE') (Join-Path $licenses 'Chromium-LICENSE.txt')
 Copy-TreeSafe $NodeLicense (Join-Path $licenses 'Node-LICENSE.txt')
+Copy-TreeSafe (Join-Path $repo 'components/velmren/resources/licenses') (Join-Path $licenses 'Shields')
+Copy-TreeSafe (Join-Path $repo 'components/velmren/resources/PROVENANCE.json') (Join-Path $licenses 'Shields-PROVENANCE.json')
 if ($DeliveryEngine) {
   Copy-TreeSafe (Join-Path $PSScriptRoot 'THIRD-PARTY-NOTICES.txt') (Join-Path $licenses 'Delivery-THIRD-PARTY-NOTICES.txt')
   Copy-TreeSafe (Join-Path $PSScriptRoot 'native/LZMA-SDK-26.05.txt') (Join-Path $licenses 'LZMA-SDK-26.05.txt')

@@ -96,6 +96,8 @@ class AdBlockSubscriptionServiceManager {
   GURL GetListTextFileUrl(const GURL sub_url) const;
 
   std::vector<SubscriptionInfo> GetSubscriptions();
+  // All persisted subscriptions and catalog additions have been registered.
+  bool is_initialized() const;
   void EnableSubscription(const GURL& sub_url, bool enabled);
   void DeleteSubscription(const GURL& sub_url);
   void RefreshSubscription(const GURL& sub_url, bool from_ui);

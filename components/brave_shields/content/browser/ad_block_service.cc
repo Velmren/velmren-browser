@@ -73,14 +73,16 @@ void AdBlockService::SourceProviderObserver::OnChanged(bool is_default_engine) {
     return;
   }
 
-  auto on_loaded_cb =
-      base::BindOnce(&AdBlockService::SourceProviderObserver::OnFilterSetLoaded,
-                     weak_factory_.GetWeakPtr());
+  auto on_loaded_cb = base::BindOnce(
+      &AdBlockService::SourceProviderObserver::OnFilterSetLoaded,
+      weak_factory_.GetWeakPtr(),
+      filters_provider_manager_->GetFilterSetGeneration(is_default_engine));
   filters_provider_manager_->LoadFilterSetForEngine(is_default_engine,
                                                     std::move(on_loaded_cb));
 }
 
 void AdBlockService::SourceProviderObserver::OnFilterSetLoaded(
+    uint64_t filter_set_generation,
     base::OnceCallback<void(rust::Box<adblock::FilterSet>*)> cb) {
   task_runner_->PostTaskAndReplyWithResult(
       FROM_HERE,
@@ -95,46 +97,50 @@ void AdBlockService::SourceProviderObserver::OnFilterSetLoaded(
           debug_mode_, std::move(cb)),
       base::BindOnce(
           &AdBlockService::SourceProviderObserver::OnFilterSetCreated,
-          weak_factory_.GetWeakPtr()));
+          weak_factory_.GetWeakPtr(), filter_set_generation));
 }
 
 void AdBlockService::SourceProviderObserver::LoadResources(
+    uint64_t filter_set_generation,
     std::unique_ptr<rust::Box<adblock::FilterSet>> filter_set) {
   // multiple AddObserver calls are ignored
   resource_provider_->AddObserver(this);
-  resource_provider_->LoadResources(
-      base::BindOnce(&SourceProviderObserver::OnAllLoaded,
-                     weak_factory_.GetWeakPtr(), std::move(filter_set)));
+  resource_provider_->LoadResources(base::BindOnce(
+      &SourceProviderObserver::OnAllLoaded, weak_factory_.GetWeakPtr(),
+      filter_set_generation, std::move(filter_set)));
 }
 
 void AdBlockService::SourceProviderObserver::OnDATFileRead(
     DATFileDataBuffer dat) {
   // Load the cached DAT immediately with empty resources so filter rules are
   // available for network blocking without waiting for the resource component.
-  on_resources_loaded_.Run(engine_is_default_, std::move(dat), nullptr,
+  on_resources_loaded_.Run(engine_is_default_, 0, std::move(dat), nullptr,
                            adblock::new_empty_resource_storage());
   // Kick off resource loading separately — when resources arrive,
   // OnAllLoaded will call UseResources to update them.
-  LoadResources(nullptr);
+  LoadResources(0, nullptr);
 }
 
 void AdBlockService::SourceProviderObserver::OnFilterSetCreated(
+    uint64_t filter_set_generation,
     std::unique_ptr<rust::Box<adblock::FilterSet>> filter_set) {
   TRACE_EVENT("brave.adblock", "OnFilterSetCreated");
-  LoadResources(std::move(filter_set));
+  LoadResources(filter_set_generation, std::move(filter_set));
 }
 
 void AdBlockService::SourceProviderObserver::OnResourcesLoaded(
     AdblockResourceStorageBox storage) {
-  on_resources_loaded_.Run(engine_is_default_, std::nullopt, nullptr,
+  on_resources_loaded_.Run(engine_is_default_, 0, std::nullopt, nullptr,
                            std::move(storage));
 }
 
 void AdBlockService::SourceProviderObserver::OnAllLoaded(
+    uint64_t filter_set_generation,
     std::unique_ptr<rust::Box<adblock::FilterSet>> filter_set,
     AdblockResourceStorageBox storage) {
-  on_resources_loaded_.Run(engine_is_default_, std::nullopt,
-                           std::move(filter_set), std::move(storage));
+  on_resources_loaded_.Run(engine_is_default_, filter_set_generation,
+                           std::nullopt, std::move(filter_set),
+                           std::move(storage));
 }
 
 AdBlockComponentServiceManager* AdBlockService::component_service_manager() {
@@ -291,10 +297,16 @@ AdBlockService::~AdBlockService() = default;
 
 void AdBlockService::OnResourcesLoaded(
     bool is_default_engine,
+    uint64_t filter_set_generation,
     std::optional<DATFileDataBuffer> dat,
     std::unique_ptr<rust::Box<adblock::FilterSet>> filter_set,
     AdblockResourceStorageBox storage) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  if (filter_set && filter_set_generation !=
+                        filters_provider_manager_->GetFilterSetGeneration(
+                            is_default_engine)) {
+    return;
+  }
 
   if (dat.has_value()) {
     CHECK(base::FeatureList::IsEnabled(features::kAdblockDATCache));
@@ -335,7 +347,8 @@ void AdBlockService::OnResourcesLoaded(
             is_default_engine, should_cache, std::move(filter_set),
             std::move(storage)),
         base::BindOnce(&AdBlockService::OnEngineLoaded,
-                       weak_factory_.GetWeakPtr(), is_default_engine));
+                       weak_factory_.GetWeakPtr(), is_default_engine,
+                       filter_set_generation));
   }
 }
 
@@ -361,8 +374,13 @@ void AdBlockService::OnDATLoaded(bool is_default_engine, bool success) {
 
 void AdBlockService::OnEngineLoaded(
     bool is_default_engine,
+    uint64_t filter_set_generation,
     std::pair<FilterListLoadResult, std::optional<DATFileDataBuffer>> result) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  if (filter_set_generation !=
+      filters_provider_manager_->GetFilterSetGeneration(is_default_engine)) {
+    return;
+  }
   auto [load_result, serialized_dat] = std::move(result);
 
   if (load_result != FilterListLoadResult::kResourcesOnly) {
@@ -376,8 +394,28 @@ void AdBlockService::OnEngineLoaded(
   }
 
   if (serialized_dat.has_value() && !serialized_dat->empty()) {
-    dat_cache_manager_->WriteDATFile(is_default_engine,
-                                     std::move(*serialized_dat));
+    dat_cache_manager_->WriteDATFile(
+        is_default_engine, std::move(*serialized_dat),
+        base::BindOnce(&AdBlockService::OnDATCacheWritten,
+                       weak_factory_.GetWeakPtr(), is_default_engine,
+                       filter_set_generation));
+  }
+}
+
+void AdBlockService::OnDATCacheWritten(bool is_default_engine,
+                                       uint64_t filter_set_generation,
+                                       bool success) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  if (success && velmren::kPublicFilterListsEnabled &&
+      subscription_service_manager_ &&
+      subscription_service_manager_->is_initialized() &&
+      filter_set_generation ==
+          filters_provider_manager_->GetFilterSetGeneration(
+              is_default_engine)) {
+    local_state_->SetBoolean(
+        is_default_engine ? prefs::kAdBlockPublicListsDefaultCacheDirty
+                          : prefs::kAdBlockPublicListsAdditionalCacheDirty,
+        false);
   }
 }
 
@@ -385,7 +423,16 @@ void AdBlockService::OnReadCachedDATFiles(
     std::optional<DATFileDataBuffer> default_dat,
     std::optional<DATFileDataBuffer> additional_dat) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  // Load cached DATs unconditionally for immediate ad-blocking protection.
+  // A catalog migration keeps an engine dirty until its rebuilt DAT is saved.
+  if (velmren::kPublicFilterListsEnabled) {
+    if (local_state_->GetBoolean(prefs::kAdBlockPublicListsDefaultCacheDirty)) {
+      default_dat.reset();
+    }
+    if (local_state_->GetBoolean(
+            prefs::kAdBlockPublicListsAdditionalCacheDirty)) {
+      additional_dat.reset();
+    }
+  }
   // If a DAT file is missing or fails to load, OnDATLoaded will
   // fall back to loading from filter lists via ForceNotifyObserver.
   if (default_dat) {
@@ -474,6 +521,11 @@ void RegisterPrefsForAdBlockService(PrefRegistrySimple* registry) {
   registry->RegisterDictionaryPref(prefs::kAdBlockRegionalFilters);
   registry->RegisterDictionaryPref(prefs::kAdBlockListSubscriptions);
   registry->RegisterBooleanPref(prefs::kAdBlockPublicListsSeeded, false);
+  registry->RegisterIntegerPref(prefs::kAdBlockPublicListsSeededVersion, 0);
+  registry->RegisterBooleanPref(prefs::kAdBlockPublicListsDefaultCacheDirty,
+                                false);
+  registry->RegisterBooleanPref(prefs::kAdBlockPublicListsAdditionalCacheDirty,
+                                false);
   registry->RegisterBooleanPref(prefs::kAdBlockCheckedDefaultRegion, false);
   registry->RegisterBooleanPref(prefs::kAdBlockCheckedAllDefaultRegions, false);
   registry->RegisterBooleanPref(prefs::kAdBlockOnlyModeEnabled, false);

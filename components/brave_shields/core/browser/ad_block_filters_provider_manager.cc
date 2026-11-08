@@ -40,6 +40,7 @@ void AdBlockFiltersProviderManager::AddProvider(
                 ? default_engine_filters_providers_.insert(provider)
                 : additional_engine_filters_providers_.insert(provider);
   DCHECK(rv.second);
+  AdvanceFilterSetGeneration(is_for_default_engine);
   provider->AddObserver(this);
 }
 
@@ -52,6 +53,7 @@ void AdBlockFiltersProviderManager::RemoveProvider(
   auto it = filters_providers.find(provider);
   DCHECK(it != filters_providers.end());
   filters_providers.erase(it);
+  AdvanceFilterSetGeneration(is_for_default_engine);
 
   NotifyObservers(is_for_default_engine);
 }
@@ -80,6 +82,20 @@ void AdBlockFiltersProviderManager::ForceNotifyObserver(
   }
 }
 
+void AdBlockFiltersProviderManager::RequireFilterSetReload(
+    bool is_for_default_engine) {
+  (is_for_default_engine
+       ? suppress_default_engine_startup_change_notification_
+       : suppress_additional_engine_startup_change_notification_) = false;
+  OnChanged(is_for_default_engine);
+}
+
+uint64_t AdBlockFiltersProviderManager::GetFilterSetGeneration(
+    bool is_for_default_engine) const {
+  return is_for_default_engine ? default_engine_filter_set_generation_
+                               : additional_engine_filter_set_generation_;
+}
+
 std::string AdBlockFiltersProviderManager::GetNameForDebugging() {
   return "AdBlockFiltersProviderManager";
 }
@@ -91,6 +107,7 @@ AdBlockFiltersProviderManager::GetProviders(bool is_for_default_engine) const {
 }
 
 void AdBlockFiltersProviderManager::OnChanged(bool is_for_default_engine) {
+  AdvanceFilterSetGeneration(is_for_default_engine);
   if (!AreAllProvidersInitialized(is_for_default_engine)) {
     return;
   }
@@ -137,6 +154,12 @@ bool AdBlockFiltersProviderManager::AreAllProvidersInitialized(
     }
   }
   return true;
+}
+
+void AdBlockFiltersProviderManager::AdvanceFilterSetGeneration(
+    bool is_for_default_engine) {
+  ++(is_for_default_engine ? default_engine_filter_set_generation_
+                           : additional_engine_filter_set_generation_);
 }
 
 // Use LoadDATBufferForEngine instead, for Filter Provider Manager.
