@@ -17,6 +17,7 @@
 #include "components/autofill/core/browser/foundations/autofill_driver.h"
 #include "components/autofill/core/common/form_field_data.h"
 #include "components/password_manager/core/browser/password_manager_driver.h"
+#include "components/password_manager/core/browser/password_manager_interface.h"
 #include "components/password_manager/core/common/password_manager_constants.h"
 #include "url/origin.h"
 
@@ -91,7 +92,7 @@ bool HasExplicitUsernameAutocomplete(const autofill::FormFieldData& field) {
                                           constants::kAutocompleteUsername);
 }
 
-const autofill::FormFieldData* SelectedUsernameFieldFromRequest(
+bool IsCurrentPasswordSuggestionRequest(
     const autofill::PasswordSuggestionRequest& request,
     const PasswordManagerDriver& password_driver) {
   const autofill::AutofillDriver* autofill_driver =
@@ -107,14 +108,22 @@ const autofill::FormFieldData* SelectedUsernameFieldFromRequest(
       !password_field->IsPasswordInputElement() ||
       password_field->renderer_form_id() != form.global_id() ||
       request.password_field_id != password_field->global_id()) {
-    return nullptr;
+    return false;
   }
+  return true;
+}
 
+const autofill::FormFieldData* SelectedUsernameFieldFromRequest(
+    const autofill::PasswordSuggestionRequest& request,
+    bool& has_username_signal) {
+  const auto& form = request.form_data;
+  const auto origin = url::Origin::Create(form.url());
   const auto is_current_username = [&](const autofill::FormFieldData& field) {
     return field.renderer_form_id() == form.global_id() &&
            field.origin() == origin && IsUsernameInput(field);
   };
   if (request.username_field_id.renderer_id) {
+    has_username_signal = true;
     const auto* username_field =
         form.FindFieldByGlobalId(request.username_field_id);
     return username_field && is_current_username(*username_field)
@@ -133,6 +142,7 @@ const autofill::FormFieldData* SelectedUsernameFieldFromRequest(
     if (!HasExplicitUsernameAutocomplete(field)) {
       continue;
     }
+    has_username_signal = true;
     if (username_field) {
       return nullptr;
     }
@@ -173,13 +183,35 @@ bool SuggestionMatchesSelectedUsername(const autofill::Suggestion& suggestion,
 void PasswordAutofillManager::ShowSuggestionsWithFormData(
     const autofill::PasswordSuggestionRequest& request) {
   ResetSelectedAccountContext();
-  const auto* username_field =
-      SelectedUsernameFieldFromRequest(request, *password_manager_driver_);
-  if (username_field && !username_field->value().empty()) {
-    selected_account_context_ = SelectedAccountContext{
-        request.form_data.global_id(), request.password_field_id,
-        username_field->global_id(),
-        url::Origin::Create(request.form_data.url()), username_field->value()};
+  if (IsCurrentPasswordSuggestionRequest(request, *password_manager_driver_)) {
+    bool has_username_signal = false;
+    const auto* username_field =
+        SelectedUsernameFieldFromRequest(request, has_username_signal);
+    std::optional<std::u16string> username;
+    if (has_username_signal) {
+      if (username_field) {
+        username = username_field->value();
+      }
+      // A changed/empty/ambiguous current identity must never fall back to the
+      // previous step, even when that previous account has a saved credential.
+      if (request.selected_username &&
+          (!username || *username != *request.selected_username)) {
+        username = std::u16string();
+      }
+    } else if (request.selected_username) {
+      username = request.selected_username;
+    } else if (const auto* password_manager =
+                   password_manager_driver_->GetPasswordManager()) {
+      username = password_manager->GetRecentUsernameForSuggestions(
+          *password_manager_driver_, request.form_data);
+    }
+    if (username && !username->empty() && username->size() <= 1024) {
+      selected_account_context_ = SelectedAccountContext{
+          request.form_data.global_id(), request.password_field_id,
+          username_field ? username_field->global_id()
+                         : autofill::FieldGlobalId(),
+          url::Origin::Create(request.form_data.url()), std::move(*username)};
+    }
   }
   base::AutoReset<bool> request_scope(&processing_selected_account_request_,
                                       true);
@@ -207,9 +239,10 @@ bool PasswordAutofillManager::HasSelectedAccountContext(
              fill_data.form_renderer_id &&
          selected_account_context_->password_field_id.renderer_id ==
              fill_data.password_element_renderer_id &&
-         !std::ranges::contains(
-             fill_data.suggestion_banned_fields,
-             selected_account_context_->username_field_id.renderer_id);
+         (!selected_account_context_->username_field_id.renderer_id ||
+          !std::ranges::contains(
+              fill_data.suggestion_banned_fields,
+              selected_account_context_->username_field_id.renderer_id));
 }
 
 base::WeakPtr<PasswordAutofillManager>

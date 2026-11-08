@@ -48,6 +48,7 @@ struct SearchEngineInfo {
   string keyword;
   string host;
   string favicon_url;
+  bool is_default;
 };
 
 struct EventDetails {

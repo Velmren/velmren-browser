@@ -106,6 +106,10 @@ BraveNewTabPageHandler::BraveNewTabPageHandler(
       profile_(profile),
       web_contents_(web_contents),
       file_manager_(std::make_unique<CustomBackgroundFileManager>(profile_)) {
+  auto* service = TemplateURLServiceFactory::GetForProfile(profile_);
+  CHECK(service);
+  template_url_service_observation_.Observe(service);
+  service->Load();
   InitForSearchPromotion();
 }
 
@@ -133,8 +137,6 @@ void BraveNewTabPageHandler::OnInitForSearchPromotion(bool is_enabled) {
       brave_search_conversion::prefs::kDismissed,
       base::BindRepeating(&BraveNewTabPageHandler::OnSearchPromotionDismissed,
                           base::Unretained(this)));
-  template_url_service_observation_.Observe(
-      TemplateURLServiceFactory::GetForProfile(profile_));
 
   brave_search_conversion::p3a::RecordPromoShown(
       g_browser_process->local_state(),
@@ -292,18 +294,26 @@ void BraveNewTabPageHandler::GetSearchEngines(
   CHECK(service);
 
   auto urls = service->GetTemplateURLs();
+  const auto* default_engine = service->GetDefaultSearchProvider();
   std::vector<brave_new_tab_page::mojom::SearchEngineInfoPtr> search_engines;
   for (TemplateURL* template_url : urls) {
-    if (template_url->GetBuiltinEngineType() !=
-        BuiltinEngineType::KEYWORD_MODE_PREPOPULATED_ENGINE) {
+    if (template_url != default_engine &&
+        template_url->GetBuiltinEngineType() !=
+            BuiltinEngineType::KEYWORD_MODE_PREPOPULATED_ENGINE) {
+      continue;
+    }
+    const GURL url(
+        template_url->GenerateSearchURL(service->search_terms_data()));
+    if (!url.is_valid() || !url.has_host()) {
       continue;
     }
     auto search_engine = brave_new_tab_page::mojom::SearchEngineInfo::New();
     search_engine->prepopulate_id = template_url->prepopulate_id();
-    search_engine->host = GURL(template_url->url()).host();
+    search_engine->host = url.host();
     search_engine->name = base::UTF16ToUTF8(template_url->short_name());
     search_engine->keyword = base::UTF16ToUTF8(template_url->keyword());
     search_engine->favicon_url = template_url->favicon_url();
+    search_engine->is_default = template_url == default_engine;
     search_engines.push_back(std::move(search_engine));
   }
 
@@ -319,17 +329,20 @@ void BraveNewTabPageHandler::SearchWhatYouTyped(const std::string& host,
   auto* service = TemplateURLServiceFactory::GetForProfile(profile_);
   CHECK(service);
 
-  // The legacy list exposes Google's unresolved template as an empty host.
-  // Brave's host can also collide with the @ask starter-pack engine.
-  auto* template_url = service->GetTemplateURLForHost(host);
-  if (host.empty() || host == "search.brave.com") {
+  // Keywords identify custom engines even when several share a host.
+  auto* template_url =
+      service->GetTemplateURLForKeyword(base::UTF8ToUTF16(host));
+  const bool matched_keyword = template_url != nullptr;
+  if (!template_url) {
+    template_url = service->GetTemplateURLForHost(host);
+  }
+  if (!matched_keyword && (host.empty() || host == "search.brave.com")) {
     const int engine_id =
-        host.empty()
-            ? TemplateURLPrepopulateData::PREPOPULATED_ENGINE_ID_GOOGLE
-            : TemplateURLPrepopulateData::PREPOPULATED_ENGINE_ID_BRAVE;
+        host.empty() ? TemplateURLPrepopulateData::PREPOPULATED_ENGINE_ID_GOOGLE
+                     : TemplateURLPrepopulateData::PREPOPULATED_ENGINE_ID_BRAVE;
     const auto engines = service->GetTemplateURLs();
-    const auto engine = std::ranges::find(
-        engines, engine_id, &TemplateURL::prepopulate_id);
+    const auto engine =
+        std::ranges::find(engines, engine_id, &TemplateURL::prepopulate_id);
     template_url = engine == engines.end() ? nullptr : *engine;
   }
   DCHECK(template_url);
@@ -564,6 +577,7 @@ void BraveNewTabPageHandler::FileSelectionCanceled() {
 }
 
 void BraveNewTabPageHandler::OnTemplateURLServiceChanged() {
+  page_->OnSearchEnginesChanged();
   NotifySearchPromotionDisabledIfNeeded();
 }
 

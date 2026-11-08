@@ -6,6 +6,7 @@
 #include "brave/browser/ui/views/toolbar/brave_browser_app_menu_button.h"
 
 #include "base/check_deref.h"
+#include "base/functional/bind.h"
 #include "brave/browser/ui/page_info/features.h"
 #include "brave/common/pref_names.h"
 #include "brave/components/vector_icons/vector_icons.h"
@@ -16,11 +17,18 @@
 #include "chrome/browser/ui/toolbar/app_menu_icon_controller.h"
 #include "chrome/browser/ui/views/toolbar/toolbar_view.h"
 #include "components/prefs/pref_service.h"
+#include "ui/base/l10n/l10n_util.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/base/models/image_model.h"
 #include "ui/color/color_provider.h"
 #include "ui/gfx/geometry/insets.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/border.h"
+
+#if BUILDFLAG(IS_WIN)
+#include "brave/browser/ui/toolbar/velmren_update_menu.h"
+#include "brave/browser/velmren_update_status.h"
+#endif  // BUILDFLAG(IS_WIN)
 
 namespace {
 
@@ -50,9 +58,33 @@ BraveBrowserAppMenuButton::BraveBrowserAppMenuButton(ToolbarView* toolbar_view)
         base::BindRepeating(&BraveBrowserAppMenuButton::UpdateIcon,
                             base::Unretained(this)));
   }
+#if BUILDFLAG(IS_WIN)
+  auto* monitor = velmren::delivery::UpdateStatusMonitor::GetInstance();
+  delivery_update_subscription_ = monitor->AddObserver(base::BindRepeating(
+      &BraveBrowserAppMenuButton::OnDeliveryUpdateChanged,
+      base::Unretained(this)));
+  monitor->Refresh();
+#endif  // BUILDFLAG(IS_WIN)
 }
 
 BraveBrowserAppMenuButton::~BraveBrowserAppMenuButton() = default;
+
+#if BUILDFLAG(IS_WIN)
+bool BraveBrowserAppMenuButton::ShouldShowDeliveryUpdate() const {
+  const auto* monitor = velmren::delivery::UpdateStatusMonitor::GetInstance();
+  // Existing browser alerts retain their icon, wording and severity.
+  return monitor->supported() &&
+         type_and_severity_.type == AppMenuIconController::IconType::kNone &&
+         velmren::delivery::GetUpdateMenuPresentation(monitor->status().phase)
+             .highlight;
+}
+
+void BraveBrowserAppMenuButton::OnDeliveryUpdateChanged() {
+  if (GetColorProvider()) {
+    UpdateThemeBasedState();
+  }
+}
+#endif  // BUILDFLAG(IS_WIN)
 
 std::optional<SkColor> BraveBrowserAppMenuButton::GetHighlightTextColor()
     const {
@@ -61,6 +93,11 @@ std::optional<SkColor> BraveBrowserAppMenuButton::GetHighlightTextColor()
 
 std::optional<SkColor> BraveBrowserAppMenuButton::GetColorForSeverity() const {
   const auto* const color_provider = GetColorProvider();
+#if BUILDFLAG(IS_WIN)
+  if (ShouldShowDeliveryUpdate()) {
+    return color_provider->GetColor(kColorAppMenuHighlightSeverityLow);
+  }
+#endif  // BUILDFLAG(IS_WIN)
   switch (type_and_severity_.severity) {
     case AppMenuIconController::Severity::kNone:
       return std::nullopt;
@@ -102,6 +139,32 @@ void BraveBrowserAppMenuButton::UpdateLayoutInsets() {
 }
 
 void BraveBrowserAppMenuButton::UpdateIcon() {
+#if BUILDFLAG(IS_WIN)
+  if (ShouldShowDeliveryUpdate()) {
+    const auto phase =
+        velmren::delivery::UpdateStatusMonitor::GetInstance()->status().phase;
+    const auto presentation =
+        velmren::delivery::GetUpdateMenuPresentation(phase);
+    const auto tooltip = l10n_util::GetStringUTF16(presentation.tooltip_id);
+    SetHighlight(l10n_util::GetStringUTF16(presentation.label_id),
+                 GetHighlightColor());
+    SetTooltipText(tooltip);
+    GetViewAccessibility().SetName(tooltip);
+
+    const auto& icon = phase == velmren::delivery::UpdatePhase::kReady
+                           ? kLeoRocketIcon
+                           : kLeoDownloadIcon;
+    for (auto state : kButtonStates) {
+      SetImageModel(state,
+                    ui::ImageModel::FromVectorIcon(
+                        icon, GetForegroundColor(state),
+                        ShowBrandedIcon() ? kBrandedIconSize : GetIconSize()));
+    }
+    return;
+  }
+  GetViewAccessibility().SetName(
+      AppMenuIconController::GetIconAccessibleName(type_and_severity_.type));
+#endif  // BUILDFLAG(IS_WIN)
   if (!ShowBrandedIcon()) {
     BrowserAppMenuButton::UpdateIcon();
     return;

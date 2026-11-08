@@ -24,14 +24,16 @@ export function createSearchStore() {
       {
         prepopulateId: BigInt(0),
         name: 'Brave',
-        keyword: '',
+        isDefault: true,
+        keyword: 'search.brave.com',
         host: 'search.brave.com',
         faviconUrl: '',
       },
       {
         prepopulateId: BigInt(1),
         name: 'Google',
-        keyword: '',
+        isDefault: false,
+        keyword: 'google.com',
         host: 'google.com',
         faviconUrl: '',
       },

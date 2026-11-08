@@ -66,6 +66,7 @@ internal static partial class Program
                 case "update": await Update(Root(options), token); break;
                 case "monitor": await MonitorNativeBrowser(Root(options), Number(options, "browser-pid", 0), token); break;
                 case "launch": await Launch(Root(options), false, options, token); break;
+                case "relaunch": await RelaunchForUpdate(Root(options), Number(options, "browser-pid", 0), options, token); break;
                 case "agents": await Launch(Root(options), true, options, token); break;
                 case "resolve": case "verify": Resolve(Root(options), token); break;
                 case "status": Status(Root(options)); break;
@@ -381,13 +382,25 @@ internal static partial class Program
         cancellationToken = budget.Token;
         var settings = GetSettings(root);
         using var operation = await Lock(root, cancellationToken);
-        Verified verified;
-        using (var checkPhase = StartPhase(root, "check-update"))
+        WriteUpdateUiStatus(root, "checking");
+        try
         {
-            verified = await Latest(FeedUri(settings.Feed), cancellationToken);
-            checkPhase.Complete();
+            Verified verified;
+            using (var checkPhase = StartPhase(root, "check-update"))
+            {
+                verified = await Latest(FeedUri(settings.Feed), cancellationToken);
+                checkPhase.Complete();
+            }
+            WriteUpdateUiStatus(root, "checking", checkedFeed: true);
+            await ApplyRelease(root, verified, ct => Download(root, FeedUri(settings.Feed), SelectArchive(verified.Manifest), ct), cancellationToken);
+            var pending = Current(root, "pending.json");
+            WriteUpdateUiStatus(root, pending is null ? "up-to-date" : "ready", pending?.Version);
         }
-        await ApplyRelease(root, verified, ct => Download(root, FeedUri(settings.Feed), SelectArchive(verified.Manifest), ct), cancellationToken);
+        catch
+        {
+            WriteUpdateUiStatus(root, "error", errorCode: cancellationToken.IsCancellationRequested ? "cancelled" : "check-failed");
+            throw;
+        }
     }
     static async Task ApplyRelease(string root, Verified verified, Func<CancellationToken, Task<string>> archiveSource, CancellationToken cancellationToken)
     {
@@ -402,10 +415,12 @@ internal static partial class Program
             TryActivate(root, cancellationToken, cleanupRetired: true);
             Event(root, "up-to-date", manifest.Version); return;
         }
+        WriteUpdateUiStatus(root, "available", manifest.Version);
         var versionPath = VersionDirectory(root, manifest.Version);
         if (!Directory.Exists(versionPath))
         {
             var archive = await archiveSource(cancellationToken);
+            WriteUpdateUiStatus(root, "installing", manifest.Version);
             var stage = SafePath(root, "staging/" + manifest.Version + "-" + Guid.NewGuid().ToString("N"));
             using (var preparePhase = StartPhase(root, "prepare-release", manifest.Version, files: manifest.Files.Length))
             {
@@ -429,12 +444,14 @@ internal static partial class Program
         EnsureSandboxReadAccess(Path.Combine(versionPath, "app"), root);
         RememberHighWater(root, verified);
         Atomic(Path.Combine(root, "pending.json"), Bytes(new Pointer(manifest.Version)));
+        WriteUpdateUiStatus(root, "ready", manifest.Version);
         TryActivate(root, cancellationToken, cleanupRetired: true);
     }
     static async Task<string> Download(string root, Uri feed, Manifest manifest, CancellationToken cancellationToken,
         DeliveryTransport? transport = null, DeliveryPolicy? policy = null)
     {
         using var downloadPhase = StartPhase(root, "download", manifest.Version, manifest.Size);
+        WriteUpdateUiStatus(root, "downloading", manifest.Version);
         var complete = ArchiveCachePath(root, manifest);
         DirectorySafe(SafePath(root, "downloads"));
         var partial = complete + ".part"; NoLinks(partial);
@@ -650,9 +667,18 @@ internal static partial class Program
     }
     static bool TryActivate(string root, CancellationToken cancellationToken = default, bool cleanupRetired = false)
     {
-        var activated = TryActivateCore(root, cancellationToken);
-        if (cleanupRetired) CleanupRetiredArtifacts(root, cancellationToken);
-        return activated;
+        try
+        {
+            var activated = TryActivateCore(root, cancellationToken);
+            if (activated) WriteUpdateUiStatus(root, "up-to-date");
+            if (cleanupRetired) CleanupRetiredArtifacts(root, cancellationToken);
+            return activated;
+        }
+        catch
+        {
+            WriteUpdateUiStatus(root, "error", errorCode: "activation-failed");
+            throw;
+        }
     }
     static bool TryActivateCore(string root, CancellationToken cancellationToken)
     {
@@ -684,6 +710,7 @@ internal static partial class Program
             {
                 RecoverLauncher(root);
                 Event(root, "launcher-update-rejected", pending.Version, SafeError(ex));
+                WriteUpdateUiStatus(root, "error", pending.Version, errorCode: "activation-failed");
                 return false;
             }
             try
@@ -710,7 +737,8 @@ internal static partial class Program
         var url = options.TryGetValue("url", out var requestedUrl) ? LaunchUrl(requestedUrl) : null;
         var profile = BrowserProfile(root, agents ? null : options.GetValueOrDefault("user-data-dir"));
         var profileDirectory = agents ? null : BrowserProfileDirectory(options.GetValueOrDefault("profile-directory"));
-        var prepared = await PrepareBrowserLaunch(root, cancellationToken);
+        var restoreSession = !agents && Boolean(options, "restore-session", false);
+        var prepared = await PrepareBrowserLaunch(root, cancellationToken, restoreSession);
         var settings = prepared.Settings;
         var pointer = prepared.Current;
         var lease = prepared.Lease;
@@ -736,6 +764,12 @@ internal static partial class Program
                 if (profileDirectory is not null) start.ArgumentList.Add("--profile-directory=" + profileDirectory);
                 if (Boolean(options, "incognito", false)) start.ArgumentList.Add("--incognito");
                 if (Boolean(options, "new-window", false)) start.ArgumentList.Add("--new-window");
+                if (restoreSession)
+                {
+                    PreserveSessionCookiesOnRestore(start.ArgumentList);
+                    start.ArgumentList.Add("--restart");
+                    start.ArgumentList.Add("--restore-last-session");
+                }
                 start.ArgumentList.Add("--no-first-run"); start.ArgumentList.Add("--no-default-browser-check");
                 if (url is not null) start.ArgumentList.Add(url);
             }
@@ -758,6 +792,30 @@ internal static partial class Program
         }
         using (var operation = await Lock(root, cancellationToken)) TryActivate(root, cancellationToken, cleanupRetired: true);
         Event(root, agents ? "agents-exited" : "browser-exited", Current(root)?.Version);
+    }
+    static void PreserveSessionCookiesOnRestore(IList<string> arguments)
+    {
+        const string cleanupFeature = "BraveCleanupSessionCookiesOnSessionRestore";
+        // Chromium retains the first override, including *Feature default-state
+        // directives. Put the explicit disable before any configured directive.
+        var features = new List<string> { cleanupFeature };
+        var seen = new HashSet<string>(StringComparer.Ordinal) { cleanupFeature };
+        for (var index = 0; index < arguments.Count; index++)
+        {
+            var argument = arguments[index].Trim();
+            var separator = argument.IndexOf('=');
+            var name = separator < 0 ? argument : argument[..separator];
+            if (!name.Equals("--disable-features", StringComparison.OrdinalIgnoreCase)
+                && !name.Equals("-disable-features", StringComparison.OrdinalIgnoreCase)
+                && !name.Equals("/disable-features", StringComparison.OrdinalIgnoreCase)) continue;
+            if (separator >= 0)
+                foreach (var feature in argument[(separator + 1)..].Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+                    if (seen.Add(feature)) features.Add(feature);
+            arguments.RemoveAt(index--);
+        }
+        // --restart does not set Local State's restart marker after a normal close.
+        // Keep session cookies eligible for this explicitly requested restoration.
+        arguments.Add("--disable-features=" + string.Join(',', features));
     }
     static async Task InitialUpdateCheck(string root, CancellationToken cancellationToken = default)
     {

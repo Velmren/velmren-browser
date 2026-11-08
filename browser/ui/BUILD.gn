@@ -419,6 +419,7 @@ source_set("ui") {
       "toolbar/brave_bookmark_context_menu_controller.cc",
       "toolbar/brave_bookmark_context_menu_controller.h",
       "toolbar/brave_recent_tabs_sub_menu_model.h",
+      "toolbar/velmren_update_menu.h",
       "webui/brave_settings_ui.cc",
       "webui/brave_settings_ui.h",
       "webui/brave_shields/shields_panel_data_handler.cc",
@@ -599,7 +600,14 @@ source_set("ui") {
     }
 
     if (is_win) {
-      deps += [ "//brave/components/windows_recall" ]
+      sources += [
+        "webui/settings/velmren_updates_handler.cc",
+        "webui/settings/velmren_updates_handler.h",
+      ]
+      deps += [
+        "//brave/browser:velmren_delivery_win",
+        "//brave/components/windows_recall",
+      ]
     }
 
     if (enable_pin_shortcut) {

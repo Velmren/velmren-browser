@@ -20,6 +20,7 @@
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
+#include "chrome/browser/ui/chrome_pages.h"
 #include "chrome/browser/ui/toolbar/app_menu_model.h"
 #include "chrome/browser/ui/ui_features.h"
 #include "chrome/grit/branded_strings.h"
@@ -29,6 +30,14 @@
 #include "ui/base/models/button_menu_item_model.h"
 #include "ui/base/models/menu_separator_types.h"
 #include "ui/base/ui_base_features.h"
+
+#if BUILDFLAG(IS_WIN)
+#include "brave/browser/ui/toolbar/velmren_update_menu.h"
+#include "brave/browser/velmren_update_status.h"
+#include "brave/components/vector_icons/vector_icons.h"
+#include "ui/base/models/image_model.h"
+#include "ui/color/color_id.h"
+#endif  // BUILDFLAG(IS_WIN)
 
 #if defined(TOOLKIT_VIEWS)
 #include "brave/browser/ui/sidebar/sidebar_service_factory.h"
@@ -107,6 +116,7 @@ void BraveAppMenuModel::Build() {
   BuildPasswordsAndAutofillSubmenu();
   BuildHelpSubMenu();
   BuildSaveAndShareSubmenu();
+  BuildDeliveryUpdateItem();
 
   ApplyLeoIcons(this);
   ApplyLeoIcons(bookmark_sub_menu_model());
@@ -129,6 +139,27 @@ void BraveAppMenuModel::Build() {
     CHECK(reading_list_submenu);
     ApplyLeoIcons(static_cast<ui::SimpleMenuModel*>(reading_list_submenu));
   }
+}
+
+void BraveAppMenuModel::BuildDeliveryUpdateItem() {
+#if BUILDFLAG(IS_WIN)
+  const auto* monitor = velmren::delivery::UpdateStatusMonitor::GetInstance();
+  if (!monitor->supported()) {
+    return;
+  }
+  const auto phase = monitor->status().phase;
+  const auto presentation = velmren::delivery::GetUpdateMenuPresentation(phase);
+  // Keep existing update and error notices ahead of the delivery status.
+  const size_t index = GetIndexOfCommandId(IDC_NEW_TAB).value_or(0);
+  InsertItemWithStringIdAt(index, IDC_VELMREN_UPDATE_STATUS,
+                           presentation.label_id);
+  SetIcon(index, ui::ImageModel::FromVectorIcon(
+                     phase == velmren::delivery::UpdatePhase::kReady
+                         ? kLeoRocketIcon
+                         : kLeoDownloadIcon,
+                     ui::ColorIds::kColorMenuIcon, 16));
+  InsertSeparatorAt(index + 1, ui::NORMAL_SEPARATOR);
+#endif  // BUILDFLAG(IS_WIN)
 }
 
 void BraveAppMenuModel::BuildPasswordsAndAutofillSubmenu() {
@@ -468,6 +499,13 @@ void BraveAppMenuModel::RemoveUpstreamMenus() {
 }
 
 void BraveAppMenuModel::ExecuteCommand(int id, int event_flags) {
+#if BUILDFLAG(IS_WIN)
+  if (id == IDC_VELMREN_UPDATE_STATUS) {
+    // About owns the explicit restart choice; opening this item never exits.
+    chrome::ShowAboutChrome(browser());
+    return;
+  }
+#endif  // BUILDFLAG(IS_WIN)
 #if defined(TOOLKIT_VIEWS)
   if (id == IDC_SIDEBAR_SHOW_OPTION_ALWAYS ||
       id == IDC_SIDEBAR_SHOW_OPTION_MOUSEOVER ||
@@ -483,6 +521,11 @@ void BraveAppMenuModel::ExecuteCommand(int id, int event_flags) {
 }
 
 bool BraveAppMenuModel::IsCommandIdEnabled(int id) const {
+#if BUILDFLAG(IS_WIN)
+  if (id == IDC_VELMREN_UPDATE_STATUS) {
+    return velmren::delivery::UpdateStatusMonitor::GetInstance()->supported();
+  }
+#endif  // BUILDFLAG(IS_WIN)
 #if defined(TOOLKIT_VIEWS)
   if (id == IDC_SIDEBAR_SHOW_OPTION_ALWAYS ||
       id == IDC_SIDEBAR_SHOW_OPTION_MOUSEOVER ||

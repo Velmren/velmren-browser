@@ -68,6 +68,15 @@ export function SearchBox(props: Props) {
           onClick={onInputContainerClick}
           onKeyDown={() => {}}
         >
+          <SearchEnginePicker
+            selectedEngine={inputState.searchEngine ?? null}
+            searchEngines={inputState.searchEngineOptions}
+            onSelectEngine={(engine) => {
+              inputState.selectSearchEngine(engine)
+              focusInput()
+            }}
+            onCustomizeClick={props.showSearchSettings}
+          />
           <input
             ref={inputRef}
             type='text'
@@ -76,7 +85,6 @@ export function SearchBox(props: Props) {
                 ? getString(S.NEW_TAB_SEARCH_BOX_PLACEHOLDER_TEXT_BRAVE)
                 : getString(S.NEW_TAB_SEARCH_BOX_PLACEHOLDER_TEXT)
             }
-            tabIndex={1}
             value={inputState.query}
             onFocus={() => inputState.setActiveInput()}
             onClick={() => setExpanded(true)}
@@ -88,17 +96,9 @@ export function SearchBox(props: Props) {
               inputState.setQuery(event.target.value)
             }}
           />
-          <SearchEnginePicker
-            selectedEngine={inputState.searchEngine ?? null}
-            searchEngines={inputState.searchEngineOptions}
-            onSelectEngine={(engine) => {
-              inputState.selectSearchEngine(engine)
-              focusInput()
-            }}
-            onCustomizeClick={props.showSearchSettings}
-          />
           <button
             className='search-button'
+            aria-label={getString(S.NEW_TAB_SEARCH_BOX_PLACEHOLDER_TEXT)}
             onClick={inputState.openSearch}
           >
             <Icon name='search' />

@@ -10,6 +10,7 @@ other operating systems.
 - [Installer and update architecture](tools/velmren-delivery/README.md)
 - [Preview release channel](tools/velmren-delivery/RELEASE-CHANNEL.md)
 - [Local agent companion and client connections](tools/velmren-agent/README.md)
+- [Using Velmren](tools/velmren-setup/support/USING-VELMREN.md) · [Руководство пользователя](tools/velmren-setup/support/USING-VELMREN-RU.md)
 - [Second-PC installation instructions, in Russian](tools/velmren-setup/support/SECOND-PC-RU.md)
 
 This is a preview project. The update manifest signature verifies release

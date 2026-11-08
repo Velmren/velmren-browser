@@ -109,6 +109,8 @@ NewTabPageHandler::NewTabPageHandler(
   CHECK(top_sites_facade_);
   CHECK(vpn_facade_);
   CHECK(scheme_classifier_);
+  template_url_service_observation_.Observe(&template_url_service);
+  template_url_service.Load();
 
   if (page_metrics) {
     brave_search_metrics_ = &page_metrics->brave_search_metrics();
@@ -123,6 +125,14 @@ NewTabPageHandler::NewTabPageHandler(
 }
 
 NewTabPageHandler::~NewTabPageHandler() = default;
+
+void NewTabPageHandler::OnTemplateURLServiceChanged() {
+  OnUpdate(UpdateObserver::Source::kSearch);
+}
+
+void NewTabPageHandler::OnTemplateURLServiceShuttingDown() {
+  template_url_service_observation_.Reset();
+}
 
 void NewTabPageHandler::SetNewTabPage(
     mojo::PendingRemote<mojom::NewTabPage> page) {
@@ -301,9 +311,12 @@ void NewTabPageHandler::SetLastUsedSearchEngine(
 void NewTabPageHandler::GetAvailableSearchEngines(
     GetAvailableSearchEnginesCallback callback) {
   std::vector<mojom::SearchEngineInfoPtr> search_engines;
+  const auto* default_engine =
+      template_url_service_->GetDefaultSearchProvider();
   for (auto template_url : template_url_service_->GetTemplateURLs()) {
-    if (template_url->GetBuiltinEngineType() !=
-        BuiltinEngineType::KEYWORD_MODE_PREPOPULATED_ENGINE) {
+    if (template_url != default_engine &&
+        template_url->GetBuiltinEngineType() !=
+            BuiltinEngineType::KEYWORD_MODE_PREPOPULATED_ENGINE) {
       continue;
     }
     const GURL url(template_url->GenerateSearchURL(
@@ -317,6 +330,7 @@ void NewTabPageHandler::GetAvailableSearchEngines(
     search_engine->name = base::UTF16ToUTF8(template_url->short_name());
     search_engine->keyword = base::UTF16ToUTF8(template_url->keyword());
     search_engine->favicon_url = template_url->favicon_url().spec();
+    search_engine->is_default = template_url == default_engine;
     search_engines.push_back(std::move(search_engine));
   }
   std::move(callback).Run(std::move(search_engines));
@@ -326,14 +340,15 @@ void NewTabPageHandler::OpenSearch(const std::string& query,
                                    const std::string& engine,
                                    mojom::EventDetailsPtr details,
                                    OpenSearchCallback callback) {
-  // GetTemplateURLForHost can resolve the Brave Search host to a starter pack
-  // engine (@ask) because starter packs outrank other engines on host
-  // collisions, so look up the Brave engine by its unique keyword instead.
-  const bool is_brave = engine == kBraveSearchHost;
-  TemplateURL* template_url =
-      is_brave ? template_url_service_->GetTemplateURLForKeyword(
-                     TemplateURLPrepopulateData::brave_search.keyword)
-               : template_url_service_->GetTemplateURLForHost(engine);
+  // Keywords preserve the exact custom/default engine on host collisions.
+  auto* template_url = template_url_service_->GetTemplateURLForKeyword(
+      base::UTF8ToUTF16(engine));
+  if (!template_url) {
+    template_url = engine == kBraveSearchHost
+                       ? template_url_service_->GetTemplateURLForKeyword(
+                             TemplateURLPrepopulateData::brave_search.keyword)
+                       : template_url_service_->GetTemplateURLForHost(engine);
+  }
   if (!template_url) {
     std::move(callback).Run();
     return;
@@ -342,7 +357,8 @@ void NewTabPageHandler::OpenSearch(const std::string& query,
   GURL search_url = template_url->GenerateSearchURL(
       template_url_service_->search_terms_data(), base::UTF8ToUTF16(query));
 
-  if (is_brave) {
+  if (template_url->prepopulate_id() ==
+      TemplateURLPrepopulateData::PREPOPULATED_ENGINE_ID_BRAVE) {
     auto* local_state = g_browser_process->local_state();
     search_url = brave_search::OverrideWithNewTabSource(
         search_url, local_state, brave_stats::IsFirstRun(local_state));

@@ -6,7 +6,7 @@
 
   <!-- Settings / About -->
   <message name="IDS_SETTINGS_VELMREN_ABOUT_UPDATES" desc="Neutral explanatory text on the About page for an installed Velmren release. It describes background updates and how to finish installing a downloaded update, without claiming the browser is up to date.">
-    Velmren downloads available updates in the background. To finish installing a downloaded update, close all Velmren windows and reopen the browser. This page does not check for new versions.
+    Velmren downloads and checks updates in the background. You can see their status or check for updates below.
   </message>
 
   <!-- Strings not associated with a particular section-->
@@ -2158,4 +2158,114 @@
 
   <!--Add new items to the appropriate sections above -->
 
-  </grit-part>
+
+  <message name="IDS_VELMREN_UPDATE_UNKNOWN_LABEL" desc="Label for Velmren update state unknown in the toolbar and update page.">
+    Updates
+  </message>
+
+  <message name="IDS_VELMREN_UPDATE_UNKNOWN_TOOLTIP" desc="Tooltip and accessible name of the Velmren toolbar menu for update state unknown.">
+    Velmren updates. Open menu for update details.
+  </message>
+
+  <message name="IDS_VELMREN_UPDATE_CHECKING_LABEL" desc="Label for Velmren update state checking in the toolbar and update page.">
+    Checking for updates…
+  </message>
+
+  <message name="IDS_VELMREN_UPDATE_CHECKING_TOOLTIP" desc="Tooltip and accessible name of the Velmren toolbar menu for update state checking.">
+    Checking for Velmren updates. Open menu for update details.
+  </message>
+
+  <message name="IDS_VELMREN_UPDATE_AVAILABLE_LABEL" desc="Label for Velmren update state available in the toolbar and update page.">
+    Update available
+  </message>
+
+  <message name="IDS_VELMREN_UPDATE_AVAILABLE_TOOLTIP" desc="Tooltip and accessible name of the Velmren toolbar menu for update state available.">
+    A Velmren update is available. Open menu for update details.
+  </message>
+
+  <message name="IDS_VELMREN_UPDATE_DOWNLOADING_LABEL" desc="Label for Velmren update state downloading in the toolbar and update page.">
+    Downloading update…
+  </message>
+
+  <message name="IDS_VELMREN_UPDATE_DOWNLOADING_TOOLTIP" desc="Tooltip and accessible name of the Velmren toolbar menu for update state downloading.">
+    Downloading a Velmren update. Open menu for update details.
+  </message>
+
+  <message name="IDS_VELMREN_UPDATE_INSTALLING_LABEL" desc="Label for Velmren update state installing in the toolbar and update page.">
+    Preparing update…
+  </message>
+
+  <message name="IDS_VELMREN_UPDATE_INSTALLING_TOOLTIP" desc="Tooltip and accessible name of the Velmren toolbar menu for update state installing.">
+    Preparing a Velmren update. Open menu for update details.
+  </message>
+
+  <message name="IDS_VELMREN_UPDATE_READY_LABEL" desc="Label for Velmren update state ready in the toolbar and update page.">
+    Update ready
+  </message>
+
+  <message name="IDS_VELMREN_UPDATE_READY_TOOLTIP" desc="Tooltip and accessible name of the Velmren toolbar menu for update state ready.">
+    A Velmren update is ready. Open menu for restart options.
+  </message>
+
+  <message name="IDS_VELMREN_UPDATE_UP_TO_DATE_LABEL" desc="Label for Velmren update state up_to_date in the toolbar and update page.">
+    Velmren is up to date
+  </message>
+
+  <message name="IDS_VELMREN_UPDATE_UP_TO_DATE_TOOLTIP" desc="Tooltip and accessible name of the Velmren toolbar menu for update state up_to_date.">
+    Velmren is up to date. Open menu for update details.
+  </message>
+
+  <message name="IDS_VELMREN_UPDATE_ERROR_LABEL" desc="Label for Velmren update state error in the toolbar and update page.">
+    Update needs attention
+  </message>
+
+  <message name="IDS_VELMREN_UPDATE_ERROR_TOOLTIP" desc="Tooltip and accessible name of the Velmren toolbar menu for update state error.">
+    A Velmren update could not complete. Open menu for update details.
+  </message>
+
+  <message name="IDS_VELMREN_UPDATE_CHECK_NOW" desc="About page update control or explanation: CheckNow.">
+    Check for updates
+  </message>
+
+  <message name="IDS_VELMREN_UPDATE_RELAUNCH" desc="About page update control or explanation: Relaunch.">
+    Restart to update
+  </message>
+
+  <message name="IDS_VELMREN_UPDATE_READY_DETAIL" desc="About page update control or explanation: ReadyDetail.">
+    Restart Velmren to apply the update. Your normal tabs will reopen.
+  </message>
+
+  <message name="IDS_VELMREN_UPDATE_BLOCKED_DETAIL" desc="About page update control or explanation: BlockedDetail.">
+    Close other Velmren sessions and finish background tasks before restarting.
+  </message>
+
+  <message name="IDS_VELMREN_UPDATE_BUSY_DETAIL" desc="About page update control or explanation: BusyDetail.">
+    You can keep browsing while the update downloads and is checked.
+  </message>
+
+  <message name="IDS_VELMREN_UPDATE_UNKNOWN_DETAIL" desc="About page update control or explanation: UnknownDetail.">
+    Check for updates to find out whether this version is current.
+  </message>
+
+  <message name="IDS_VELMREN_UPDATE_ERROR_DETAIL" desc="About page update control or explanation: ErrorDetail.">
+    The check could not complete. Try again. If the error continues, open Help.
+  </message>
+
+  <message name="IDS_VELMREN_UPDATE_CURRENT_DETAIL" desc="About page update control or explanation: CurrentDetail.">
+    No newer version was found at the last successful check.
+  </message>
+
+  <message name="IDS_VELMREN_UPDATE_VERSION_LABEL" desc="About page update control or explanation: VersionLabel.">
+    Available version
+  </message>
+
+  <message name="IDS_VELMREN_UPDATE_LAST_CHECKED" desc="About page update control or explanation: LastChecked.">
+    Last checked
+  </message>
+
+  <message name="IDS_VELMREN_UPDATE_ACTIVATION_ERROR_DETAIL" desc="About page update control or explanation: ActivationErrorDetail.">
+    The update could not be applied. Your current version remains available. Open Help for the next steps.
+  </message>
+
+
+</grit-part>

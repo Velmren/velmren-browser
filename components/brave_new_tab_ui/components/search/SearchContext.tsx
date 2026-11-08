@@ -3,7 +3,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this file,
 // You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import usePromise from '$web-common/usePromise';
+import { useSearchEngineSelection } from '$web-common/useSearchEngineSelection'
 import { AutocompleteResult, FreState, InputKeywordModel, InputMethod, OmniboxPopupSelection, PageHandlerFactory, PageHandlerRemote, PageInterface, PageReceiver, SelectedFileInfo, SelectionDirection, SelectionStep, TabInfo } from 'chrome://resources/mojo/components/omnibox/browser/searchbox.mojom-webui.js';
 import { SuggestInventory } from 'chrome://resources/mojo/components/omnibox/browser/fusebox_action.mojom-webui.js';
 import * as React from 'react';
@@ -37,7 +37,6 @@ const Context = React.createContext<Context>({
   filteredSearchEngines: []
 })
 
-export const searchEnginesPromise = getNTPBrowserAPI().pageHandler.getSearchEngines().then(r => r.searchEngines)
 
 export const omniboxController: PageHandlerRemote = new PageHandlerRemote();
 (window as any).omnibox = omniboxController;
@@ -77,8 +76,15 @@ class SearchPage implements PageInterface {
   }
 
   autocompleteResultChanged(result: AutocompleteResult) {
+    if (result.queryId !== activeQueryId - 1) return
     this.result = result;
     for (const listener of this.resultListeners) listener(result)
+  }
+
+  clearResults() {
+    ++activeQueryId
+    this.result = undefined
+    for (const listener of this.resultListeners) listener(undefined)
   }
 
   updateSelection(selection: OmniboxPopupSelection) {
@@ -116,41 +122,33 @@ class SearchPage implements PageInterface {
 export const search = new SearchPage()
 
 export function SearchContext(props: React.PropsWithChildren<{}>) {
-  const { engineConfig, lastSearchEngine, setLastSearchEngine } = useEngineContext()
+  const { engineConfig, searchEngines } = useEngineContext()
   const [open, setOpen] = React.useState(false)
-  const [searchEngine, setSearchEngineInternal] = React.useState<SearchEngineInfo>()
   const [query, setQuery] = React.useState('')
-  const { result: searchEngines = [] } = usePromise(() => searchEnginesPromise, [])
-  const filteredSearchEngines = searchEngines.filter(s => engineConfig[s.host])
+  const { engine: searchEngine, options: filteredSearchEngines, selectEngine } =
+    useSearchEngineSelection(searchEngines, (host) => !!engineConfig[host])
 
   const setSearchEngine = React.useCallback((engine: SearchEngineInfo | string) => {
-    if (typeof engine === 'string') {
-      engine = searchEngines.find(e => e.host === engine || e.keyword === engine)!
-    }
+    const selected = typeof engine === 'string'
+      ? searchEngines.find((entry) => entry.host === engine || entry.keyword === engine)
+      : engine
+    if (selected) selectEngine(selected)
+  }, [searchEngines, selectEngine])
 
-    if (!engine) return
-
-    setLastSearchEngine(engine)
-    getNTPBrowserAPI().newTabMetrics.reportNTPSearchDefaultEngine(engine.prepopulateId)
-    setSearchEngineInternal(engine)
-  }, [searchEngines]);
-
-  // When we receive search engines, use the first one as our keyword, if we don't have a match.
   React.useEffect(() => {
-    if (!searchEngines.length) return
+    getNTPBrowserAPI().newTabMetrics.reportNTPSearchDefaultEngine(searchEngine?.prepopulateId ?? null)
+  }, [searchEngine?.prepopulateId])
 
-    const match = filteredSearchEngines.find(s => s.host === lastSearchEngine)
-      ?? searchEngines[0]
-    getNTPBrowserAPI().newTabMetrics.reportNTPSearchDefaultEngine(match.prepopulateId)
-    setSearchEngine(match)
-  }, [filteredSearchEngines])
+  // A committed query/provider must not retain suggestions from the last one.
+  React.useLayoutEffect(() => search.clearResults(), [query, searchEngine])
 
   // When the query changes, notify the browser side.
   React.useEffect(() => {
     if (query) {
-      const keywordQuery = `${searchEngine?.keyword} ${query}`
+      const keywordQuery = searchEngine?.keyword ? `${searchEngine.keyword} ${query}` : query
       omniboxController.queryAutocomplete(activeQueryId++, null, keywordQuery, false, keywordQuery.length, SuggestInventory.kDefault, false, '', InputMethod.kKeyboard);
     } else {
+      search.clearResults()
       omniboxController.stopAutocomplete(true)
     }
   }, [query, searchEngine])

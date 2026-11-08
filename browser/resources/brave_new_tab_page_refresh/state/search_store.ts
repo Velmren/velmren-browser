@@ -15,6 +15,7 @@ export interface SearchEngineInfo {
   keyword: string
   host: string
   faviconUrl: string
+  isDefault: boolean
 }
 
 // In order to isolate ourselves from the large number of properties in the

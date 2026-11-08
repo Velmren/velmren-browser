@@ -14,6 +14,9 @@ import {
 import Navigation from '@brave/leo/react/navigation'
 import NavigationItem from '@brave/leo/react/navigationItem'
 import NavigationMenu from '@brave/leo/react/navigationMenu'
+import Button from '@brave/leo/react/button'
+import Icon from '@brave/leo/react/icon'
+import { spacing } from '@brave/leo/tokens/css/variables'
 
 import { getLocale } from '$web-common/locale'
 import { useBraveNews } from '../../../brave_news/browser/resources/shared/Context'
@@ -33,6 +36,27 @@ const SearchSettings = React.lazy(() => import('./settings/search'))
 export const SettingsDialog = styled(Dialog)`
   --leo-dialog-width: 720px;
   --leo-dialog-padding: 24px 24px 0 24px;
+`
+
+const SettingsHeader = styled.div`
+  display: flex;
+  padding-inline-end: 40px;
+`
+
+const SettingsCloseButton = styled(Button)`
+  --leo-button-padding: ${spacing.s};
+  position: absolute;
+  inset-inline-end: ${spacing.xl};
+  top: ${spacing.xl};
+`
+
+const CloseLabel = styled.span`
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 `
 
 const Sidebar = styled(Navigation)`
@@ -142,13 +166,21 @@ export default function Settings(props: Props) {
 
   return <SettingsDialog
     isOpen={props.showSettingsMenu}
-    showClose
+    showClose={false}
     onClose={() => { props.onClose?.() }}
     backdropClickCloses={!customizePage}
   >
-    <SettingsTitle slot='title'>
-      {getLocale('dashboardSettingsTitle')}
-    </SettingsTitle>
+    <SettingsHeader slot='title'>
+      <SettingsTitle>{getLocale('dashboardSettingsTitle')}</SettingsTitle>
+      <SettingsCloseButton
+        fab
+        kind='plain-faint'
+        onClick={() => props.onClose?.()}
+      >
+        <CloseLabel>{getLocale('close')}</CloseLabel>
+        <Icon name='close' />
+      </SettingsCloseButton>
+    </SettingsHeader>
     <SettingsContent id='settingsBody'>
       <Sidebar id="sidebar">
         <NavigationMenu>

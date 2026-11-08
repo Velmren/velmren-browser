@@ -81,15 +81,22 @@ export function createSearchStore() {
     defaultSearchEngine,
   })
 
+  let searchEnginesRequest = 0
   async function updateSearchEngines() {
+    const request = ++searchEnginesRequest
     const { searchEngines } =
       await newTabProxy.handler.getAvailableSearchEngines()
+    if (request !== searchEnginesRequest) return
 
+    const browserDefault =
+      searchEngines.find((engine) => engine.isDefault)?.host
+      ?? defaultSearchEngine
     store.update({
+      defaultSearchEngine: browserDefault,
       searchEngines,
       enabledSearchEngines: loadEnabledSearchEngines(
         searchEngines,
-        defaultSearchEngine,
+        browserDefault,
       ),
     })
   }
@@ -121,11 +128,15 @@ export function createSearchStore() {
   }
 
   function findSearchEngine(engine: string) {
-    return store.getState().searchEngines.find(({ host }) => host === engine)
+    return (
+      store.getState().searchEngines.find(({ keyword }) => keyword === engine)
+      ?? store.getState().searchEngines.find(({ host }) => host === engine)
+    )
   }
 
   searchProxy.addListeners({
     autocompleteResultChanged(result) {
+      if (result.queryId !== activeQueryId - 1) return
       store.update({
         searchMatches: result.matches,
         searchResultSequenceId: result.sequenceId,
@@ -134,7 +145,10 @@ export function createSearchStore() {
   })
 
   newTabProxy.addListeners({
-    onSearchStateUpdated: debounce(updatePrefs, 10),
+    onSearchStateUpdated: debounce(() => {
+      updatePrefs()
+      updateSearchEngines()
+    }, 10),
   })
 
   async function loadData() {
@@ -148,6 +162,7 @@ export function createSearchStore() {
   // Tracks the latest query sent for autocompletion. Used to filter out stale
   // results.
   let activeQueryId = 0
+  let autocompleteEngine = ''
 
   const actions: SearchActions = {
     setShowSearchBox(showSearchBox) {
@@ -180,7 +195,7 @@ export function createSearchStore() {
         enabledSearchEngines = new Set(enabledSearchEngines)
         if (enabled) {
           enabledSearchEngines.add(engine)
-        } else if (enabledSearchEngines.size > 1) {
+        } else {
           enabledSearchEngines.delete(engine)
         }
         storeEnabledSearchEngines(enabledSearchEngines)
@@ -196,6 +211,7 @@ export function createSearchStore() {
     setActiveSearchInputKey(key) {
       const { activeSearchInputKey } = store.getState()
       if (key !== activeSearchInputKey) {
+        ++activeQueryId
         searchProxy.handler.stopAutocomplete(true)
         store.update({
           activeSearchInputKey: key,
@@ -207,6 +223,11 @@ export function createSearchStore() {
 
     queryAutocomplete(query, engine) {
       const searchEngine = findSearchEngine(engine)
+      const keyword = searchEngine?.keyword ?? ''
+      if (keyword !== autocompleteEngine) {
+        autocompleteEngine = keyword
+        store.update({ searchMatches: [], searchResultSequenceId: 0 })
+      }
       if (searchEngine && searchEngine.keyword) {
         query = [searchEngine.keyword, query].join(' ')
       }
@@ -249,6 +270,8 @@ export function createSearchStore() {
     },
 
     stopAutocomplete() {
+      ++activeQueryId
+      store.update({ searchMatches: [], searchResultSequenceId: 0 })
       searchProxy.handler.stopAutocomplete(true)
     },
 
@@ -258,7 +281,11 @@ export function createSearchStore() {
     },
 
     openSearch(query, engine, event) {
-      newTabProxy.handler.openSearch(query, engine, event)
+      newTabProxy.handler.openSearch(
+        query,
+        findSearchEngine(engine)?.keyword ?? engine,
+        event,
+      )
     },
 
     openUrlFromSearch(url, event) {

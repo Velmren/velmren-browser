@@ -58,6 +58,7 @@ struct SearchEngineInfo {
   string keyword;
   string host;
   url.mojom.Url favicon_url;
+  bool is_default;
 };
 
 // Browser-side handler for requests from WebUI page.
@@ -108,6 +109,7 @@ interface Page {
   OnCustomImageBackgroundsUpdated(array<CustomBackground> backgrounds);
 
   OnSearchPromotionDisabled();
+  OnSearchEnginesChanged();
 };
 
 // Reporter for NTP metrics.

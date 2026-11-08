@@ -164,6 +164,49 @@ std::optional<base::CommandLine> MakeBrowserCommand(
   return command;
 }
 
+std::optional<base::CommandLine> MakeRelaunchCommand(
+    const base::FilePath& executable,
+    const base::FilePath& user_data_dir,
+    const base::CommandLine& relaunch_command,
+    base::ProcessId browser_pid,
+    bool update_ready) {
+  if (!update_ready || browser_pid == base::kNullProcessId ||
+      !relaunch_command.HasSwitch("restart") ||
+      !IsOrdinaryBrowserCommand(relaunch_command) ||
+      relaunch_command.HasSwitch("isolated") || !user_data_dir.IsAbsolute() ||
+      user_data_dir.ReferencesParent() ||
+      user_data_dir.DirName() == user_data_dir) {
+    return std::nullopt;
+  }
+  const auto root = FindInstalledRoot(executable);
+  if (!root || !IsRegularFile(root->Append(FILE_PATH_LITERAL("pending.json")))) {
+    return std::nullopt;
+  }
+
+  const auto profile = relaunch_command.GetSwitchValueNative("profile-directory");
+  if (relaunch_command.HasSwitch("profile-directory") &&
+      (profile.empty() || profile == L"." || profile == L".." ||
+       profile.find_first_of(L"<>:\"/\\|?*") != std::wstring::npos ||
+       profile.find(L'\0') != std::wstring::npos || profile.back() == L'.' ||
+       profile.back() == L' ')) {
+    return std::nullopt;
+  }
+
+  base::CommandLine command(root->Append(FILE_PATH_LITERAL("Velmren.exe")));
+  command.AppendArg("relaunch");
+  command.AppendArgNative(L"--root=" + root->value());
+  command.AppendArg("--browser-pid=" + base::NumberToString(browser_pid));
+  command.AppendArgNative(L"--user-data-dir=" + user_data_dir.value());
+  if (!profile.empty()) {
+    command.AppendArgNative(L"--profile-directory=" + profile);
+  }
+  if (relaunch_command.HasSwitch("incognito")) {
+    command.AppendArg("--incognito=true");
+  }
+  command.AppendArg("--restore-session=true");
+  return command;
+}
+
 bool IsOrdinaryBrowserCommand(const base::CommandLine& command_line) {
   for (const char* excluded : {"type", "headless", "velmren-agent-mode",
                               "enable-automation", "test-type"}) {

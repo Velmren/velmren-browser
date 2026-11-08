@@ -33,9 +33,22 @@ const SearchIconContainer = styled.div`
   padding-right: ${spacing.m};
 `
 
+const EnginePickerContainer = styled(Flex)`
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 11px;
+  z-index: 1;
+`
+
+const EnginePickerSpacer = styled.div`
+  width: 40px;
+  height: 40px;
+`
+
 const Container = styled.div`
   --leo-control-radius: ${searchBoxRadius};
 
+  position: relative;
   display: flex;
 
   /* If we have search results, don't add a radius to the bottom of the search box */
@@ -65,10 +78,13 @@ export default function SearchBox() {
     }
   }, [])
   return <Container className={searchBoxClass}>
-    <SearchInput tabIndex={1} type="text" ref={searchInput} value={query} onInput={e => setQuery(e.value)} placeholder={placeholderText}>
-      <Flex slot="left-icon" align='center'>
-        <EnginePicker />
-      </Flex>
+    <EnginePickerContainer align='center'>
+      <EnginePicker onSelectEngine={() => {
+        searchInput.current?.shadowRoot?.querySelector('input')?.focus()
+      }} />
+    </EnginePickerContainer>
+    <SearchInput tabIndex={0} type="text" ref={searchInput} value={query} onInput={e => setQuery(e.value)} placeholder={placeholderText}>
+      <EnginePickerSpacer slot="left-icon" aria-hidden='true' />
       <SearchIconContainer slot="right-icon">
         <Icon name="search" />
       </SearchIconContainer>

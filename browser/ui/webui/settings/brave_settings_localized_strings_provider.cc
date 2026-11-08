@@ -118,7 +118,10 @@ constexpr char16_t kVelmrenSourceUrl[] =
     u"https://github.com/Velmren/velmren-browser/tree/velmren-preview";
 constexpr char kVelmrenHelpUrl[] =
     "https://github.com/Velmren/velmren-browser/blob/velmren-preview/"
-    "tools/velmren-setup/support/SECOND-PC-RU.md";
+    "tools/velmren-setup/support/USING-VELMREN.md";
+constexpr char kVelmrenHelpRuUrl[] =
+    "https://github.com/Velmren/velmren-browser/blob/velmren-preview/"
+    "tools/velmren-setup/support/USING-VELMREN-RU.md";
 #if BUILDFLAG(ENABLE_CONTAINERS)
 constexpr char16_t kContainersLearnMoreURL[] =
     u"https://support.brave.app/hc/en-us/articles/39077103885325";
@@ -1342,9 +1345,52 @@ void BraveAddResources(content::WebUIDataSource* html_source,
 void BraveAddAboutStrings(content::WebUIDataSource* html_source,
                           Profile* profile) {
   html_source->AddLocalizedString("velmrenAboutUpdates",
-                                 IDS_SETTINGS_VELMREN_ABOUT_UPDATES);
+                                  IDS_SETTINGS_VELMREN_ABOUT_UPDATES);
+  html_source->AddLocalizedString("velmrenUpdateUnknownLabel",
+                                  IDS_VELMREN_UPDATE_UNKNOWN_LABEL);
+  html_source->AddLocalizedString("velmrenUpdateCheckingLabel",
+                                  IDS_VELMREN_UPDATE_CHECKING_LABEL);
+  html_source->AddLocalizedString("velmrenUpdateAvailableLabel",
+                                  IDS_VELMREN_UPDATE_AVAILABLE_LABEL);
+  html_source->AddLocalizedString("velmrenUpdateDownloadingLabel",
+                                  IDS_VELMREN_UPDATE_DOWNLOADING_LABEL);
+  html_source->AddLocalizedString("velmrenUpdateInstallingLabel",
+                                  IDS_VELMREN_UPDATE_INSTALLING_LABEL);
+  html_source->AddLocalizedString("velmrenUpdateReadyLabel",
+                                  IDS_VELMREN_UPDATE_READY_LABEL);
+  html_source->AddLocalizedString("velmrenUpdateUpToDateLabel",
+                                  IDS_VELMREN_UPDATE_UP_TO_DATE_LABEL);
+  html_source->AddLocalizedString("velmrenUpdateErrorLabel",
+                                  IDS_VELMREN_UPDATE_ERROR_LABEL);
+  html_source->AddLocalizedString("velmrenUpdateCheckNow",
+                                  IDS_VELMREN_UPDATE_CHECK_NOW);
+  html_source->AddLocalizedString("velmrenUpdateRelaunch",
+                                  IDS_VELMREN_UPDATE_RELAUNCH);
+  html_source->AddLocalizedString("velmrenUpdateReadyDetail",
+                                  IDS_VELMREN_UPDATE_READY_DETAIL);
+  html_source->AddLocalizedString("velmrenUpdateBlockedDetail",
+                                  IDS_VELMREN_UPDATE_BLOCKED_DETAIL);
+  html_source->AddLocalizedString("velmrenUpdateBusyDetail",
+                                  IDS_VELMREN_UPDATE_BUSY_DETAIL);
+  html_source->AddLocalizedString("velmrenUpdateUnknownDetail",
+                                  IDS_VELMREN_UPDATE_UNKNOWN_DETAIL);
+  html_source->AddLocalizedString("velmrenUpdateErrorDetail",
+                                  IDS_VELMREN_UPDATE_ERROR_DETAIL);
+  html_source->AddLocalizedString("velmrenUpdateCurrentDetail",
+                                  IDS_VELMREN_UPDATE_CURRENT_DETAIL);
+  html_source->AddLocalizedString("velmrenUpdateVersionLabel",
+                                  IDS_VELMREN_UPDATE_VERSION_LABEL);
+  html_source->AddLocalizedString("velmrenUpdateLastChecked",
+                                  IDS_VELMREN_UPDATE_LAST_CHECKED);
+  html_source->AddLocalizedString("velmrenUpdateActivationErrorDetail",
+                                  IDS_VELMREN_UPDATE_ACTIVATION_ERROR_DETAIL);
   html_source->AddString("aboutProductTitle", "Velmren Browser");
-  html_source->AddString("velmrenHelpUrl", kVelmrenHelpUrl);
+  html_source->AddString(
+      "velmrenHelpUrl",
+      base::StartsWith(g_browser_process->GetApplicationLocale(), "ru",
+                       base::CompareCase::INSENSITIVE_ASCII)
+          ? kVelmrenHelpRuUrl
+          : kVelmrenHelpUrl);
   std::u16string license = l10n_util::GetStringFUTF16(
       IDS_BRAVE_VERSION_UI_LICENSE, kVelmrenLicenseUrl,
       chrome::kChromeUICreditsURL16, kVelmrenBuildInstructionsUrl,

@@ -55,6 +55,9 @@
 #include "brave/components/version_info/version_info.h"
 #include "brave/ui/webui/brave_color_change_listener/brave_color_change_handler.h"
 #include "build/build_config.h"
+#if BUILDFLAG(IS_WIN)
+#include "brave/browser/ui/webui/settings/velmren_updates_handler.h"
+#endif
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/regional_capabilities/regional_capabilities_service_factory.h"
 #include "chrome/browser/ui/tabs/features.h"
@@ -163,6 +166,9 @@ bool IsLocaleJapan(Profile* profile) {
 }  // namespace
 
 BraveSettingsUI::BraveSettingsUI(content::WebUI* web_ui) : SettingsUI(web_ui) {
+#if BUILDFLAG(IS_WIN)
+  web_ui->AddMessageHandler(std::make_unique<VelmrenUpdatesHandler>());
+#endif
   web_ui->AddMessageHandler(
       std::make_unique<settings::MetricsReportingHandler>());
   web_ui->AddMessageHandler(std::make_unique<BravePrivacyHandler>());

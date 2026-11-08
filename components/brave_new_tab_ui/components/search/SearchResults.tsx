@@ -53,7 +53,7 @@ const openMatch = (resultSequenceId: number, match: AutocompleteMatch, line: num
   }, event instanceof KeyboardEvent)
 }
 
-const useUrlWhatYouTyped = (query: string) => React.useMemo(() => {
+const getUrlWhatYouTyped = (query: string) => {
   try {
     // There should be at least one `.` to be a URL and no spaces.
     const bits = query.split('.')
@@ -78,14 +78,14 @@ const useUrlWhatYouTyped = (query: string) => React.useMemo(() => {
   } catch {
     return null
   }
-}, [query])
+}
 
 export default function SearchResults() {
   const { query, searchEngine } = useSearchContext()
   const [result, setResult] = React.useState<AutocompleteResult>()
 
   // An optional result when a URL is entered.
-  const urlWhatYouTyped = useUrlWhatYouTyped(query)
+  const urlWhatYouTyped = React.useMemo(() => getUrlWhatYouTyped(query), [query])
 
   // Filter out empty results (from urlWhatYouTyped) and the
   // 'search-what-you-typed', which always from from the default search engine.
@@ -154,16 +154,22 @@ export default function SearchResults() {
 
   }, [result])
 
-  React.useEffect(() => {
+  React.useLayoutEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key !== 'Enter') return
+      if (e.key !== 'Enter' || e.defaultPrevented) return
 
       e.preventDefault()
 
-      const match = matches[selectedMatch!]
+      // Leo updates its native input before React commits its onInput update.
+      const input = e.composedPath().find((target): target is HTMLInputElement =>
+        target instanceof HTMLInputElement)
+      const submittedQuery = input?.value ?? query
+      const match = submittedQuery === query
+        ? matches[selectedMatch!]
+        : getUrlWhatYouTyped(submittedQuery)
       if (!match) {
         getNTPBrowserAPI().pageHandler.searchWhatYouTyped(
-          searchEngine?.host ?? defaultSearchHost, query, e.altKey, e.ctrlKey,
+          searchEngine?.keyword ?? defaultSearchHost, submittedQuery, e.altKey, e.ctrlKey,
           e.metaKey, e.shiftKey);
         return;
       }
@@ -174,7 +180,7 @@ export default function SearchResults() {
     return () => {
       document.removeEventListener('keydown', handler)
     }
-  }, [matches, selectedMatch, query, searchEngine])
+  }, [matches, selectedMatch, query, searchEngine, result])
 
   const onSearchResultClick = (match: AutocompleteMatch) => {
     const line = result?.matches.indexOf(match) ?? -1

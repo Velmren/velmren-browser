@@ -441,4 +441,23 @@
     Cards
   </message>
 
+
+  <message name="IDS_NEW_TAB_SEARCH_ENGINE_PICKER_LABEL" desc="Accessible label prefix for the new tab search engine picker." formatter_data="webui=BraveNewTabPage">
+    Search engine for this tab
+  </message>
+
+  <message name="IDS_NEW_TAB_SEARCH_ENGINE_SCOPE_DESCRIPTION" desc="Help text explaining the scope of the new tab search engine menu." formatter_data="webui=BraveNewTabPage">
+    New tabs use your browser’s default search engine. Other choices apply only to this tab. Checkboxes control this menu; change the browser default in Settings.
+  </message>
+
+  <message name="IDS_NEW_TAB_SEARCH_BROWSER_DEFAULT_LINK" desc="Link from the new tab search picker to browser default search settings." formatter_data="webui=BraveNewTabPage">
+    Change browser default…
+  </message>
+
+  <message name="IDS_NEW_TAB_SEARCH_BROWSER_DEFAULT_LABEL" desc="Badge marking the current browser default search provider." formatter_data="webui=BraveNewTabPage">
+    Browser default
+  </message>
+
+
+
 </grit-part>

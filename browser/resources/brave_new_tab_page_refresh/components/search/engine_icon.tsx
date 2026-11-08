@@ -15,7 +15,7 @@ interface Props {
 
 export function EngineIcon(props: Props) {
   const { engine } = props
-  const iconName = getNamedIcon(engine.host)
+  const iconName = getNamedIcon(engine.host) || (!engine.faviconUrl ? 'search' : '')
   if (iconName) {
     return (
       <Icon

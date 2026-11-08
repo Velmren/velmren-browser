@@ -13,9 +13,11 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/raw_ref.h"
 #include "base/memory/weak_ptr.h"
+#include "base/scoped_observation.h"
 #include "brave/browser/ui/webui/brave_new_tab_page_refresh/brave_new_tab_page.mojom.h"
 #include "brave/browser/ui/webui/brave_new_tab_page_refresh/update_observer.h"
 #include "brave/components/brave_talk/buildflags/buildflags.h"
+#include "components/search_engines/template_url_service_observer.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/receiver.h"
@@ -49,7 +51,8 @@ class VPNFacade;
 // Handler for messages from the NTP front end application. Interface method
 // implementations should be fairly trivial. Any non-trivial operations should
 // be delegated to a helper class.
-class NewTabPageHandler : public mojom::NewTabPageHandler {
+class NewTabPageHandler : public mojom::NewTabPageHandler,
+                          public TemplateURLServiceObserver {
  public:
   NewTabPageHandler(
       mojo::PendingReceiver<mojom::NewTabPageHandler> receiver,
@@ -206,6 +209,8 @@ class NewTabPageHandler : public mojom::NewTabPageHandler {
                                    std::vector<base::FilePath> paths);
 
   void OnUpdate(UpdateObserver::Source update_source);
+  void OnTemplateURLServiceChanged() override;
+  void OnTemplateURLServiceShuttingDown() override;
   void OnSponsoredSitesUpdate();
   void OpenGURL(const GURL& gurl, WindowOpenDisposition disposition);
 
@@ -221,6 +226,8 @@ class NewTabPageHandler : public mojom::NewTabPageHandler {
   raw_ref<content::WebContents> web_contents_;
   raw_ref<PrefService> pref_service_;
   raw_ref<TemplateURLService> template_url_service_;
+  base::ScopedObservation<TemplateURLService, TemplateURLServiceObserver>
+      template_url_service_observation_{this};
   raw_ref<misc_metrics::NewTabMetrics> new_tab_metrics_;
   raw_ptr<misc_metrics::BraveSearchMetrics> brave_search_metrics_ = nullptr;
   raw_ptr<misc_metrics::NavigationSourceMetrics> navigation_source_metrics_ =

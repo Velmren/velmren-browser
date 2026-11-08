@@ -31,16 +31,19 @@
 #include "components/autofill/core/common/autofill_test_util.h"
 #include "components/autofill/core/common/form_data.h"
 #include "components/autofill/core/common/form_field_data.h"
+#include "components/autofill/core/common/mojom/autofill_types.mojom.h"
 #include "components/autofill/core/common/password_form_fill_data.h"
 #include "components/autofill/core/common/unique_ids.h"
 #include "components/password_manager/core/browser/mock_webauthn_credentials_delegate.h"
 #include "components/password_manager/core/browser/passkey_credential.h"
 #include "components/password_manager/core/browser/password_autofill_manager.h"
+#include "components/password_manager/core/browser/password_manager.h"
 #include "components/password_manager/core/browser/stub_password_manager_client.h"
 #include "components/password_manager/core/browser/stub_password_manager_driver.h"
 #include "components/password_manager/core/browser/undo_password_change_controller.h"
 #include "components/password_manager/core/common/password_manager_features.h"
 #include "components/signin/public/identity_manager/identity_test_environment.h"
+#include "mojo/public/cpp/test_support/test_utils.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gfx/geometry/rect_f.h"
@@ -61,14 +64,27 @@ constexpr char16_t kSelectedUsername[] = u"zulu@example.com";
 
 class SelectedAccountDriver : public StubPasswordManagerDriver {
  public:
-  explicit SelectedAccountDriver(autofill::AutofillDriver* autofill_driver)
-      : autofill_driver_(autofill_driver) {}
+  SelectedAccountDriver(autofill::AutofillDriver* autofill_driver,
+                        PasswordManagerInterface* password_manager)
+      : autofill_driver_(autofill_driver),
+        password_manager_(password_manager) {}
 
   autofill::AutofillDriver* GetAutofillDriver() const override {
     return autofill_driver_;
   }
   const GURL& GetLastCommittedURL() const override { return url_; }
   const url::Origin& GetLastCommittedOrigin() const override { return origin_; }
+  DriverId GetId() const override { return id_; }
+  bool IsInPrimaryMainFrame() const override { return main_frame_; }
+  PasswordManagerInterface* GetPasswordManager() override {
+    return password_manager_;
+  }
+  void SetId(DriverId id) { id_ = id; }
+  void SetMainFrame(bool main_frame) { main_frame_ = main_frame; }
+  void SetUrl(const GURL& url) {
+    url_ = url;
+    origin_ = url::Origin::Create(url_);
+  }
   MOCK_METHOD(void,
               FillSuggestion,
               (const std::u16string&,
@@ -78,8 +94,11 @@ class SelectedAccountDriver : public StubPasswordManagerDriver {
 
  private:
   raw_ptr<autofill::AutofillDriver> autofill_driver_;
-  const GURL url_{kAccountUrl};
-  const url::Origin origin_ = url::Origin::Create(url_);
+  raw_ptr<PasswordManagerInterface> password_manager_;
+  DriverId id_{1};
+  bool main_frame_ = true;
+  GURL url_{kAccountUrl};
+  url::Origin origin_ = url::Origin::Create(url_);
 };
 
 class SelectedAccountPasswordClient : public StubPasswordManagerClient {
@@ -197,6 +216,24 @@ class VelmrenSelectedAccountSuggestionsTest : public testing::Test {
     delegate.ShowSuggestionsWithFormData(request);
   }
 
+  autofill::PasswordSuggestionRequest PasswordOnlyRequest() {
+    auto request = Request();
+    auto fields = request.form_data.ExtractFields();
+    fields.erase(fields.begin());
+    request.form_data.set_fields(std::move(fields));
+    request.username_field_id = {};
+    return request;
+  }
+
+  void TypeFirstStepUsername(std::u16string username = kSelectedUsername,
+                             bool explicit_username = true,
+                             bool is_otp = false,
+                             int field_id = 40) {
+    tab_password_manager_.OnUserModifiedNonPasswordField(
+        &password_driver_, autofill::FieldRendererId(field_id), username,
+        explicit_username, is_otp);
+  }
+
   bool ShowLegacyPopup(const autofill::TriggeringField& field,
                        bool offers_generation) {
     return offers_generation
@@ -239,10 +276,11 @@ class VelmrenSelectedAccountSuggestionsTest : public testing::Test {
       base::test::TaskEnvironment::TimeSource::MOCK_TIME};
   autofill::test::AutofillUnitTestEnvironment autofill_environment_;
   SelectedAccountPasswordClient password_client_;
+  PasswordManager tab_password_manager_{&password_client_};
   SelectedAccountAutofillClient autofill_client_;
   autofill::TestAutofillDriver autofill_driver_{&autofill_client_};
   testing::StrictMock<SelectedAccountDriver> password_driver_{
-      &autofill_driver_};
+      &autofill_driver_, &tab_password_manager_};
   PasswordAutofillManager manager_{&password_driver_, &autofill_client_,
                                    &password_client_};
   autofill::PasswordFormFillData fill_data_;
@@ -267,6 +305,175 @@ TEST_F(VelmrenSelectedAccountSuggestionsTest,
   autofill_client_.popup_delegate->DidAcceptSuggestion(
       suggestions.front(), {.multi_index = {0}}, request.form_data.global_id(),
       request.password_field_id);
+}
+
+TEST_F(VelmrenSelectedAccountSuggestionsTest,
+       CurrentIdentityRoundTripsAcrossRendererBrowserMojoBoundary) {
+  for (const auto& username :
+       {std::optional<std::u16string>(), std::optional<std::u16string>(u""),
+        std::optional<std::u16string>(kSelectedUsername)}) {
+    auto original = PasswordOnlyRequest();
+    original.selected_username = username;
+    autofill::PasswordSuggestionRequest copy;
+    ASSERT_TRUE(mojo::test::SerializeAndDeserialize<
+                autofill::mojom::PasswordSuggestionRequest>(original, copy));
+    EXPECT_EQ(copy.selected_username, username);
+  }
+}
+
+TEST_F(VelmrenSelectedAccountSuggestionsTest,
+       StructuredCurrentIdentityRanksPasswordOnlyRequestsAndRefreshes) {
+  auto request = PasswordOnlyRequest();
+  request.selected_username = kSelectedUsername;
+  Show(request);
+  ExpectSelectedOrder();
+  manager_.OnAddPasswordFillData(fill_data_);
+  ExpectSelectedOrder();
+  request.selected_username = u"alpha@example.com";
+  Show(request);
+  EXPECT_THAT(PasswordUsernames(),
+              ElementsAre(u"alpha@example.com", u"charlie@example.com",
+                          kSelectedUsername));
+}
+
+TEST_F(VelmrenSelectedAccountSuggestionsTest,
+       SubmittedUsernameFirstSurvivesPasswordOnlyNavigation) {
+  TypeFirstStepUsername();
+  tab_password_manager_.DidNavigateMainFrame(/*form_may_be_submitted=*/true);
+  manager_.DidNavigateFrame();
+  manager_.OnAddPasswordFillData(fill_data_);
+  Show(PasswordOnlyRequest());
+  ExpectSelectedOrder();
+  tab_password_manager_.DidNavigateMainFrame(/*form_may_be_submitted=*/false);
+  manager_.DidNavigateFrame();
+  manager_.OnAddPasswordFillData(fill_data_);
+  Show(PasswordOnlyRequest());
+  ExpectOrdinaryOrder();
+}
+
+TEST_F(VelmrenSelectedAccountSuggestionsTest,
+       UsernameFirstSubmissionCanReplaceMainFrameDriverButCannotBridgeFrames) {
+  TypeFirstStepUsername();
+  tab_password_manager_.DidNavigateMainFrame(/*form_may_be_submitted=*/true);
+  password_driver_.SetId(DriverId(2));
+  autofill_driver_.SetLocalFrameToken(autofill::test::MakeLocalFrameToken());
+  manager_.DidNavigateFrame();
+  manager_.OnAddPasswordFillData(fill_data_);
+  Show(PasswordOnlyRequest());
+  ExpectSelectedOrder();
+  password_driver_.SetMainFrame(false);
+  Show(PasswordOnlyRequest());
+  ExpectOrdinaryOrder();
+
+  tab_password_manager_.DidNavigateMainFrame(/*form_may_be_submitted=*/false);
+  TypeFirstStepUsername();
+  tab_password_manager_.DidNavigateMainFrame(/*form_may_be_submitted=*/true);
+  password_driver_.SetMainFrame(true);
+  password_driver_.SetId(DriverId(3));
+  Show(PasswordOnlyRequest());
+  ExpectOrdinaryOrder();
+}
+
+TEST_F(VelmrenSelectedAccountSuggestionsTest,
+       ReplacedDriverMayReuseThePreviousUsernameRendererIdForItsPassword) {
+  TypeFirstStepUsername(kSelectedUsername, true, false, 40);
+  tab_password_manager_.DidNavigateMainFrame(/*form_may_be_submitted=*/true);
+  password_driver_.SetId(DriverId(2));
+  autofill_driver_.SetLocalFrameToken(autofill::test::MakeLocalFrameToken());
+  fill_data_.password_element_renderer_id = autofill::FieldRendererId(40);
+  manager_.DidNavigateFrame();
+  manager_.OnAddPasswordFillData(fill_data_);
+  Show(PasswordOnlyRequest());
+  ExpectSelectedOrder();
+}
+
+TEST_F(VelmrenSelectedAccountSuggestionsTest,
+       ChangingAutocompleteRoleCannotKeepAnEarlierExplicitUsername) {
+  TypeFirstStepUsername();
+  Show(PasswordOnlyRequest());
+  ExpectSelectedOrder();
+  TypeFirstStepUsername(kSelectedUsername, /*explicit_username=*/false);
+  Show(PasswordOnlyRequest());
+  ExpectOrdinaryOrder();
+}
+
+TEST_F(VelmrenSelectedAccountSuggestionsTest,
+       UsernameFirstRequiresFreshExplicitSameFrameSameOriginNonOtpCandidate) {
+  for (int variant = 0; variant != 6; ++variant) {
+    SCOPED_TRACE(variant);
+    tab_password_manager_.DidNavigateMainFrame(/*form_may_be_submitted=*/false);
+    if (variant == 2) {
+      password_driver_.SetUrl(GURL("https://unrelated.test/signin"));
+    }
+    TypeFirstStepUsername(kSelectedUsername, /*explicit_username=*/variant != 0,
+                          /*is_otp=*/variant == 1,
+                          /*field_id=*/variant == 4 ? 2 : 40);
+    password_driver_.SetUrl(GURL(kAccountUrl));
+    if (variant == 3) {
+      password_driver_.SetId(DriverId(9));
+    } else if (variant == 5) {
+      task_environment_.FastForwardBy(base::Minutes(6));
+    }
+    Show(PasswordOnlyRequest());
+    ExpectOrdinaryOrder();
+    password_driver_.SetId(DriverId(1));
+  }
+}
+
+TEST_F(VelmrenSelectedAccountSuggestionsTest,
+       CurrentEmptyConflictingUnknownOrChangedIdentityOverridesPreviousStep) {
+  TypeFirstStepUsername();
+  for (const auto* username :
+       {u"", u"unknown@example.com", u"Zulu@example.com"}) {
+    auto request = PasswordOnlyRequest();
+    request.selected_username = username;
+    Show(request);
+    ExpectOrdinaryOrder();
+    Show(Request(username));
+    ExpectOrdinaryOrder();
+  }
+  auto conflicting = Request();
+  conflicting.selected_username = u"alpha@example.com";
+  Show(conflicting);
+  ExpectOrdinaryOrder();
+  auto changed = PasswordOnlyRequest();
+  changed.selected_username = u"alpha@example.com";
+  Show(changed);
+  EXPECT_THAT(PasswordUsernames(),
+              ElementsAre(u"alpha@example.com", u"charlie@example.com",
+                          kSelectedUsername));
+}
+
+TEST_F(VelmrenSelectedAccountSuggestionsTest,
+       LatestUsernameFirstEditWinsAndEmptyEditCannotReviveAnOlderAccount) {
+  TypeFirstStepUsername();
+  task_environment_.FastForwardBy(base::Milliseconds(1));
+  TypeFirstStepUsername(u"alpha@example.com", true, false, 41);
+  Show(PasswordOnlyRequest());
+  EXPECT_THAT(PasswordUsernames(),
+              ElementsAre(u"alpha@example.com", u"charlie@example.com",
+                          kSelectedUsername));
+  TypeFirstStepUsername(u"", true, false, 41);
+  Show(PasswordOnlyRequest());
+  ExpectOrdinaryOrder();
+}
+
+TEST_F(VelmrenSelectedAccountSuggestionsTest,
+       CurrentMetadataCannotBypassForeignOriginFrameOrPasswordIdentity) {
+  for (int variant = 0; variant != 3; ++variant) {
+    SCOPED_TRACE(variant);
+    auto request = PasswordOnlyRequest();
+    request.selected_username = kSelectedUsername;
+    if (variant == 0) {
+      request.form_data.set_url(GURL("https://unrelated.test/signin"));
+    } else if (variant == 1) {
+      request.form_data.set_host_frame(autofill::test::MakeLocalFrameToken());
+    } else {
+      request.password_field_id.renderer_id = autofill::FieldRendererId(9);
+    }
+    Show(request);
+    ExpectOrdinaryOrder();
+  }
 }
 
 TEST_F(VelmrenSelectedAccountSuggestionsTest,
@@ -600,6 +807,54 @@ TEST_F(VelmrenSelectedAccountSuggestionsTest,
                           kSelectedUsername));
   task_environment_.FastForwardBy(base::Seconds(1));
   EXPECT_EQ(autofill_client_.show_count, 1u);
+}
+
+TEST_F(VelmrenSelectedAccountSuggestionsTest,
+       PendingStructuredIdentityCannotOutliveAccountChangeOrNavigation) {
+  base::test::ScopedFeatureList feature(
+      features::kDelaySuggestionsOnAutofocusWaitingForPasskeys);
+  std::vector<base::OnceClosure> callbacks;
+  ON_CALL(password_client_.webauthn_delegate, GetPasskeys)
+      .WillByDefault(Return(
+          base::unexpected(WebAuthnCredentialsDelegate::
+                               PasskeysUnavailableReason::kNotReceived)));
+  EXPECT_CALL(password_client_.webauthn_delegate,
+              RequestNotificationWhenPasskeysReady)
+      .Times(3)
+      .WillRepeatedly([&](base::OnceClosure callback) {
+        callbacks.push_back(std::move(callback));
+      });
+  auto request = PasswordOnlyRequest();
+  request.selected_username = kSelectedUsername;
+  request.field.show_webauthn_credentials = true;
+  request.field.trigger_source = autofill::AutofillSuggestionTriggerSource::
+      kPasswordManagerProcessedFocusedField;
+  Show(request);
+  request.selected_username = u"alpha@example.com";
+  Show(request);
+  ASSERT_EQ(callbacks.size(), 2u);
+  const std::vector<PasskeyCredential> passkeys;
+  ON_CALL(password_client_.webauthn_delegate, GetPasskeys)
+      .WillByDefault(Return(base::ok(&passkeys)));
+  std::move(callbacks[0]).Run();
+  EXPECT_EQ(autofill_client_.show_count, 0u);
+  std::move(callbacks[1]).Run();
+  EXPECT_EQ(autofill_client_.show_count, 1u);
+  EXPECT_THAT(PasswordUsernames(),
+              ElementsAre(u"alpha@example.com", u"charlie@example.com",
+                          kSelectedUsername));
+
+  ON_CALL(password_client_.webauthn_delegate, GetPasskeys)
+      .WillByDefault(Return(
+          base::unexpected(WebAuthnCredentialsDelegate::
+                               PasskeysUnavailableReason::kNotReceived)));
+  Show(request);
+  ASSERT_EQ(callbacks.size(), 3u);
+  manager_.DidNavigateFrame();
+  const size_t shows_before_navigation = autofill_client_.show_count;
+  std::move(callbacks[2]).Run();
+  task_environment_.FastForwardBy(base::Seconds(1));
+  EXPECT_EQ(autofill_client_.show_count, shows_before_navigation);
 }
 
 TEST_F(VelmrenSelectedAccountSuggestionsTest,

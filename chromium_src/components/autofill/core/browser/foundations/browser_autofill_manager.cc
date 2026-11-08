@@ -5,7 +5,6 @@
 
 #include "build/build_config.h"
 #include "components/autofill/core/browser/integrators/password_manager/password_manager_delegate.h"
-#include "components/autofill/core/browser/integrators/password_manager/password_manager_delegate.h"
 
 #if BUILDFLAG(IS_WIN)
 #define BRAVE_BROWSER_AUTOFILL_MANAGER_SHOW_PASSWORD_SUGGESTIONS \

@@ -1,0 +1,14 @@
+diff --git a/components/autofill/core/common/mojom/autofill_types_mojom_traits.cc b/components/autofill/core/common/mojom/autofill_types_mojom_traits.cc
+index b7a542c920..3c7964a8d8 100644
+--- a/components/autofill/core/common/mojom/autofill_types_mojom_traits.cc
++++ b/components/autofill/core/common/mojom/autofill_types_mojom_traits.cc
+@@ -607,7 +607,8 @@ bool StructTraits<autofill::mojom::PasswordSuggestionRequestDataView,
+                   autofill::PasswordSuggestionRequest>::
+     Read(autofill::mojom::PasswordSuggestionRequestDataView data,
+          autofill::PasswordSuggestionRequest* out) {
+-  return data.ReadField(&out->field) && data.ReadFormData(&out->form_data) &&
++  return BRAVE_PASSWORD_SUGGESTION_REQUEST_READ_SELECTED_USERNAME
++         data.ReadField(&out->field) && data.ReadFormData(&out->form_data) &&
+          data.ReadUsernameFieldId(&out->username_field_id.renderer_id) &&
+          data.ReadPasswordFieldId(&out->password_field_id.renderer_id);
+ }

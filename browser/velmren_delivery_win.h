@@ -10,6 +10,7 @@
 
 #include "base/command_line.h"
 #include "base/files/file_path.h"
+#include "base/process/process_handle.h"
 
 namespace velmren::delivery {
 
@@ -24,6 +25,20 @@ std::optional<base::CommandLine> MakeBrowserCommand(
     const base::FilePath& profile_path,
     bool incognito = false,
     bool new_window = false);
+
+// Builds only the explicit restart contract; never forwards arbitrary switches.
+// A ready status is advisory: the launcher revalidates the pending payload.
+std::optional<base::CommandLine> MakeRelaunchCommand(
+    const base::FilePath& executable,
+    const base::FilePath& user_data_dir,
+    const base::CommandLine& relaunch_command,
+    base::ProcessId browser_pid,
+    bool update_ready);
+
+// Preserves Chromium's completed shutdown, then starts the stable launcher.
+// Returns false to use the ordinary relaunch when delivery is inapplicable.
+bool TryRelaunchThroughDelivery(const base::CommandLine& relaunch_command,
+                               bool force_breakaway_from_job);
 
 bool IsOrdinaryBrowserCommand(const base::CommandLine& command_line);
 

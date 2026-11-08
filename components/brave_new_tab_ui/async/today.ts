@@ -9,11 +9,15 @@ import AsyncActionHandler from '../../common/AsyncActionHandler'
 import * as Actions from '../actions/today_actions'
 import { ApplicationState } from '../reducers'
 import store from '../store'
+import { loadTimeData } from '$web-common/loadTimeData'
 
-addFeedListener((hash) => {
-  const current = store.getState().today.feed?.hash
-  store.dispatch(Actions.isUpdateAvailable({ isUpdateAvailable: current !== hash }))
-})
+// Tests and Storybook have a mock News controller and no native load-time data.
+if (process.env.NODE_ENV === 'test' || loadTimeData.getBoolean('braveNewsSupported')) {
+  addFeedListener((hash) => {
+    const current = store.getState().today.feed?.hash
+    store.dispatch(Actions.isUpdateAvailable({ isUpdateAvailable: current !== hash }))
+  })
+}
 
 function storeInHistoryState (data: object) {
   const oldHistoryState =

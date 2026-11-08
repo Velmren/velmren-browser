@@ -36,7 +36,7 @@ internal static partial class Program
 {
     const string OwnershipFile = ".velmren-owner.json";
     static readonly string[] RegistrationValues = ["VelmrenOwner", "InstallLocation", "DisplayName", "DisplayVersion", "Publisher", "DisplayIcon", "UninstallString", "NoModify", "NoRepair"];
-    static readonly string[] CoreFiles = ["Velmren.exe", "Velmren.exe.installing", "installation.json", "current.json", "pending.json", "events.jsonl", "operation.lock", "run.lock", UpdateMonitorFile];
+    static readonly string[] CoreFiles = ["Velmren.exe", "Velmren.exe.installing", "installation.json", "current.json", "pending.json", "update-status.json", "events.jsonl", "operation.lock", "run.lock", UpdateMonitorFile];
     static string CanonicalRoot(string root) => Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
     static string OwnerSid()
     {

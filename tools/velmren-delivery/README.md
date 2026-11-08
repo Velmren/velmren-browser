@@ -275,6 +275,16 @@ It always supplies `--user-data-dir=<root>/profile`, `--no-first-run`, and
   a terminated monitor. Agent, headless, automation, and test processes do not
   start this watchdog. Taskbar/profile relaunch commands retain the actual
   user-data directory and profile, including profiles outside the installation.
+- The ordinary installed browser reads the bounded `update-status.json` snapshot
+  for its toolbar offer and About page. The snapshot is display-only: signed
+  manifest verification, activation locks and installed-file checks remain the
+  authority. About can request a check without closing the browser. A ready
+  update offers an explicit restart; another browser/agent session disables it.
+  The native restart first completes normal Chromium shutdown, then asks the
+  stable launcher to activate and reopen the actual data/profile directory with
+  session restoration. Bounded parent-exit and activation waits preserve a
+  healthy committed release when an update cannot activate. An unfinished
+  launcher transaction still requires recovery before launch.
 - Installer output includes numeric phase timings, transfer byte counts and
   verification file counts. Diagnostic output failures cannot abort a transfer
   or abandon an already running browser. The support collector exports only

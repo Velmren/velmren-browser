@@ -166,6 +166,9 @@
 // acceleratable so users can assign it a custom keyboard shortcut.
 #define IDC_BLOCK_ELEMENTS 56470
 
+// Opens the delivery updater status and restart options in About Velmren.
+#define IDC_VELMREN_UPDATE_STATUS 56471
+
 #define IDC_BRAVE_COMMANDS_LAST 57000
 
 #endif  // BRAVE_APP_BRAVE_COMMAND_IDS_H_

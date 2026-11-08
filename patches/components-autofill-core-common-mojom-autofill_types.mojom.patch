@@ -1,0 +1,12 @@
+diff --git a/components/autofill/core/common/mojom/autofill_types.mojom b/components/autofill/core/common/mojom/autofill_types.mojom
+index e3038adcb3..4938ac0440 100644
+--- a/components/autofill/core/common/mojom/autofill_types.mojom
++++ b/components/autofill/core/common/mojom/autofill_types.mojom
+@@ -469,6 +469,7 @@ struct PasswordSuggestionRequest {
+   FormData form_data;
+   FieldRendererId username_field_id;
+   FieldRendererId password_field_id;
++  mojo_base.mojom.String16? selected_username;
+ };
+ 
+ // autofill::ParsingResult

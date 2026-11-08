@@ -11,6 +11,7 @@
 #include <shellapi.h>
 #include <wrl/client.h>
 
+#include "base/command_line.h"
 #include "base/logging.h"
 #include "base/memory/ref_counted.h"
 #include "base/metrics/histogram_functions.h"
@@ -248,4 +249,27 @@ bool InvokeGoogleUpdateForRenameBrave() {
 
 }  // namespace
 
+namespace velmren::delivery {
+bool TryRelaunchThroughDelivery(const base::CommandLine& relaunch_command,
+                               bool force_breakaway_from_job);
+}  // namespace velmren::delivery
+
+#define RelaunchChromeBrowserImpl RelaunchChromeBrowserImpl_ChromiumImpl
 #include <chrome/browser/first_run/upgrade_util_win.cc>  // IWYU pragma: export
+#undef RelaunchChromeBrowserImpl
+
+namespace upgrade_util {
+
+bool RelaunchChromeBrowserImpl(const base::CommandLine& command_line,
+                              bool force_breakaway_from_job,
+                              bool wait_for_parent) {
+  // A delivery update must re-enter the stable launcher, which owns activation.
+  if (velmren::delivery::TryRelaunchThroughDelivery(command_line,
+                                                 force_breakaway_from_job)) {
+    return true;
+  }
+  return RelaunchChromeBrowserImpl_ChromiumImpl(
+      command_line, force_breakaway_from_job, wait_for_parent);
+}
+
+}  // namespace upgrade_util

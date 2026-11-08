@@ -1,0 +1,13 @@
+diff --git a/components/autofill/core/common/mojom/autofill_types_mojom_traits.h b/components/autofill/core/common/mojom/autofill_types_mojom_traits.h
+index 43cc2bc321..1c8096ebc7 100644
+--- a/components/autofill/core/common/mojom/autofill_types_mojom_traits.h
++++ b/components/autofill/core/common/mojom/autofill_types_mojom_traits.h
+@@ -742,6 +742,8 @@ struct StructTraits<autofill::mojom::PasswordSuggestionRequestDataView,
+     return r.password_field_id.renderer_id;
+   }
+ 
++  BRAVE_PASSWORD_SUGGESTION_REQUEST_SELECTED_USERNAME_TRAITS
++
+   static bool Read(autofill::mojom::PasswordSuggestionRequestDataView data,
+                    autofill::PasswordSuggestionRequest* out);
+ };

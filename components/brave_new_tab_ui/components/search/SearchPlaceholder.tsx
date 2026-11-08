@@ -41,6 +41,15 @@ const MenuButton = styled(Button)`
   color: ${color.container.background};
 `
 
+const MenuLabel = styled.span`
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+`
+
 const PlaceholderContainer = styled.div`
   align-self: center;
   position: relative;
@@ -51,7 +60,7 @@ const PlaceholderContainer = styled.div`
 
   max-width: calc(100vw - 24px);
   
-  &:hover ${MenuContainer} {
+  &:hover ${MenuContainer}, &:focus-within ${MenuContainer} {
     transition-delay: 0s;
     opacity: 1;
   }
@@ -76,6 +85,7 @@ function Swapper() {
       <div data-theme="light">
         <MenuContainer>
           <MenuButton fab kind='plain-faint' slot='anchor-content'>
+            <MenuLabel>{getLocale('customize')}: {getLocale('searchTitle')}</MenuLabel>
             <Icon name='more-vertical' />
           </MenuButton>
           <leo-menu-item onClick={e => {

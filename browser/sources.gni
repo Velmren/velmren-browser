@@ -784,6 +784,8 @@ brave_chrome_browser_public_deps = [
 
 if (is_win) {
   brave_chrome_browser_public_deps += [ "//brave/browser:velmren_delivery_win" ]
+  brave_chrome_browser_sources +=
+      [ "//brave/browser/velmren_delivery_relaunch_win.cc" ]
 }
 
 if (is_mac) {

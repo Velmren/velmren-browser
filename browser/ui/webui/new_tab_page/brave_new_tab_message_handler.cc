@@ -107,6 +107,8 @@ base::DictValue GetPreferencesDictionary(PrefService* prefs) {
 #if BUILDFLAG(ENABLE_BRAVE_NEWS)
   pref_data.Set("showToday",
                 prefs->GetBoolean(brave_news::prefs::kNewTabPageShowToday));
+#else
+  pref_data.Set("showToday", false);
 #endif  // BUILDFLAG(ENABLE_BRAVE_NEWS)
   pref_data.Set("showRewards", prefs->GetBoolean(kNewTabPageShowRewards));
   pref_data.Set("isBrandedWallpaperNotificationDismissed",
@@ -117,6 +119,9 @@ base::DictValue GetPreferencesDictionary(PrefService* prefs) {
   pref_data.Set(
       "isBraveNewsDisabledByPolicy",
       prefs->GetBoolean(brave_news::prefs::kBraveNewsDisabledByPolicy));
+#else
+  pref_data.Set("isBraveNewsOptedIn", false);
+  pref_data.Set("isBraveNewsDisabledByPolicy", true);
 #endif  // BUILDFLAG(ENABLE_BRAVE_NEWS)
   pref_data.Set("hideAllWidgets", prefs->GetBoolean(kNewTabPageHideAllWidgets));
 #if BUILDFLAG(ENABLE_BRAVE_TALK)
@@ -175,6 +180,7 @@ BraveNewTabMessageHandler* BraveNewTabMessageHandler::Create(
     content::WebUIDataSource* source,
     Profile* profile,
     bool was_restored) {
+  source->AddBoolean("braveNewsSupported", BUILDFLAG(ENABLE_BRAVE_NEWS));
 #if BUILDFLAG(ENABLE_BRAVE_ADS)
   //
   // Initial Values
@@ -193,6 +199,8 @@ BraveNewTabMessageHandler* BraveNewTabMessageHandler::Create(
 
   source->AddBoolean("featureFlagBraveNTPSponsoredImagesWallpaper",
                      is_ads_supported_locale);
+#else
+  source->AddBoolean("featureFlagBraveNTPSponsoredImagesWallpaper", false);
 #endif  // BUILDFLAG(ENABLE_BRAVE_ADS)
 
   // Private Tab info

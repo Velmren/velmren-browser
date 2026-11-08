@@ -13,6 +13,7 @@ import Icon from "@brave/leo/react/icon";
 const icons = {
   // The Google search provider has the empty origin :O
   '': 'google-color',
+  'www.google.com': 'google-color',
   'duckduckgo.com': 'duckduckgo-color',
   'search.brave.com': 'social-brave-release-favicon-fullheight-color',
   'www.bing.com': 'bing-color',
@@ -41,6 +42,7 @@ export function SearchEngineIcon(props: { engine?: SearchEngineInfo, className?:
   if (!props.engine) return null
 
   const nalaIcon = icons[props.engine.host as keyof typeof icons]
+    || (!props.engine.faviconUrl.url ? 'search' : undefined)
 
   return nalaIcon
     ? <Icon name={nalaIcon} className={props.className} />

@@ -4,6 +4,7 @@
  * You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 import * as React from 'react'
+import { useSearchEngineSelection } from '$web-common/useSearchEngineSelection'
 
 import {
   SearchEngineInfo,
@@ -26,8 +27,6 @@ export function useSearchInputState(inputKey: string) {
   const showSearchBox = useSearchState((s) => s.showSearchBox)
   const searchEngines = useSearchState((s) => s.searchEngines)
   const enabledSearchEngines = useSearchState((s) => s.enabledSearchEngines)
-  const defaultSearchEngine = useSearchState((s) => s.defaultSearchEngine)
-  const lastUsedSearchEngine = useSearchState((s) => s.lastUsedSearchEngine)
   const searchMatches = useSearchMatches(inputKey)
   const searchSuggestionsEnabled = useSearchState(
     (s) => s.searchSuggestionsEnabled,
@@ -40,27 +39,14 @@ export function useSearchInputState(inputKey: string) {
   const [selectedResultOption, setSelectedResultOption] = React.useState<
     number | null
   >(null)
-  const [currentEngine, setCurrentEngine] = React.useState(
-    lastUsedSearchEngine || defaultSearchEngine,
+  const {
+    engine: searchEngine,
+    options: searchEngineOptions,
+    selectEngine,
+  } = useSearchEngineSelection(searchEngines, (host) =>
+    enabledSearchEngines.has(host),
   )
-
-  // If the enabled search engine list changes, and the current engine is no
-  // longer in the list, then choose the default search engine. If the default
-  // search engine is also not in the list, then choose the first engine in the
-  // list of enabled engines.
-  React.useEffect(() => {
-    if (!enabledSearchEngines.has(currentEngine)) {
-      if (
-        enabledSearchEngines.size === 0
-        || enabledSearchEngines.has(defaultSearchEngine)
-      ) {
-        setCurrentEngine(defaultSearchEngine)
-      } else {
-        const [firstEngine] = enabledSearchEngines.values()
-        setCurrentEngine(firstEngine)
-      }
-    }
-  }, [enabledSearchEngines, defaultSearchEngine])
+  const currentEngine = searchEngine?.keyword ?? ''
 
   // Build the list of result options. The result options can contain a direct
   // URL (if the user has typed a URL) or a list of autocomplete options.
@@ -122,22 +108,10 @@ export function useSearchInputState(inputKey: string) {
     }
   }, [query])
 
-  const searchEngine = searchEngines.find(({ host }) => host === currentEngine)
-
-  const searchEngineOptions = searchEngines.filter((engine) => {
-    if (enabledSearchEngines.size === 0) {
-      return engine.host === defaultSearchEngine
-    }
-    return enabledSearchEngines.has(engine.host)
-  })
-
   function selectSearchEngine(engine: SearchEngineInfo) {
-    setCurrentEngine(engine.host)
-    actions.setLastUsedSearchEngine(engine.host)
+    if (engine.keyword === currentEngine) return
+    selectEngine(engine)
     actions.stopAutocomplete()
-    if (query) {
-      actions.queryAutocomplete(query, engine.host)
-    }
   }
 
   function openSearch(event: ClickEvent) {

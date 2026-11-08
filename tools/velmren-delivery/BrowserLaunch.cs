@@ -4,6 +4,8 @@ namespace Velmren.Delivery;
 
 internal static partial class Program
 {
+    static readonly TimeSpan SessionRestoreRunLeaseTimeout = TimeSpan.FromMinutes(2);
+
     static string BrowserProfile(string root, string? requested)
     {
         if (requested is null) return SafePath(root, "profile");
@@ -26,7 +28,7 @@ internal static partial class Program
 
     // A committed installation can run while the updater downloads or stages.
     // Activation/uninstall require an exclusive run lease, not this operation lock.
-    static async Task<LaunchPreparation> PrepareBrowserLaunch(string root, CancellationToken token)
+    static async Task<LaunchPreparation> PrepareBrowserLaunch(string root, CancellationToken token, bool restoreSession = false)
     {
         var recovered = false;
         double lockWaitMs = 0, settingsMs = 0;
@@ -36,7 +38,9 @@ internal static partial class Program
             var timer = Stopwatch.StartNew();
             using (var budget = CancellationTokenSource.CreateLinkedTokenSource(token))
             {
-                budget.CancelAfter(StartupUpdateTimeout);
+                // Restarts can race a valid activation that is still verifying or
+                // retaining releases under the exclusive run lease.
+                budget.CancelAfter(restoreSession ? SessionRestoreRunLeaseTimeout : StartupUpdateTimeout);
                 var path = SafePath(root, "run.lock");
                 while (true)
                 {

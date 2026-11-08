@@ -190,6 +190,9 @@ EXCLUDE_COMMANDS = [
     "IDC_SIDEBAR_SHOW_OPTION_NEVER",
     "IDC_BRAVE_VPN_MENU",
 
+    # This status entry is handled by the app menu, not the command controller.
+    "IDC_VELMREN_UPDATE_STATUS",
+
     # Brave Containers: This command needs additional user input to decide
     # which container to use, so not useful. We might want to try opening the
     # current tab in the default container, but that would be undesirable as

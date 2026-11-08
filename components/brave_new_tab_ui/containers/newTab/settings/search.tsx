@@ -13,12 +13,10 @@ import Icon from '@brave/leo/react/icon'
 import Toggle from '@brave/leo/react/toggle'
 import { color, font, radius, spacing } from '@brave/leo/tokens/css/variables'
 import styled from 'styled-components'
-import usePromise from '../../../../common/usePromise'
 import {
   SettingsRow,
   SettingsText
 } from '../../../components/default'
-import { searchEnginesPromise } from '../../../components/search/SearchContext'
 import { MediumSearchEngineIcon } from '../../../components/search/SearchEngineIcon'
 import { useNewTabPref } from '../../../hooks/usePref'
 import { getLocale } from '../../../../common/locale'
@@ -67,42 +65,53 @@ const Hr = styled.hr`
 `
 
 const CheckboxText = styled.span`flex: 1`;
+
+const SearchToggle = styled(Toggle)`
+  --leo-toggle-label-flex-direction: row-reverse;
+  display: block;
+  grid-column: 1 / -1;
+  width: 100%;
+`
+
+const SearchToggleText = styled(SettingsText)`flex: 1`;
+
 const hasEnabledEngine = (config: Record<string, boolean>) => Object.keys(config).some(key => config[key])
 
 export default function SearchSettings() {
-  const { result: engines = [] } = usePromise(() => searchEnginesPromise, [])
   const [showSearchBox, setShowSearchBox] = useNewTabPref('showSearchBox')
-  const { setEngineConfig, engineConfig } = useEngineContext()
+  const { setEngineConfig, engineConfig, searchEngines: engines } = useEngineContext()
 
   React.useEffect(() => {
-    if (!hasEnabledEngine(engineConfig)) {
+    if (engines.length && !hasEnabledEngine(engineConfig) && !engines.some((engine) => engine.isDefault)) {
       setShowSearchBox(false)
     }
   }, [engineConfig])
 
   return <Flex direction='column' gap={spacing.xl}>
     <SettingsRow>
-      <SettingsText>{getLocale('searchShowSetting')}</SettingsText>
-      <Toggle size='small' checked={showSearchBox} onChange={e => {
+      <SearchToggle size='small' checked={showSearchBox} onChange={e => {
         setShowSearchBox(e.checked)
 
         // If we've just enabled the searchbox, make sure at least one engine
         // is enabled.
         if (e.checked && !hasEnabledEngine(engineConfig)) {
-          setEngineConfig(defaultSearchHost, true)
+          setEngineConfig(engines.find((engine) => engine.isDefault)?.host ?? defaultSearchHost, true)
         }
-      }} />
+      }}>
+        <SearchToggleText>{getLocale('searchShowSetting')}</SearchToggleText>
+      </SearchToggle>
     </SettingsRow>
     {showSearchBox && <>
       <Hr />
       <EnginesContainer direction='column' gap={spacing.xl}>
         <div>{getLocale('searchEnableSearchEnginesTitle')}</div>
+        <div>{getLocale('searchEngineScopeDescription')}</div>
         <EnginesGrid>
           {engines.map(engine => <EngineCard key={engine.keyword}>
-            <EngineCheckbox checked={engineConfig[engine.host]} onChange={e => {
+            <EngineCheckbox isDisabled={engine.isDefault} checked={engine.isDefault || !!engineConfig[engine.host]} onChange={e => {
               setEngineConfig(engine.host, e.checked)
             }}>
-              <CheckboxText>{engine.name}</CheckboxText>
+              <CheckboxText>{engine.name}{engine.isDefault && ` (${getLocale('searchBrowserDefaultLabel')})`}</CheckboxText>
               <MediumSearchEngineIcon engine={engine} />
             </EngineCheckbox>
           </EngineCard>)}

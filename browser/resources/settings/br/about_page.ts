@@ -12,6 +12,9 @@ import { SettingsAboutPageElement } from '../about_page/about_page.js'
 import { AboutPageBrowserProxyImpl } from '../about_page/about_page_browser_proxy.js'
 // </if>
 import { loadTimeData } from '../i18n_setup.js'
+// <if expr="is_win">
+import { appendVelmrenUpdateCard } from './velmren_updates.js'
+// </if>
 
 injectStyle(SettingsAboutPageElement, css`
   #release-notes {
@@ -112,5 +115,10 @@ proto.firstUpdated = function(
   originalFirstUpdated?.call(this, changedProperties)
   if (this.shadowRoot) {
     modifyAboutPage(this.shadowRoot)
+    // <if expr="is_win">
+    if (loadTimeData.getBoolean('isVelmrenRelease')) {
+      appendVelmrenUpdateCard(this.shadowRoot, this)
+    }
+    // </if>
   }
 }

@@ -125,6 +125,8 @@ if (is_win) {
     sources = [
       "velmren_delivery_win.cc",
       "velmren_delivery_win.h",
+      "velmren_update_status.cc",
+      "velmren_update_status.h",
     ]
     public_deps = [ "//base" ]
   }
@@ -134,6 +136,7 @@ if (is_win) {
       "//base/test/run_all_unittests.cc",
       "//brave/components/version_info/velmren_version_info_unittest.cc",
       "velmren_delivery_win_unittest.cc",
+      "velmren_update_status_unittest.cc",
     ]
     deps = [
       ":velmren_delivery_win",

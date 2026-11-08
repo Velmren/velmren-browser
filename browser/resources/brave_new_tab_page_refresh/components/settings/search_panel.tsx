@@ -66,16 +66,24 @@ export function SearchPanel() {
       {showSearchBox && (
         <div className='search-engines'>
           <h4>{getString(S.NEW_TAB_ENABLED_SEARCH_ENGINES_LABEL)}</h4>
+          <p>{getString(S.NEW_TAB_SEARCH_ENGINE_SCOPE_DESCRIPTION)}</p>
           <div className='search-engine-list'>
             {searchEngines.map((engine) => (
               <Checkbox
-                key={engine.host}
-                checked={enabledSearchEngines.has(engine.host)}
+                key={engine.keyword}
+                isDisabled={engine.isDefault}
+                checked={
+                  engine.isDefault || enabledSearchEngines.has(engine.host)
+                }
                 onChange={({ checked }) => {
                   actions.setSearchEngineEnabled(engine.host, checked)
                 }}
               >
-                <span className='engine-name'>{engine.name}</span>
+                <span className='engine-name'>
+                  {engine.name}
+                  {engine.isDefault
+                    && ` (${getString(S.NEW_TAB_SEARCH_BROWSER_DEFAULT_LABEL)})`}
+                </span>
                 <EngineIcon engine={engine} />
               </Checkbox>
             ))}

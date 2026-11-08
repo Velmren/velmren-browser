@@ -6,6 +6,36 @@
 import("//testing/test.gni")
 
 if (is_win) {
+  test("velmren_autofill_renderer_unittests") {
+    testonly = true
+    sources = [ "selected_account_renderer_browsertest.cc" ]
+
+    # RenderViewTest owns Blink initialization and requires one case per
+    # process, matching the upstream AutofillRendererTest browser-test launcher.
+    deps = [
+      "//base",
+      "//base/test:test_support",
+      "//components/autofill/content/common/mojom",
+      "//components/autofill/content/renderer",
+      "//components/autofill/content/renderer:test_support",
+      "//components/autofill/core/common",
+      "//content/public/renderer",
+      "//content/test:content_test_entry",
+      "//content/test:default_content_test_launcher",
+      "//content/test:test_support",
+      "//mojo/public/cpp/bindings",
+      "//testing/gtest",
+      "//third_party/blink/public:blink",
+      "//url",
+    ]
+    data_deps = [
+      "//components:components_tests_pak",
+      "//content/shell:pak",
+      "//third_party/angle:includes",
+      "//ui/resources:ui_test_pak_data",
+    ]
+  }
+
   test("velmren_filter_unittests") {
     sources = [ "//brave/components/velmren/public_filters_unittest.cc" ]
     deps = [
@@ -30,6 +60,7 @@ if (is_win) {
       "//base/test:test_support",
       "//components/affiliations/core/browser:affiliations",
       "//components/affiliations/core/browser:test_support",
+      "//components/autofill/core/common/mojom:mojo_types",
       "//components/password_manager/core/browser",
       "//components/password_manager/core/browser:test_support",
       "//components/password_manager/core/browser:unit_tests",
@@ -37,6 +68,7 @@ if (is_win) {
       "//components/password_manager/core/browser/password_store:password_store_impl",
       "//components/password_manager/core/browser/password_store:test_support",
       "//components/test:run_all_unittests",
+      "//mojo/public/cpp/test_support:test_utils",
       "//testing/gmock",
       "//testing/gtest",
       "//url",

@@ -8,8 +8,10 @@
 
 #include <optional>
 
+#include "base/callback_list.h"
 #include "base/gtest_prod_util.h"
 #include "base/memory/raw_ref.h"
+#include "build/build_config.h"
 #include "chrome/browser/ui/views/toolbar/browser_app_menu_button.h"
 #include "components/prefs/pref_change_registrar.h"
 
@@ -28,6 +30,11 @@ class BraveBrowserAppMenuButton : public BrowserAppMenuButton {
 
   std::optional<SkColor> GetColorForSeverity() const;
 
+#if BUILDFLAG(IS_WIN)
+  bool ShouldShowDeliveryUpdate() const;
+  void OnDeliveryUpdateChanged();
+#endif  // BUILDFLAG(IS_WIN)
+
   // BrowserAppMenuButton:
   bool ShouldPaintBorder() const override;
   bool ShouldBlendHighlightColor() const override;
@@ -40,6 +47,9 @@ class BraveBrowserAppMenuButton : public BrowserAppMenuButton {
 
   raw_ref<ToolbarView> toolbar_view_;
   PrefChangeRegistrar pref_change_registrar_;
+#if BUILDFLAG(IS_WIN)
+  base::CallbackListSubscription delivery_update_subscription_;
+#endif  // BUILDFLAG(IS_WIN)
 };
 
 #endif  // BRAVE_BROWSER_UI_VIEWS_TOOLBAR_BRAVE_BROWSER_APP_MENU_BUTTON_H_

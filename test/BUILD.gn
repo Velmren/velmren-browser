@@ -1456,6 +1456,9 @@ test("brave_browser_tests") {
   defines = [ "HAS_OUT_OF_PROC_TEST_RUNNER" ]
 
   if (toolkit_views) {
+    if (is_win) {
+      deps += [ "//brave/browser:velmren_delivery_win" ]
+    }
     sources += [
       "//brave/browser/ui/views/bookmarks/bookmark_bar_browsertest.cc",
       "//brave/browser/ui/views/frame/brave_non_client_hit_test_helper_browsertest.cc",

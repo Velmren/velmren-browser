@@ -51,6 +51,10 @@ import {
 const BraveNewsPeek =  React.lazy(() => import('../../../brave_news/browser/resources/Peek'))
 const SearchPlaceholder = React.lazy(() => import('../../components/search/SearchPlaceholder'))
 
+// Tests and Storybook have a mock News controller and no native load-time data.
+const braveNewsSupported = process.env.NODE_ENV === 'test' ||
+  loadTimeData.getBoolean('braveNewsSupported')
+
 interface Props {
   newTabData: NewTab.State
   gridSitesData: NewTab.GridSitesState
@@ -249,6 +253,7 @@ class NewTabPage extends React.Component<Props, State> {
   maybePeekBraveNews () {
     const hasPromptedBraveNews = !!this.braveNewsPromptTimerId
     const shouldPromptBraveNews =
+      braveNewsSupported &&
       !this.props.newTabData.isBraveNewsDisabledByPolicy &&
       !hasPromptedBraveNews && // Don't start a prompt if we already did
       window.scrollY === 0 && // Don't start a prompt if we are scrolled
@@ -647,7 +652,7 @@ class NewTabPage extends React.Component<Props, State> {
         hasDynamicNewTabTakeover={hasDynamicNewTabTakeover}
         data-show-news-prompt={((this.state.backgroundHasLoaded || colorForBackground) && this.state.isPromptingBraveNews && !defaultState.featureFlagBraveNewsFeedV2Enabled) ? true : undefined}>
         <OverrideReadabilityColor override={ this.shouldOverrideReadabilityColor(this.props.newTabData) } />
-        <NewsProvider disabled={newTabData.isBraveNewsDisabledByPolicy}>
+        <NewsProvider disabled={!braveNewsSupported || newTabData.isBraveNewsDisabledByPolicy}>
         <EngineContextProvider>
 
         {
@@ -769,7 +774,7 @@ class NewTabPage extends React.Component<Props, State> {
                   && <React.Suspense fallback={null}>
                     <SearchPlaceholder />
                   </React.Suspense>}
-                                {newTabData.showToday &&
+                                {braveNewsSupported && newTabData.showToday &&
                   !newTabData.isBraveNewsDisabledByPolicy && (
                   defaultState.featureFlagBraveNewsFeedV2Enabled
                   ? <React.Suspense fallback={null}>
@@ -779,7 +784,7 @@ class NewTabPage extends React.Component<Props, State> {
                 )}
               </Page.GridItemPageFooter>
           </Page.Page>
-        { newTabData.showToday && !newTabData.isBraveNewsDisabledByPolicy &&
+        { braveNewsSupported && newTabData.showToday && !newTabData.isBraveNewsDisabledByPolicy &&
         <BraveNews
           feed={this.props.todayData.feed}
           articleToScrollTo={this.props.todayData.articleScrollTo}
