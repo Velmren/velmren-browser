@@ -96,6 +96,8 @@ class RenderViewContextMenu : public RenderViewContextMenu_Chromium
   // RenderViewContextMenuBase:
   void InitMenu() override;
   void NotifyMenuShown() override;
+  bool CanTranslateSelection() const;
+  void UpdateSelectionTranslateItem();
 
 #if BUILDFLAG(ENABLE_EMAIL_ALIASES)
   void BuildEmailAliasesMenu();

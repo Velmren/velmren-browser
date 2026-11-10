@@ -1001,6 +1001,7 @@ test("brave_browser_tests") {
     "//brave/browser/search_engines/search_engine_tracker_browsertest.cc",
     "//brave/browser/themes/brave_theme_service_browsertest.cc",
     "//brave/browser/translate/brave_translate_browsertest.cc",
+    "//brave/browser/translate/velmren_selection_translate_browsertest.cc",
     "//brave/browser/ui/brave_browser_command_controller_browsertest.cc",
     "//brave/browser/ui/content_settings/brave_autoplay_blocked_image_model_browsertest.cc",
     "//brave/browser/ui/toolbar/brave_app_menu_model_browsertest.cc",
@@ -1160,6 +1161,7 @@ test("brave_browser_tests") {
     "//chrome/browser/profiles:misc",
     "//chrome/browser/profiles:profile",
     "//chrome/browser/renderer_context_menu:impl",
+    "//chrome/browser/renderer_context_menu:test_support",
     "//chrome/browser/search_engines",
     "//chrome/browser/sync",
     "//chrome/browser/tab_list",
@@ -1220,10 +1222,13 @@ test("brave_browser_tests") {
     "//media:test_support",
     "//services/device/public/cpp:device_features",
     "//services/network:network_service",
+    "//services/network:test_support",
     "//testing/gmock",
     "//third_party/blink/public/common",
+    "//ui/accessibility",
     "//ui/compositor:test_support",
     "//ui/views",
+    "//ui/views:test_support",
   ]
 
   data = [

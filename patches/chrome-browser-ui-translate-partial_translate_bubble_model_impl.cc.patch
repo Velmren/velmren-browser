@@ -1,0 +1,12 @@
+diff --git a/chrome/browser/ui/translate/partial_translate_bubble_model_impl.cc b/chrome/browser/ui/translate/partial_translate_bubble_model_impl.cc
+index 9b0aa79f47..ac0b40591b 100644
+--- a/chrome/browser/ui/translate/partial_translate_bubble_model_impl.cc
++++ b/chrome/browser/ui/translate/partial_translate_bubble_model_impl.cc
+@@ -85,6 +85,7 @@ void PartialTranslateBubbleModelImpl::SetTargetLanguage(
+ void PartialTranslateBubbleModelImpl::SetSourceText(
+     const std::u16string& text) {
+   source_text_ = text;
++  BRAVE_PARTIAL_TRANSLATE_BUBBLE_MODEL_IMPL_SET_SOURCE_TEXT
+ }
+ 
+ std::u16string PartialTranslateBubbleModelImpl::GetSourceText() const {

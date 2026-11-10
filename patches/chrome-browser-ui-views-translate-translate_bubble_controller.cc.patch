@@ -1,0 +1,12 @@
+diff --git a/chrome/browser/ui/views/translate/translate_bubble_controller.cc b/chrome/browser/ui/views/translate/translate_bubble_controller.cc
+index 436f49a813162fef2a6c074d43eee6fec9967fca..3c10f7a17da5c15973e573980641cc52d54e8f73 100644
+--- a/chrome/browser/ui/views/translate/translate_bubble_controller.cc
++++ b/chrome/browser/ui/views/translate/translate_bubble_controller.cc
+@@ -323,6 +323,7 @@ void TranslateBubbleController::CreatePartialTranslateBubble(
+             TemplateURLServiceFactory::GetForProfile(profile)),
+         std::make_unique<ContextualTranslateDelegate>(
+             profile->GetURLLoaderFactory()));
++    BRAVE_TRANSLATE_BUBBLE_CONTROLLER_CREATE_PARTIAL_TRANSLATE_MANAGER
+ 
+     model = std::make_unique<PartialTranslateBubbleModelImpl>(
+         view_state, error_type, truncated_source_text, target_text,

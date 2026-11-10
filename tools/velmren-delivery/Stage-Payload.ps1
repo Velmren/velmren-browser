@@ -57,9 +57,16 @@ $agent = Join-Path $target 'agent'
 $runtime = Join-Path $target 'runtime'
 New-Item -ItemType Directory -Path $browser, $agent, $runtime -Force | Out-Null
 if (!(Test-Path -LiteralPath (Join-Path $BrowserDirectory 'velmren.exe'))) { throw 'Browser velmren.exe is missing.' }
+$runtimePaks = @(
+  'brave_100_percent.pak', 'brave_200_percent.pak', 'brave_resources.pak',
+  'chrome_100_percent.pak', 'chrome_200_percent.pak',
+  'headless_command_resources.pak', 'resources.pak'
+)
 foreach ($file in Get-ChildItem -LiteralPath $BrowserDirectory -File) {
   # These are build/test diagnostics, excluded by Chromium's Windows release manifest.
   if ($file.Name -in 'VkLayer_khronos_validation.dll', 'VkICD_mock_icd.dll', 'dbghelp.dll', 'dbgcore.dll', 'msdia140.dll', 'symsrv.dll', 'test_trace_processor.dll') { continue }
+  # Native browser tests share this output directory; their resource packs are not runtime inputs.
+  if ($file.Extension -eq '.pak' -and $file.Name -notin $runtimePaks) { continue }
   if ($file.Extension -in '.dll', '.pak', '.bin', '.dat', '.manifest' -or $file.Name -in 'velmren.exe', 'chrome_proxy.exe', 'chrome_pwa_launcher.exe', 'notification_helper.exe', 'vulkan-1.dll', 'vk_swiftshader_icd.json') {
     Copy-TreeSafe $file.FullName (Join-Path $browser $file.Name)
   }

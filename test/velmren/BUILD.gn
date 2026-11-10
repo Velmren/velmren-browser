@@ -6,6 +6,71 @@
 import("//testing/test.gni")
 
 if (is_win) {
+  # Exercise the production menu and bubble without unrelated browser suites.
+  test("velmren_selection_translate_browsertests") {
+    testonly = true
+    defines = [ "HAS_OUT_OF_PROC_TEST_RUNNER" ]
+    configs += [ "//chrome/test:disable_thinlto_cache_flags" ]
+    sources = [
+      "//brave/browser/translate/velmren_selection_translate_browsertest.cc",
+    ]
+    deps = [
+      "//base",
+      "//base/test:test_support",
+      "//brave:packed_resources",
+      "//brave/base/test:test_vendor_is_brave",
+      "//brave/test:browser_tests_runner",
+      "//chrome:packed_resources",
+      "//chrome/browser",
+      "//chrome/browser/renderer_context_menu:test_support",
+      "//chrome/browser/search_engines",
+      "//chrome/browser/ui",
+      "//chrome/test:test_support",
+      "//chrome/test:test_support_ui",
+      "//components/policy/core/browser",
+      "//components/policy/core/common:test_support",
+      "//components/search_engines",
+      "//components/translate/core/browser",
+      "//components/translate/core/common",
+      "//content/test:test_support",
+      "//net:test_support",
+      "//services/network:test_support",
+      "//testing/gmock",
+      "//testing/gtest",
+      "//ui/accessibility",
+      "//ui/views",
+      "//ui/views:test_support",
+    ]
+    data = [ "//brave/test/data/" ]
+  }
+
+  test("velmren_selection_translate_unittests") {
+    sources = [
+      "//brave/components/velmren/selection_translate_delegate_unittest.cc",
+      "//brave/components/velmren/selection_translate_policy_unittest.cc",
+    ]
+    deps = [
+      "//base",
+      "//base/test:test_support",
+      "//brave/components/velmren:selection_translate",
+      "//components/test:run_all_unittests",
+      "//components/touch_to_search/core/browser",
+      "//components/translate/content/browser",
+      "//components/translate/core/common",
+      "//content/test:test_support",
+      "//net",
+      "//services/network:test_support",
+      "//services/network/public/cpp",
+      "//services/network/public/mojom",
+      "//testing/gtest",
+      "//url",
+    ]
+    data_deps = [
+      "//components:components_tests_pak",
+      "//ui/resources:ui_test_pak_data",
+    ]
+  }
+
   test("velmren_autofill_renderer_unittests") {
     testonly = true
     sources = [ "selected_account_renderer_browsertest.cc" ]

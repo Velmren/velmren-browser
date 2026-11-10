@@ -23,3 +23,24 @@ source_set("public_filters") {
     "//brave/components/velmren/resources:resources_grit",
   ]
 }
+
+source_set("selection_translate") {
+  sources = [
+    "selection_translate_delegate.cc",
+    "selection_translate_delegate.h",
+    "selection_translate_policy.cc",
+    "selection_translate_policy.h",
+  ]
+  public_deps = [
+    "//base",
+    "//components/touch_to_search/core/browser",
+  ]
+  deps = [
+    "//components/translate/core/common",
+    "//content/public/browser",
+    "//net",
+    "//services/network/public/cpp",
+    "//services/network/public/mojom",
+    "//url",
+  ]
+}

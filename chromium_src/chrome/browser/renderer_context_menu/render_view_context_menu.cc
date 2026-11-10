@@ -31,9 +31,12 @@
 #include "brave/components/brave_shields/core/common/features.h"
 #include "brave/components/email_aliases/buildflags/buildflags.h"
 #include "brave/components/tor/buildflags/buildflags.h"
+#include "brave/components/translate/core/common/brave_translate_features.h"
+#include "brave/components/velmren/selection_translate_policy.h"
 #include "brave/grit/brave_theme_resources.h"
 #include "chrome/browser/autocomplete/chrome_autocomplete_provider_client.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/translate/chrome_translate_client.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/browser_window/public/global_browser_collection.h"
 #include "chrome/common/channel_info.h"
@@ -42,9 +45,12 @@
 #include "components/omnibox/browser/autocomplete_classifier.h"
 #include "components/omnibox/browser/autocomplete_controller.h"
 #include "components/omnibox/browser/autocomplete_match_type.h"
+#include "components/translate/core/browser/translate_manager.h"
+#include "components/translate/core/browser/translate_prefs.h"
 #include "content/public/browser/security_principal.h"
 #include "content/public/browser/web_contents.h"
 #include "net/base/filename_util.h"
+#include "net/base/network_change_notifier.h"
 #include "ui/base/models/menu_separator_types.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/image/image_skia.h"
@@ -362,6 +368,9 @@ RenderViewContextMenu::~RenderViewContextMenu() = default;
 
 bool RenderViewContextMenu::IsCommandIdEnabled(int id) const {
   switch (id) {
+    case IDC_CONTENT_CONTEXT_PARTIAL_TRANSLATE:
+      return CanTranslateSelection() &&
+             RenderViewContextMenu_Chromium::IsCommandIdEnabled(id);
 #if BUILDFLAG(ENABLE_TEXT_RECOGNITION)
     case IDC_CONTENT_CONTEXT_COPY_TEXT_FROM_IMAGE:
       return params_.has_image_contents;
@@ -422,6 +431,11 @@ bool RenderViewContextMenu::IsCommandIdEnabled(int id) const {
 
 void RenderViewContextMenu::ExecuteCommand(int id, int event_flags) {
   switch (id) {
+    case IDC_CONTENT_CONTEXT_PARTIAL_TRANSLATE:
+      if (IsCommandIdEnabled(id)) {
+        RenderViewContextMenu_Chromium::ExecuteCommand(id, event_flags);
+      }
+      break;
     case IDC_COPY_CLEAN_LINK: {
       GURL link_url = params_.link_url;
       if (!link_url.is_valid()) {
@@ -825,6 +839,7 @@ void RenderViewContextMenu::SetAIEngineForTesting(
 
 void RenderViewContextMenu::InitMenu() {
   RenderViewContextMenu_Chromium::InitMenu();
+  UpdateSelectionTranslateItem();
 
   // Move "Open link in split view" to the last item of the first section (right
   // before the first separator) when present.
@@ -934,6 +949,48 @@ void RenderViewContextMenu::NotifyMenuShown() {
   if (!cb->is_null()) {
     std::move(*cb).Run(this);
   }
+}
+
+bool RenderViewContextMenu::CanTranslateSelection() const {
+  auto* client = ChromeTranslateClient::FromWebContents(embedder_web_contents_);
+  if (!client || !client->GetTranslateManager() || !GetBrowser()) {
+    return false;
+  }
+  const GURL& document_url =
+      params_.frame_url.is_empty() ? params_.page_url : params_.frame_url;
+  const std::string mime_type = embedder_web_contents_->GetContentsMimeType();
+  return velmren::CanTranslateSelection(
+      params_.selection_text,
+      {.feature_enabled = translate::IsBraveTranslateGoAvailable(),
+       .document_supported =
+           document_url.SchemeIsHTTPOrHTTPS() &&
+           (mime_type == "text/html" || mime_type == "text/plain" ||
+            mime_type == "application/xhtml+xml"),
+       .online = !net::NetworkChangeNotifier::IsOffline(),
+       .policy_allowed =
+           client->GetTranslatePrefs()->IsTranslateAllowedByPolicy(),
+       .password_field = IsPasswordField(),
+       .target_supported = client->GetTranslateManager()
+                               ->CanPartiallyTranslateTargetLanguage()});
+}
+
+void RenderViewContextMenu::UpdateSelectionTranslateItem() {
+  // Normalize all Chromium menu variants to one policy, including simplified
+  // menus that otherwise bypass the manual-translation guards.
+  while (auto index = menu_model_.GetIndexOfCommandId(
+             IDC_CONTENT_CONTEXT_PARTIAL_TRANSLATE)) {
+    menu_model_.RemoveItemAt(*index);
+  }
+  if (!CanTranslateSelection()) {
+    return;
+  }
+  const auto anchor = menu_model_.GetIndexOfCommandId(IDC_CONTENT_CONTEXT_COPY);
+  const size_t index = anchor ? *anchor + 1 : 0;
+  menu_model_.InsertItemAt(
+      index, IDC_CONTENT_CONTEXT_PARTIAL_TRANSLATE,
+      l10n_util::GetStringFUTF16(
+          IDS_CONTENT_CONTEXT_PARTIAL_TRANSLATE,
+          GetTargetLanguageDisplayName(/*is_full_page_translation=*/false)));
 }
 
 #if BUILDFLAG(ENABLE_EMAIL_ALIASES)

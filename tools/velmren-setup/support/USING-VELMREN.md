@@ -8,6 +8,14 @@ Open the top-right menu → **Settings → Search engine**. Choose the normal-wi
 
 The icon beside the new-tab search field lets you choose a different provider for that tab. The menu identifies the browser default. Checkboxes customize which alternatives appear in this menu; browser-wide changes belong in Settings.
 
+## Translate selected text
+
+Select a message or part of a page, right-click, and choose **Translate selection**. This works independently of your search engine. The selection's language is detected separately, so an English message can also be translated on a page with a Russian interface.
+
+If a site such as Discord opens its own menu, use **Shift + right-click** to open the browser menu. You can choose another language in the translation bubble.
+
+Google Translate receives the selected text after you choose the command; the page address and surrounding messages are not sent. A network connection is required. Long selections are limited to 500 characters; the bubble marks truncated text.
+
 ## Saved accounts
 
 After choosing an account on a website, check the username in the password suggestion. If several accounts are saved for that site, you can explicitly select another entry. Each saved password belongs to the username shown in its entry.
